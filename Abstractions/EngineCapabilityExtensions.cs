@@ -20,10 +20,6 @@ public static class EngineCapabilityExtensions {
             labels.Add("Language Auto-Detect");
         }
 
-        if (capabilities.HasFlag(EngineCapability.Offline)) {
-            labels.Add("Offline");
-        }
-
         return labels;
     }
 }

@@ -7,8 +7,6 @@ public sealed class WhisperCppOptions {
 
     public string ModelPath { get; set; } = ResolveModelPath();
 
-    public string? Language { get; set; } = "en";
-
     public string AdditionalArguments { get; set; } = string.Empty;
 
     public int Threads { get; set; } = Math.Clamp(Environment.ProcessorCount - 1, 1, 8);

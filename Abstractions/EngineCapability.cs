@@ -7,5 +7,4 @@ public enum EngineCapability {
     Timestamps = 1 << 1,
     Punctuation = 1 << 2,
     LanguageAutoDetect = 1 << 3,
-    Offline = 1 << 4,
 }

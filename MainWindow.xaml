@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="AudioTranscript Studio"
+        Title="Audio Transcription"
         Height="820"
         Width="1280"
         MinHeight="720"
@@ -12,307 +12,567 @@
         WindowStartupLocation="CenterScreen"
         Background="#FFF4F7F8">
     <Window.Resources>
-        <SolidColorBrush x:Key="SurfaceBrush" Color="#CCFFFFFF" />
-        <SolidColorBrush x:Key="SurfaceBorderBrush" Color="#55B7CAD2" />
-        <SolidColorBrush x:Key="PrimaryTextBrush" Color="#FF15232D" />
-        <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF49616F" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#FF168AAD" />
-        <SolidColorBrush x:Key="AccentSoftBrush" Color="#22168AAD" />
+        <SolidColorBrush x:Key="SurfaceBrush"
+                Color="#CCFFFFFF"/>
+        <SolidColorBrush x:Key="SurfaceBorderBrush"
+                Color="#55B7CAD2"/>
+        <SolidColorBrush x:Key="PrimaryTextBrush"
+                Color="#FF15232D"/>
+        <SolidColorBrush x:Key="SecondaryTextBrush"
+                Color="#FF49616F"/>
 
-        <Style x:Key="CardStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource SurfaceBorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="18" />
-            <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Style x:Key="CardStyle"
+                TargetType="Border">
+            <Setter Property="Background"
+                    Value="{StaticResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush"
+                    Value="{StaticResource SurfaceBorderBrush}"/>
+            <Setter Property="BorderThickness"
+                    Value="1"/>
+            <Setter Property="CornerRadius"
+                    Value="10"/>
+            <Setter Property="SnapsToDevicePixels"
+                    Value="True"/>
             <Setter Property="Effect">
                 <Setter.Value>
-                    <DropShadowEffect BlurRadius="22" ShadowDepth="0" Opacity="0.18" Color="#FF7F97A6" />
+                    <DropShadowEffect BlurRadius="22"
+                            ShadowDepth="0"
+                            Opacity="0.18"
+                            Color="#FF7F97A6"/>
                 </Setter.Value>
             </Setter>
         </Style>
 
-        <Style x:Key="CaptionTextStyle" TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
-            <Setter Property="Margin" Value="0,12,0,6" />
-            <Setter Property="FontSize" Value="12" />
+        <Style x:Key="CaptionTextStyle"
+                TargetType="TextBlock">
+            <Setter Property="FontFamily"
+                    Value="Segoe UI Variable Text"/>
+            <Setter Property="FontWeight"
+                    Value="SemiBold"/>
+            <Setter Property="Foreground"
+                    Value="{StaticResource SecondaryTextBrush}"/>
+            <Setter Property="Margin"
+                    Value="0,12,0,6"/>
+            <Setter Property="FontSize"
+                    Value="12"/>
         </Style>
 
-        <Style x:Key="ActionButtonStyle" TargetType="Button">
-            <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
-            <Setter Property="FontSize" Value="13" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Background" Value="#FF167AA0" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="BorderBrush" Value="#FF167AA0" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Margin" Value="4" />
-            <Setter Property="Padding" Value="14,10" />
-            <Setter Property="Cursor" Value="Hand" />
+        <Style x:Key="LiveDotStyle"
+                TargetType="Ellipse">
+            <Setter Property="Fill"
+                    Value="#FF95A8B3"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsLiveRunning}"
+                        Value="True">
+                    <Setter Property="Fill"
+                            Value="#FF18C180"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="FooterProgressBarStyle"
+               TargetType="ProgressBar">
+            <Setter Property="Width"
+                    Value="160"/>
+            <Setter Property="Height"
+                    Value="10"/>
+            <Setter Property="Margin"
+                    Value="0,0,10,0"/>
+            <Setter Property="Minimum"
+                    Value="0"/>
+            <Setter Property="Maximum"
+                    Value="100"/>
+            <Setter Property="IsIndeterminate"
+                    Value="True"/>
+            <Setter Property="Background"
+                    Value="#FFD9E8EE"/>
+            <Setter Property="Foreground"
+                    Value="#FF1B86AA"/>
+            <Setter Property="BorderBrush"
+                    Value="#FFBBD1DB"/>
+            <Setter Property="BorderThickness"
+                    Value="1"/>
+            <Setter Property="Visibility"
+                    Value="Collapsed"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="10">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid ClipToBounds="True">
+                            <Border Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="5"/>
+                            <Border x:Name="Indicator"
+                                    Width="52"
+                                    HorizontalAlignment="Left"
+                                    CornerRadius="5"
+                                    Background="{TemplateBinding Foreground}"
+                                    Margin="0,1"
+                                    RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform>
+                                    <TranslateTransform X="-60"/>
+                                </Border.RenderTransform>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsIndeterminate"
+                                     Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard RepeatBehavior="Forever">
+                                            <DoubleAnimation Storyboard.TargetName="Indicator"
+                                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                                             From="-60"
+                                                             To="220"
+                                                             Duration="0:0:1.1"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#FF0E90B4" />
-                    <Setter Property="BorderBrush" Value="#FF0E90B4" />
-                </Trigger>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Background" Value="#FF9DB8C3" />
-                    <Setter Property="BorderBrush" Value="#FF9DB8C3" />
-                    <Setter Property="Foreground" Value="#FFE2EAEE" />
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="DangerButtonStyle" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}">
-            <Setter Property="Background" Value="#FFD94E3A" />
-            <Setter Property="BorderBrush" Value="#FFD94E3A" />
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#FFE6644E" />
-                    <Setter Property="BorderBrush" Value="#FFE6644E" />
-                </Trigger>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Background" Value="#FFC9A9A3" />
-                    <Setter Property="BorderBrush" Value="#FFC9A9A3" />
-                    <Setter Property="Foreground" Value="#FFF5EBEA" />
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="ChipStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-            <Setter Property="BorderBrush" Value="#33168AAD" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="999" />
-            <Setter Property="Padding" Value="10,4" />
-            <Setter Property="Margin" Value="0,0,8,8" />
-        </Style>
-
-        <Style x:Key="LiveDotStyle" TargetType="Ellipse">
-            <Setter Property="Fill" Value="#FF95A8B3" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsLiveRunning}" Value="True">
-                    <Setter Property="Fill" Value="#FF18C180" />
+                <DataTrigger Binding="{Binding IsFileTranscribing}"
+                             Value="True">
+                    <Setter Property="Visibility"
+                            Value="Visible"/>
                 </DataTrigger>
             </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ModernComboBoxItemStyle"
+               TargetType="ComboBoxItem">
+            <Setter Property="Padding"
+                    Value="10,7"/>
+            <Setter Property="FontFamily"
+                    Value="Segoe UI Variable Text"/>
+            <Setter Property="FontSize"
+                    Value="13"/>
+            <Setter Property="Foreground"
+                    Value="{StaticResource PrimaryTextBrush}"/>
+            <Setter Property="Background"
+                    Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemBorder"
+                                Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted"
+                                     Value="True">
+                                <Setter TargetName="ItemBorder"
+                                        Property="Background"
+                                        Value="#FFEAF4F8"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected"
+                                     Value="True">
+                                <Setter TargetName="ItemBorder"
+                                        Property="Background"
+                                        Value="#FFDCEFF6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ModernComboBoxStyle"
+               TargetType="ComboBox">
+            <Setter Property="FontFamily"
+                    Value="Segoe UI Variable Text"/>
+            <Setter Property="FontSize"
+                    Value="14"/>
+            <Setter Property="Foreground"
+                    Value="{StaticResource PrimaryTextBrush}"/>
+            <Setter Property="Background"
+                    Value="#FFFDFEFF"/>
+            <Setter Property="BorderBrush"
+                    Value="#FF9DB6C0"/>
+            <Setter Property="BorderThickness"
+                    Value="1"/>
+            <Setter Property="Padding"
+                    Value="10,8"/>
+            <Setter Property="MinHeight"
+                    Value="40"/>
+            <Setter Property="SnapsToDevicePixels"
+                    Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border x:Name="OuterBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="8"/>
+
+                            <Grid Margin="{TemplateBinding Padding}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <ContentPresenter Grid.Column="0"
+                                                  Margin="0,0,8,0"
+                                                  VerticalAlignment="Center"
+                                                  HorizontalAlignment="Left"
+                                                  Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"/>
+
+                                <ToggleButton Grid.Column="1"
+                                              Focusable="False"
+                                              ClickMode="Press"
+                                              IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                              Background="Transparent"
+                                              BorderThickness="0">
+                                    <Path Width="10"
+                                          Height="6"
+                                          Stretch="Fill"
+                                          Fill="#FF4B6775"
+                                          Data="M0,0 L5,6 L10,0 Z"/>
+                                </ToggleButton>
+                            </Grid>
+
+                            <Popup x:Name="PART_Popup"
+                                   Placement="Bottom"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   PopupAnimation="Slide"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}">
+                                <Border Margin="0,4,0,0"
+                                        Background="#FFFDFEFF"
+                                        BorderBrush="#FF9DB6C0"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ScrollViewer MaxHeight="300"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  CanContentScroll="True">
+                                        <StackPanel IsItemsHost="True"
+                                                    KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver"
+                                     Value="True">
+                                <Setter TargetName="OuterBorder"
+                                        Property="BorderBrush"
+                                        Value="#FF86A9B8"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin"
+                                     Value="True">
+                                <Setter TargetName="OuterBorder"
+                                        Property="BorderBrush"
+                                        Value="#FF1B86AA"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled"
+                                     Value="False">
+                                <Setter TargetName="OuterBorder"
+                                        Property="Background"
+                                        Value="#FFF1F6F8"/>
+                                <Setter TargetName="OuterBorder"
+                                        Property="BorderBrush"
+                                        Value="#FFD9E3E8"/>
+                                <Setter Property="Foreground"
+                                        Value="#FFA0B0B9"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="IconActionButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource ActionButtonStyle}">
+            <Setter Property="Width"
+                    Value="42"/>
+            <Setter Property="MinWidth"
+                    Value="42"/>
+            <Setter Property="MinHeight"
+                    Value="38"/>
+            <Setter Property="Padding"
+                    Value="0"/>
+            <Setter Property="Margin"
+                    Value="8,0,4,0"/>
         </Style>
     </Window.Resources>
 
     <Grid Background="#FFF4F7F8">
-        <Grid Margin="28">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
+        <DockPanel LastChildFill="True">
+            <StatusBar DockPanel.Dock="Bottom"
+                       Margin="0"
+                       MinHeight="27"
+                       Padding="10,2"
+                       Background="#FFEFF3F6"
+                       BorderBrush="#FFC8D6DD"
+                       BorderThickness="1,1,1,0">
+                <StatusBarItem DockPanel.Dock="Right"
+                               Padding="0"
+                               BorderThickness="0">
+                    <StackPanel Orientation="Horizontal">
+                        <ProgressBar Style="{StaticResource FooterProgressBarStyle}"/>
+                        <Ellipse Width="10"
+                                 Height="10"
+                                 Margin="0,0,8,0"
+                                 Style="{StaticResource LiveDotStyle}"/>
+                        <TextBlock Text="{Binding SelectedEngine.DisplayName, TargetNullValue=No engine selected}"
+                                   FontFamily="Segoe UI Variable Text"
+                                   FontSize="12"
+                                   Foreground="{StaticResource SecondaryTextBrush}"/>
+                    </StackPanel>
+                </StatusBarItem>
 
-            <StackPanel Grid.Row="0" Margin="0,0,0,18">
-                <TextBlock Text="AudioTranscript Studio"
-                           FontFamily="Bahnschrift SemiBold"
-                           FontSize="40"
-                           Foreground="{StaticResource PrimaryTextBrush}" />
-                <TextBlock Text="Transcribe audio files and live conversations with pluggable local and online engines"
-                           Margin="0,2,0,0"
-                           FontFamily="Segoe UI Variable Text"
-                           FontSize="15"
-                           Foreground="{StaticResource SecondaryTextBrush}" />
-            </StackPanel>
+                <StatusBarItem DockPanel.Dock="Left"
+                               Padding="0"
+                               BorderThickness="0">
+                    <TextBlock Text="© 2026 Justiniano Tagarda. All rights reserved."
+                               Margin="0,0,14,0"
+                               FontFamily="Bahnschrift"
+                               FontSize="12"
+                               Foreground="{StaticResource SecondaryTextBrush}"/>
+                </StatusBarItem>
+            </StatusBar>
 
-            <Grid Grid.Row="1">
+            <Grid Margin="14,7,14,5">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="390" />
-                    <ColumnDefinition Width="18" />
-                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="400"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0" Style="{StaticResource CardStyle}" Padding="20">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel>
-                            <TextBlock Text="Control Center"
-                                       FontFamily="Bahnschrift SemiBold"
-                                       FontSize="26"
-                                       Foreground="{StaticResource PrimaryTextBrush}" />
-
-                            <TextBlock Text="Engine" Style="{StaticResource CaptionTextStyle}" />
-                            <ComboBox ItemsSource="{Binding Engines}"
-                                      SelectedItem="{Binding SelectedEngine}"
-                                      DisplayMemberPath="DisplayName"
-                                      FontFamily="Segoe UI Variable Text"
-                                      FontSize="14"
-                                      Padding="10"
-                                      BorderBrush="#FF9DB6C0"
-                                      BorderThickness="1"
-                                      Background="#FFFDFEFF" />
-
-                            <TextBlock Text="Capabilities" Style="{StaticResource CaptionTextStyle}" />
-                            <ItemsControl ItemsSource="{Binding CapabilityLabels}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Style="{StaticResource ChipStyle}">
-                                            <TextBlock Text="{Binding}"
-                                                       FontFamily="Segoe UI Variable Text"
-                                                       FontSize="12"
-                                                       Foreground="{StaticResource AccentBrush}" />
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-
-                            <TextBlock Text="Language Hint" Style="{StaticResource CaptionTextStyle}" />
-                            <TextBox Text="{Binding LanguageHint, UpdateSourceTrigger=PropertyChanged}"
-                                     FontFamily="Segoe UI Variable Text"
-                                     FontSize="14"
-                                     Padding="10"
-                                     BorderBrush="#FF9DB6C0"
-                                     BorderThickness="1"
-                                     Background="#FFFDFEFF" />
-
-                            <CheckBox Content="Include timestamps where supported"
-                                      IsChecked="{Binding IncludeTimestamps}"
-                                      Margin="0,12,0,0"
-                                      FontFamily="Segoe UI Variable Text"
-                                      FontSize="13"
-                                      Foreground="{StaticResource PrimaryTextBrush}" />
-
-                            <Separator Margin="0,16,0,8" />
-
-                            <TextBlock Text="OpenAI Settings"
-                                       FontFamily="Bahnschrift"
-                                       FontSize="18"
-                                       Foreground="{StaticResource PrimaryTextBrush}" />
-                            <TextBlock Text="API Key" Style="{StaticResource CaptionTextStyle}" />
-                            <TextBox Text="{Binding OpenAiApiKey, UpdateSourceTrigger=PropertyChanged}"
-                                     FontFamily="Consolas"
-                                     FontSize="13"
-                                     Padding="10"
-                                     BorderBrush="#FF9DB6C0"
-                                     BorderThickness="1"
-                                     Background="#FFFDFEFF" />
-                            <TextBlock Text="Model" Style="{StaticResource CaptionTextStyle}" />
-                            <TextBox Text="{Binding OpenAiModel, UpdateSourceTrigger=PropertyChanged}"
-                                     FontFamily="Consolas"
-                                     FontSize="13"
-                                     Padding="10"
-                                     BorderBrush="#FF9DB6C0"
-                                     BorderThickness="1"
-                                     Background="#FFFDFEFF" />
-
-                            <UniformGrid Columns="2" Margin="0,20,0,0">
-                                <Button Content="Transcribe File"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        Command="{Binding TranscribeFileCommand}" />
-                                <Button Content="Start Live"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        Command="{Binding StartLiveCommand}" />
-                                <Button Content="Stop Live"
-                                        Style="{StaticResource DangerButtonStyle}"
-                                        Command="{Binding StopLiveCommand}" />
-                                <Button Content="Clear Output"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        Command="{Binding ClearCommand}" />
-                            </UniformGrid>
-                        </StackPanel>
-                    </ScrollViewer>
-                </Border>
-
-                <Border Grid.Column="2" Style="{StaticResource CardStyle}" Padding="24">
+                <Border Grid.Column="0"
+                        Style="{StaticResource CardStyle}"
+                        Padding="11">
                     <Grid>
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="16" />
-                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0">
+                            <TextBlock Text="Settings"
+                                       FontFamily="Bahnschrift"
+                                       FontSize="21"
+                                       Foreground="{StaticResource PrimaryTextBrush}"/>
+
+                            <TextBlock Text="Engine"
+                                       Style="{StaticResource CaptionTextStyle}"/>
+                            <ComboBox ItemsSource="{Binding Engines}"
+                                      SelectedItem="{Binding SelectedEngine}"
+                                      SelectionChanged="EngineComboBox_SelectionChanged"
+                                      DisplayMemberPath="DisplayName"
+                                      Style="{StaticResource ModernComboBoxStyle}"
+                                      ItemContainerStyle="{StaticResource ModernComboBoxItemStyle}"/>
+                            <Button Content="OpenAI Settings"
+                                    Style="{StaticResource CompactSecondaryButtonStyle}"
+                                    MinWidth="132"
+                                    Padding="10,5"
+                                    IsEnabled="{Binding IsOpenAiEngineSelected}"
+                                    Click="OpenOpenAiSettings_Click"/>
+
+                            <Separator Margin="0,14,0,8"/>
+
+                            <UniformGrid Columns="2"
+                                         Margin="0,20,0,0">
+                                <Button Content="Transcribe File"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        Command="{Binding TranscribeFileCommand}"/>
+                                <Button Content="Start Live"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        Command="{Binding StartLiveCommand}"/>
+                                <Button Content="Stop Live"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        Command="{Binding StopLiveCommand}"/>
+                                <Button Content="Clear Output"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        Command="{Binding ClearCommand}"/>
+                            </UniformGrid>
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="1"
+                                   Text="Process Logs"
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   Margin="0,14,0,6"/>
+
+                        <Border Grid.Row="2"
+                                Background="#FFFDFEFF"
+                                BorderBrush="#FFD2E2E7"
+                                BorderThickness="1"
+                                CornerRadius="10">
+                            <ListView x:Name="ProcessLogsListView"
+                                      ItemsSource="{Binding ProcessLogs}"
+                                      BorderThickness="0"
+                                      Background="Transparent"
+                                      FontFamily="Segoe UI Variable Text"
+                                      FontSize="12"
+                                      Foreground="{StaticResource PrimaryTextBrush}"
+                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListView.Resources>
+                                    <Style TargetType="{x:Type GridViewColumnHeader}">
+                                        <Setter Property="FontFamily"
+                                                Value="Segoe UI Variable Text"/>
+                                        <Setter Property="FontSize"
+                                                Value="12"/>
+                                        <Setter Property="FontWeight"
+                                                Value="SemiBold"/>
+                                        <Setter Property="Foreground"
+                                                Value="{StaticResource SecondaryTextBrush}"/>
+                                        <Setter Property="Background"
+                                                Value="#FFF6FAFC"/>
+                                        <Setter Property="BorderBrush"
+                                                Value="#FFD2E2E7"/>
+                                        <Setter Property="BorderThickness"
+                                                Value="0,0,0,1"/>
+                                        <Setter Property="Padding"
+                                                Value="6,5"/>
+                                    </Style>
+                                </ListView.Resources>
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="{x:Type ListViewItem}">
+                                        <Setter Property="Padding"
+                                                Value="0"/>
+                                        <Setter Property="Margin"
+                                                Value="0"/>
+                                        <Setter Property="HorizontalContentAlignment"
+                                                Value="Stretch"/>
+                                        <Setter Property="VerticalContentAlignment"
+                                                Value="Center"/>
+                                        <Setter Property="Background"
+                                                Value="Transparent"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected"
+                                                     Value="True">
+                                                <Setter Property="Background"
+                                                        Value="#FFEAF4F8"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.View>
+                                    <GridView AllowsColumnReorder="False">
+                                        <GridViewColumn Header="Time"
+                                                        Width="74"
+                                                        DisplayMemberBinding="{Binding Time}"/>
+                                        <GridViewColumn Header="Log"
+                                                        Width="284">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Message}"
+                                                               TextWrapping="Wrap"
+                                                               Margin="0,0,4,0"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <GridSplitter Grid.Column="1"
+                              Width="6"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Stretch"
+                              ResizeDirection="Columns"
+                              ResizeBehavior="PreviousAndNext"
+                              Background="Transparent"
+                              ShowsPreview="True"/>
+
+                <Border Grid.Column="2"
+                        Style="{StaticResource CardStyle}"
+                        Padding="12"
+                        Margin="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="16"/>
+                            <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
                         <StackPanel Grid.Row="0">
                             <TextBlock Text="Interim Output"
                                        FontFamily="Bahnschrift"
                                        FontSize="21"
-                                       Foreground="{StaticResource PrimaryTextBrush}" />
-                            <TextBlock Text="Live hypothesis. This line updates as the engine revises recognition."
-                                       Margin="0,2,0,10"
-                                       FontFamily="Segoe UI Variable Text"
-                                       FontSize="13"
-                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                                       Foreground="{StaticResource PrimaryTextBrush}"/>
                             <Border Background="#FFFFFAEC"
                                     BorderBrush="#FFF2D89F"
                                     BorderThickness="1"
                                     CornerRadius="12"
-                                    Padding="14">
+                                    Padding="7"
+                                    Margin="0,10,0,0">
                                 <TextBlock Text="{Binding InterimText}"
                                            FontFamily="Segoe UI Variable Text"
                                            FontSize="18"
                                            FontWeight="SemiBold"
                                            TextWrapping="Wrap"
                                            Foreground="#FF7A5200"
-                                           MinHeight="60" />
+                                           MinHeight="60"/>
                             </Border>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="2">
-                            <TextBlock Text="Finalized Transcript"
-                                       FontFamily="Bahnschrift"
-                                       FontSize="21"
-                                       Foreground="{StaticResource PrimaryTextBrush}" />
-                            <TextBlock Text="Committed lines once text becomes stable."
-                                       Margin="0,2,0,10"
-                                       FontFamily="Segoe UI Variable Text"
-                                       FontSize="13"
-                                       Foreground="{StaticResource SecondaryTextBrush}" />
-                            <Border Background="#FFFDFEFF"
+                        <Grid Grid.Row="2">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <DockPanel Grid.Row="0"
+                                       LastChildFill="False">
+                                <TextBlock Text="Finalized Transcript"
+                                           DockPanel.Dock="Left"
+                                           FontFamily="Bahnschrift"
+                                           FontSize="21"
+                                           Foreground="{StaticResource PrimaryTextBrush}"/>
+                                <Button DockPanel.Dock="Right"
+                                        Style="{StaticResource IconActionButtonStyle}"
+                                        ToolTip="Copy to Clipboard"
+                                        AutomationProperties.Name="Copy to Clipboard"
+                                        Click="CopyFinalizedToClipboard_Click">
+                                    <Viewbox Width="16"
+                                             Height="16">
+                                        <Path Fill="White"
+                                              Data="M16,1H4A2,2 0 0,0 2,3V17H4V3H16M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5Z"/>
+                                    </Viewbox>
+                                </Button>
+                            </DockPanel>
+
+                            <Border Grid.Row="1"
+                                    Background="#FFFDFEFF"
                                     BorderBrush="#FFD2E2E7"
                                     BorderThickness="1"
-                                    CornerRadius="12">
-                                <TextBox Text="{Binding FinalizedText}"
+                                    CornerRadius="12"
+                                    Margin="0,10,0,0">
+                                <TextBox x:Name="FinalizedTranscriptTextBox"
+                                         Text="{Binding FinalizedText, Mode=OneWay}"
                                          IsReadOnly="True"
                                          BorderThickness="0"
                                          Background="Transparent"
-                                         Padding="14"
+                                         Padding="7"
                                          FontFamily="Consolas"
                                          FontSize="15"
                                          Foreground="{StaticResource PrimaryTextBrush}"
                                          TextWrapping="Wrap"
                                          AcceptsReturn="True"
-                                         VerticalScrollBarVisibility="Auto" />
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Disabled"/>
                             </Border>
-                        </StackPanel>
+                        </Grid>
                     </Grid>
                 </Border>
             </Grid>
-
-            <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="14" Margin="0,18,0,0">
-                <DockPanel LastChildFill="True">
-                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-                        <Ellipse Width="10" Height="10" Margin="0,0,8,0" Style="{StaticResource LiveDotStyle}" />
-                        <TextBlock Text="{Binding SelectedEngine.DisplayName, TargetNullValue=No engine selected}"
-                                   FontFamily="Segoe UI Variable Text"
-                                   FontSize="12"
-                                   Foreground="{StaticResource SecondaryTextBrush}" />
-                    </StackPanel>
-
-                    <TextBlock Text="{Binding StatusMessage}"
-                               FontFamily="Segoe UI Variable Text"
-                               FontSize="13"
-                               Foreground="{StaticResource PrimaryTextBrush}" />
-                </DockPanel>
-            </Border>
-        </Grid>
+        </DockPanel>
     </Grid>
 </Window>

@@ -4,13 +4,17 @@ using System.Runtime.CompilerServices;
 using AudioTranscript.Abstractions;
 using AudioTranscript.Engines;
 using AudioTranscript.Services;
-using Microsoft.Win32;
 
 namespace AudioTranscript.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
+    private const string FixedTranscriptionLanguage = "auto";
+
     private readonly LiveTranscriptionCoordinator _liveCoordinator;
     private readonly OpenAiOptions _openAiOptions;
+    private readonly OpenAiSettingsStore _openAiSettingsStore;
+    private readonly OpenAiApiKeyValidationService _openAiApiKeyValidationService;
+    private readonly ProcessLogService _processLogService;
     private readonly WhisperProvisioningService _whisperProvisioningService;
     private readonly SynchronizationContext _uiContext;
 
@@ -18,30 +22,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private string _interimText = "Interim transcript appears here while the model is revising...";
     private string _finalizedText = string.Empty;
     private string _statusMessage = "Ready.";
-    private string _languageHint = "auto";
     private string _openAiApiKey;
-    private string _openAiModel;
-    private bool _includeTimestamps = true;
     private bool _isBusy;
     private bool _isLiveRunning;
+    private bool _isFileTranscribing;
 
     public MainViewModel(
         TranscriptionEngineRegistry engineRegistry,
         LiveTranscriptionCoordinator liveCoordinator,
         OpenAiOptions openAiOptions,
+        OpenAiSettingsStore openAiSettingsStore,
+        OpenAiApiKeyValidationService openAiApiKeyValidationService,
+        ProcessLogService processLogService,
         WhisperProvisioningService whisperProvisioningService) {
         _liveCoordinator = liveCoordinator;
         _openAiOptions = openAiOptions;
+        _openAiSettingsStore = openAiSettingsStore;
+        _openAiApiKeyValidationService = openAiApiKeyValidationService;
+        _processLogService = processLogService;
         _whisperProvisioningService = whisperProvisioningService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
 
         _openAiApiKey = _openAiOptions.ApiKey;
-        _openAiModel = _openAiOptions.Model;
 
         Engines = new ObservableCollection<EngineOptionViewModel>(
             engineRegistry.Engines.Select(engine => new EngineOptionViewModel(engine)));
-
-        CapabilityLabels = new ObservableCollection<string>();
+        ProcessLogs = new ObservableCollection<ProcessLogEntryViewModel>();
 
         TranscribeFileCommand = new AsyncRelayCommand(TranscribeFileAsync, CanTranscribeFile);
         StartLiveCommand = new AsyncRelayCommand(StartLiveAsync, CanStartLive);
@@ -50,15 +56,50 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         _liveCoordinator.UpdateReceived += OnUpdateReceived;
         _liveCoordinator.StatusChanged += OnStatusChanged;
+        _processLogService.LogEmitted += OnProcessLogEmitted;
 
-        SelectedEngine = Engines.FirstOrDefault();
+        EngineOptionViewModel? initialEngine = Engines.FirstOrDefault();
+
+        if (!string.IsNullOrWhiteSpace(_openAiApiKey)) {
+            initialEngine = Engines.FirstOrDefault(engine =>
+                string.Equals(engine.Engine.Id, "openai_gpt4o_transcribe", StringComparison.OrdinalIgnoreCase))
+                ?? Engines.FirstOrDefault(engine => IsOpenAiEngineId(engine.Engine.Id))
+                ?? initialEngine;
+        }
+
+        SelectedEngine = initialEngine;
+
+        AppendLogCore("Application initialized.");
+        AppendLogCore($"Loaded {Engines.Count} engine(s).");
+
+        if (!string.IsNullOrWhiteSpace(_openAiApiKey)) {
+            AppendLogCore($"OpenAI API key loaded ({MaskApiKey(_openAiApiKey)}).");
+        }
+        else {
+            AppendLogCore("OpenAI API key is not configured.");
+        }
+
+        IReadOnlyList<string> onlineEngines = Engines
+            .Where(engine => IsOpenAiEngineId(engine.Engine.Id))
+            .Select(engine => engine.DisplayName)
+            .ToArray();
+
+        if (onlineEngines.Count > 0) {
+            AppendLogCore($"Available OpenAI engines: {string.Join(", ", onlineEngines)}.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_openAiApiKey)
+            && SelectedEngine is not null
+            && IsOpenAiEngineId(SelectedEngine.Engine.Id)) {
+            AppendLogCore("Startup selection: online OpenAI engine selected because API key is present.");
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+    public event EventHandler<string>? ErrorOccurred;
 
     public ObservableCollection<EngineOptionViewModel> Engines { get; }
-
-    public ObservableCollection<string> CapabilityLabels { get; }
+    public ObservableCollection<ProcessLogEntryViewModel> ProcessLogs { get; }
 
     public AsyncRelayCommand TranscribeFileCommand { get; }
 
@@ -75,10 +116,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 return;
             }
 
-            RefreshCapabilities();
+            NotifyPropertyChanged(nameof(IsOpenAiEngineSelected));
             RefreshCommandStates();
+
+            if (value is null) {
+                AppendLog("Selected engine cleared.");
+            }
+            else {
+                AppendLog($"Selected engine: {value.DisplayName} (id: {value.Engine.Id}).");
+            }
         }
     }
+
+    public bool IsOpenAiEngineSelected =>
+        SelectedEngine is not null
+        && IsOpenAiEngineId(SelectedEngine.Engine.Id);
 
     public string InterimText {
         get => _interimText;
@@ -92,17 +144,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public string StatusMessage {
         get => _statusMessage;
-        set => SetProperty(ref _statusMessage, value);
-    }
-
-    public string LanguageHint {
-        get => _languageHint;
-        set => SetProperty(ref _languageHint, value);
-    }
-
-    public bool IncludeTimestamps {
-        get => _includeTimestamps;
-        set => SetProperty(ref _includeTimestamps, value);
+        set {
+            if (SetProperty(ref _statusMessage, value)) {
+                AppendLog($"Status updated: {value}");
+            }
+        }
     }
 
     public bool IsBusy {
@@ -112,6 +158,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 return;
             }
 
+            AppendLog($"Busy state: {(value ? "ON" : "OFF")}.");
             RefreshCommandStates();
         }
     }
@@ -123,8 +170,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 return;
             }
 
+            AppendLog($"Live state: {(value ? "RUNNING" : "STOPPED")}.");
             RefreshCommandStates();
         }
+    }
+
+    public bool IsFileTranscribing {
+        get => _isFileTranscribing;
+        private set => SetProperty(ref _isFileTranscribing, value);
     }
 
     public string OpenAiApiKey {
@@ -135,37 +188,56 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             _openAiOptions.ApiKey = value.Trim();
+            _openAiSettingsStore.Save(_openAiOptions.ApiKey);
+            AppendLog($"OpenAI API key updated ({MaskApiKey(_openAiOptions.ApiKey)}).");
             RefreshCommandStates();
         }
     }
 
-    public string OpenAiModel {
-        get => _openAiModel;
-        set {
-            if (!SetProperty(ref _openAiModel, value)) {
-                return;
-            }
-
-            _openAiOptions.Model = value.Trim();
-        }
-    }
-
     public async ValueTask DisposeAsync() {
+        AppendLog("Disposing transcription resources...");
         _liveCoordinator.UpdateReceived -= OnUpdateReceived;
         _liveCoordinator.StatusChanged -= OnStatusChanged;
+        _processLogService.LogEmitted -= OnProcessLogEmitted;
         await _liveCoordinator.DisposeAsync();
+        AppendLog("Disposed transcription resources.");
+    }
+
+    public async Task<OpenAiApiKeyValidationResult> ValidateOpenAiApiKeyAsync(string apiKey, CancellationToken cancellationToken) {
+        AppendLog("Validating OpenAI API key with OpenAI service...");
+        OpenAiApiKeyValidationResult result = await _openAiApiKeyValidationService.ValidateAsync(apiKey, cancellationToken);
+
+        if (result.IsValid) {
+            AppendLog("OpenAI API key validation succeeded.");
+        }
+        else {
+            AppendLog($"OpenAI API key validation failed: {result.Message}");
+        }
+
+        return result;
+    }
+
+    public void ApplyOpenAiSettings(string apiKey) {
+        AppendLog("Applying OpenAI settings.");
+        OpenAiApiKey = apiKey;
+        AppendLog("OpenAI settings applied.");
     }
 
     private async Task TranscribeFileAsync() {
+        AppendLog("Command requested: Transcribe File.");
+
         if (SelectedEngine is null) {
+            AppendLog("Transcribe aborted: no engine selected.");
             return;
         }
 
         if (!await EnsureSelectedEngineConfiguredAsync()) {
+            AppendLog("Transcribe aborted: selected engine is not ready.");
             return;
         }
 
-        var dialog = new OpenFileDialog {
+        AppendLog("Opening file picker for transcription.");
+        var dialog = new Microsoft.Win32.OpenFileDialog {
             Title = "Select Audio File",
             Filter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*",
             Multiselect = false,
@@ -174,11 +246,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         bool? openResult = dialog.ShowDialog();
 
         if (openResult != true) {
+            AppendLog("Transcribe canceled: user did not select a file.");
             return;
         }
 
+        AppendLog($"Selected file: {dialog.FileName}");
+        try {
+            long fileSize = new System.IO.FileInfo(dialog.FileName).Length;
+            AppendLog($"Selected file size: {fileSize:N0} bytes.");
+        }
+        catch {
+            AppendLog("Unable to read selected file size.");
+        }
+
         IsBusy = true;
+        IsFileTranscribing = true;
         StatusMessage = $"Transcribing file using {SelectedEngine.DisplayName}...";
+        AppendLog($"Submitting file transcription with {SelectedEngine.DisplayName}.");
 
         try {
             TranscriptUpdate update = await SelectedEngine.Engine.TranscribeFileAsync(
@@ -189,25 +273,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             AppendFinal(update.Text);
             InterimText = string.Empty;
             StatusMessage = "File transcription completed.";
+            AppendLog($"File transcription completed. Received {update.Text.Length:N0} characters.");
         }
         catch (Exception ex) {
-            StatusMessage = $"File transcription failed: {ex.Message}";
+            RaiseError($"File transcription failed: {ex.Message}");
         }
         finally {
+            IsFileTranscribing = false;
             IsBusy = false;
+            AppendLog("Command finished: Transcribe File.");
         }
     }
 
     private async Task StartLiveAsync() {
+        AppendLog("Command requested: Start Live.");
+
         if (SelectedEngine is null || IsLiveRunning) {
+            AppendLog("Start Live ignored: no engine selected or live already running.");
             return;
         }
 
         if (!await EnsureSelectedEngineConfiguredAsync()) {
+            AppendLog("Start Live aborted: selected engine is not ready.");
             return;
         }
 
         IsBusy = true;
+        AppendLog($"Starting live transcription with {SelectedEngine.DisplayName}.");
 
         try {
             await _liveCoordinator.StartAsync(
@@ -217,39 +309,49 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
             IsLiveRunning = true;
             InterimText = "Monitoring default system playback...";
+            AppendLog("Live transcription started; monitoring default system playback.");
         }
         catch (Exception ex) {
-            StatusMessage = $"Unable to start live transcription: {ex.Message}";
+            RaiseError($"Unable to start live transcription: {ex.Message}");
         }
         finally {
             IsBusy = false;
+            AppendLog("Command finished: Start Live.");
         }
     }
 
     private async Task StopLiveAsync() {
+        AppendLog("Command requested: Stop Live.");
+
         if (!IsLiveRunning) {
+            AppendLog("Stop Live ignored: live transcription is not running.");
             return;
         }
 
         IsBusy = true;
+        AppendLog("Stopping live transcription.");
 
         try {
             await _liveCoordinator.StopAsync(CancellationToken.None);
             IsLiveRunning = false;
             InterimText = string.Empty;
+            AppendLog("Live transcription stopped.");
         }
         catch (Exception ex) {
-            StatusMessage = $"Unable to stop live transcription: {ex.Message}";
+            RaiseError($"Unable to stop live transcription: {ex.Message}");
         }
         finally {
             IsBusy = false;
+            AppendLog("Command finished: Stop Live.");
         }
     }
 
     private Task ClearAsync() {
         InterimText = string.Empty;
         FinalizedText = string.Empty;
-        StatusMessage = "Transcript view cleared.";
+        ProcessLogs.Clear();
+        _statusMessage = "Transcript and logs cleared.";
+        NotifyPropertyChanged(nameof(StatusMessage));
         return Task.CompletedTask;
     }
 
@@ -274,51 +376,48 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private async Task<bool> EnsureSelectedEngineConfiguredAsync() {
         if (SelectedEngine is null) {
+            AppendLog("Engine configuration check failed: no selected engine.");
             return false;
         }
 
         if (string.Equals(SelectedEngine.Engine.Id, "whisper_cpp", StringComparison.OrdinalIgnoreCase)) {
+            AppendLog("Preparing local whisper.cpp engine assets.");
             StatusMessage = "Preparing local whisper.cpp engine...";
             WhisperProvisioningResult provisioning = await _whisperProvisioningService.EnsureReadyAsync(CancellationToken.None);
 
             if (!provisioning.IsReady) {
-                StatusMessage = provisioning.Message;
+                RaiseError(provisioning.Message);
+                AppendLog($"whisper.cpp provisioning failed: {provisioning.Message}");
                 return false;
             }
 
             StatusMessage = provisioning.Message;
+            AppendLog($"whisper.cpp provisioning result: {provisioning.Message}");
         }
-        else if (string.Equals(SelectedEngine.Engine.Id, "openai_gpt4o_mini", StringComparison.OrdinalIgnoreCase)) {
+        else if (IsOpenAiEngineId(SelectedEngine.Engine.Id)) {
             if (string.IsNullOrWhiteSpace(OpenAiApiKey)) {
-                StatusMessage = "OpenAI API key is required for the online engine.";
+                RaiseError("OpenAI API key is required for the online engine.");
+                AppendLog("OpenAI engine blocked: API key missing.");
                 return false;
             }
+
+            AppendLog("OpenAI engine configuration verified.");
         }
 
         return true;
     }
 
     private TranscriptionRequest BuildRequest() {
-        string? language = LanguageHint.Trim();
+        var request = new TranscriptionRequest(
+            IncludeTimestamps: true,
+            IncludePunctuation: true,
+            EnableDiarization: true,
+            Language: FixedTranscriptionLanguage);
 
-        if (string.IsNullOrWhiteSpace(language)
-            || string.Equals(language, "auto", StringComparison.OrdinalIgnoreCase)) {
-            language = null;
-        }
+        AppendLog(
+            $"Transcription request: timestamps={request.IncludeTimestamps}, punctuation={request.IncludePunctuation}, diarization={request.EnableDiarization}, language='{request.Language}'.");
 
-        return new TranscriptionRequest(language, IncludeTimestamps);
-    }
-
-    private void RefreshCapabilities() {
-        CapabilityLabels.Clear();
-
-        if (SelectedEngine is null) {
-            return;
-        }
-
-        foreach (string label in SelectedEngine.Engine.Capabilities.ToLabels()) {
-            CapabilityLabels.Add(label);
-        }
+        return request;
     }
 
     private void AppendFinal(string text) {
@@ -331,22 +430,52 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         FinalizedText = string.IsNullOrWhiteSpace(FinalizedText)
             ? trimmed
             : $"{FinalizedText}{Environment.NewLine}{trimmed}";
+
+        AppendLog($"Finalized text appended ({trimmed.Length:N0} chars): {TrimForLog(trimmed)}");
     }
 
     private void OnUpdateReceived(object? sender, TranscriptUpdate update) {
         _uiContext.Post(_ => {
             if (update.IsFinal) {
+                AppendLogCore($"Realtime final update received: {TrimForLog(update.Text)}");
                 AppendFinal(update.Text);
                 InterimText = string.Empty;
                 return;
             }
 
             InterimText = update.Text;
+            AppendLogCore($"Realtime interim update: {TrimForLog(update.Text)}");
         }, null);
     }
 
     private void OnStatusChanged(object? sender, string status) {
-        _uiContext.Post(_ => StatusMessage = status, null);
+        _uiContext.Post(_ => {
+            StatusMessage = status;
+            AppendLogCore($"Coordinator status: {status}");
+
+            if (LooksLikeErrorStatus(status)) {
+                RaiseError(status);
+            }
+        }, null);
+    }
+
+    private void OnProcessLogEmitted(object? sender, string message) {
+        _uiContext.Post(_ => AppendLogCore(message), null);
+    }
+
+    private void RaiseError(string message) {
+        if (string.IsNullOrWhiteSpace(message)) {
+            return;
+        }
+
+        AppendLog($"ERROR: {message}");
+        _uiContext.Post(_ => ErrorOccurred?.Invoke(this, message), null);
+    }
+
+    private static bool LooksLikeErrorStatus(string status) {
+        return status.Contains("error", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("unable", StringComparison.OrdinalIgnoreCase);
     }
 
     private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null) {
@@ -355,7 +484,62 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         field = value;
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        NotifyPropertyChanged(propertyName);
         return true;
+    }
+
+    private void NotifyPropertyChanged([CallerMemberName] string? propertyName = null) {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private void AppendLog(string message) {
+        if (string.IsNullOrWhiteSpace(message)) {
+            return;
+        }
+
+        _uiContext.Post(_ => AppendLogCore(message), null);
+    }
+
+    private void AppendLogCore(string message) {
+        if (string.IsNullOrWhiteSpace(message)) {
+            return;
+        }
+
+        ProcessLogs.Add(
+            new ProcessLogEntryViewModel(
+                DateTime.Now.ToString("HH:mm:ss"),
+                message.Trim()));
+    }
+
+    private static string TrimForLog(string text, int maxLength = 140) {
+        if (string.IsNullOrWhiteSpace(text)) {
+            return "(empty)";
+        }
+
+        string singleLine = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+
+        if (singleLine.Length <= maxLength) {
+            return singleLine;
+        }
+
+        return $"{singleLine[..maxLength]}...";
+    }
+
+    private static string MaskApiKey(string apiKey) {
+        if (string.IsNullOrWhiteSpace(apiKey)) {
+            return "empty";
+        }
+
+        string trimmed = apiKey.Trim();
+
+        if (trimmed.Length <= 8) {
+            return $"{trimmed[..Math.Min(2, trimmed.Length)]}***";
+        }
+
+        return $"{trimmed[..4]}...{trimmed[^4..]}";
+    }
+
+    private static bool IsOpenAiEngineId(string engineId) {
+        return engineId.StartsWith("openai_", StringComparison.OrdinalIgnoreCase);
     }
 }

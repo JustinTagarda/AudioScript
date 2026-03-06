@@ -26,8 +26,7 @@ public sealed class WhisperCppTranscriptionEngine : ITranscriptionEngine {
     public EngineCapability Capabilities =>
         EngineCapability.Timestamps
         | EngineCapability.Punctuation
-        | EngineCapability.LanguageAutoDetect
-        | EngineCapability.Offline;
+        | EngineCapability.LanguageAutoDetect;
 
     public async Task<TranscriptUpdate> TranscribeFileAsync(
         string audioFilePath,
@@ -208,15 +207,8 @@ public sealed class WhisperCppTranscriptionEngine : ITranscriptionEngine {
     }
 
     private string ResolveLanguage(TranscriptionRequest request) {
-        if (!string.IsNullOrWhiteSpace(request.LanguageHint)) {
-            return request.LanguageHint!.Trim();
-        }
-
-        if (!string.IsNullOrWhiteSpace(_options.Language)) {
-            return _options.Language!.Trim();
-        }
-
-        return "auto";
+        string language = request.Language?.Trim() ?? string.Empty;
+        return string.IsNullOrWhiteSpace(language) ? "auto" : language;
     }
 
     private static string ExtractTranscript(string rawOutput) {

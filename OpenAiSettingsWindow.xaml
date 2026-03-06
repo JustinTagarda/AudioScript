@@ -1,0 +1,80 @@
+<Window x:Class="AudioTranscript.OpenAiSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="OpenAI Settings"
+        Width="560"
+        Height="280"
+        MinWidth="560"
+        MinHeight="280"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="#FFF4F7F8">
+    <Window.Resources>
+        <SolidColorBrush x:Key="PrimaryTextBrush" Color="#FF15232D" />
+        <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF49616F" />
+
+        <Style x:Key="LabelStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
+            <Setter Property="Margin" Value="0,10,0,6" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="#CCFFFFFF"
+                BorderBrush="#55B7CAD2"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="14">
+            <StackPanel>
+                <TextBlock Text="OpenAI Configuration"
+                           FontFamily="Bahnschrift"
+                           FontSize="22"
+                           Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock Text="Changes apply immediately to online transcriptions."
+                           Margin="0,2,0,2"
+                           FontFamily="Segoe UI Variable Text"
+                           FontSize="12"
+                           Foreground="{StaticResource SecondaryTextBrush}" />
+
+                <TextBlock Text="API Key" Style="{StaticResource LabelStyle}" />
+                <TextBox x:Name="ApiKeyTextBox"
+                         FontFamily="Consolas"
+                         FontSize="13"
+                         Padding="10"
+                         BorderBrush="#FF9DB6C0"
+                         BorderThickness="1"
+                         Background="#FFFDFEFF" />
+
+                <TextBlock Text="Model is set by the selected engine in the main window."
+                           Margin="0,10,0,0"
+                           FontFamily="Segoe UI Variable Text"
+                           FontSize="12"
+                           Foreground="{StaticResource SecondaryTextBrush}" />
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,10,0,0">
+            <Button x:Name="SaveButton"
+                    Content="Save"
+                    MinWidth="110"
+                    Style="{StaticResource ActionButtonStyle}"
+                    Click="SaveButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>
