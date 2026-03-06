@@ -14,11 +14,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="assets\whisper\**\*">
-      <Link>whisper\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-    </Content>
+    <Compile Remove="AudioTranscript.Tests\\**\\*.cs" />
+    <EmbeddedResource Remove="AudioTranscript.Tests\\**\\*" />
+    <Page Remove="AudioTranscript.Tests\\**\\*" />
   </ItemGroup>
 
 </Project>

@@ -2,9 +2,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using AudioTranscript.Abstractions;
 using AudioTranscript.Audio;
-using AudioTranscript.Engines;
 using AudioTranscript.Services;
 using AudioTranscript.ViewModels;
 
@@ -24,7 +22,6 @@ public partial class App : System.Windows.Application {
     private WindowPlacementService? _windowPlacementService;
     private OpenAiSettingsStore? _openAiSettingsStore;
     private OpenAiApiKeyValidationService? _openAiApiKeyValidationService;
-    private ProcessLogService? _processLogService;
 
     protected override void OnStartup(System.Windows.StartupEventArgs e) {
         base.OnStartup(e);
@@ -46,8 +43,7 @@ public partial class App : System.Windows.Application {
             () => ListenForActivationRequests(_activationListenerCts.Token),
             _activationListenerCts.Token);
 
-        var whisperOptions = new WhisperCppOptions();
-        var openAiOptions = new OpenAiOptions();
+        var openAiOptions = new OpenAiTranscriptionOptions();
         _openAiSettingsStore = new OpenAiSettingsStore();
 
         OpenAiSettingsSnapshot openAiSnapshot = _openAiSettingsStore.Load(openAiOptions.ApiKey);
@@ -55,52 +51,31 @@ public partial class App : System.Windows.Application {
 
         _httpClient = new HttpClient();
         _openAiApiKeyValidationService = new OpenAiApiKeyValidationService(_httpClient);
-        _processLogService = new ProcessLogService();
-        ProcessLogService processLogService = _processLogService;
-
+        var processLogService = new ProcessLogService();
+        var responseParser = new OpenAiTranscriptionResponseParser();
         var audioStandardizer = new AudioStandardizer();
+        var audioPlaybackService = new NaudioAudioPlaybackService();
+        var transcriptionService = new OpenAiAudioTranscriptionService(
+            audioStandardizer,
+            _httpClient,
+            openAiOptions,
+            processLogService,
+            responseParser);
+
         var captureService = new WasapiAudioCaptureService(audioStandardizer);
-        var liveCoordinator = new LiveTranscriptionCoordinator(captureService);
-        var whisperProvisioningService = new WhisperProvisioningService(_httpClient, whisperOptions);
+        var liveCoordinator = new LiveTranscriptionCoordinator(captureService, transcriptionService);
+
         _windowPlacementService = new WindowPlacementService();
 
-        var engines = new List<ITranscriptionEngine> {
-            new WhisperCppTranscriptionEngine(audioStandardizer, whisperOptions),
-            new OpenAiGpt4oMiniTranscriptionEngine(
-                audioStandardizer,
-                openAiOptions,
-                _httpClient,
-                processLogService,
-                id: "openai_gpt4o_transcribe",
-                displayName: "Online: OpenAI gpt-4o-transcribe",
-                model: "gpt-4o-transcribe"),
-            new OpenAiGpt4oMiniTranscriptionEngine(
-                audioStandardizer,
-                openAiOptions,
-                _httpClient,
-                processLogService,
-                id: "openai_gpt4o_mini_transcribe",
-                displayName: "Online: OpenAI gpt-4o-mini-transcribe",
-                model: "gpt-4o-mini-transcribe"),
-            new OpenAiGpt4oMiniTranscriptionEngine(
-                audioStandardizer,
-                openAiOptions,
-                _httpClient,
-                processLogService,
-                id: "openai_whisper_1",
-                displayName: "Online: OpenAI whisper-1",
-                model: "whisper-1"),
-        };
-
-        var engineRegistry = new TranscriptionEngineRegistry(engines);
         _mainViewModel = new MainViewModel(
-            engineRegistry,
+            OpenAiTranscriptionModelCatalog.Models,
             liveCoordinator,
+            transcriptionService,
+            audioPlaybackService,
             openAiOptions,
             _openAiSettingsStore,
             _openAiApiKeyValidationService,
-            processLogService,
-            whisperProvisioningService);
+            processLogService);
 
         var mainWindow = new MainWindow {
             DataContext = _mainViewModel,

@@ -6,14 +6,18 @@ namespace AudioTranscript.Services;
 
 public sealed class LiveTranscriptionCoordinator : IAsyncDisposable {
     private readonly IAudioCaptureService _audioCaptureService;
+    private readonly ITranscriptionService _transcriptionService;
     private readonly object _stateLock = new();
     private Channel<byte[]>? _audioChannel;
     private Task? _forwardingTask;
     private IRealtimeTranscriptionSession? _session;
     private CancellationTokenSource? _runtimeCts;
 
-    public LiveTranscriptionCoordinator(IAudioCaptureService audioCaptureService) {
+    public LiveTranscriptionCoordinator(
+        IAudioCaptureService audioCaptureService,
+        ITranscriptionService transcriptionService) {
         _audioCaptureService = audioCaptureService;
+        _transcriptionService = transcriptionService;
     }
 
     public bool IsRunning { get; private set; }
@@ -23,8 +27,7 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable {
     public event EventHandler<string>? StatusChanged;
 
     public async Task StartAsync(
-        ITranscriptionEngine engine,
-        TranscriptionRequest request,
+        string model,
         CancellationToken cancellationToken) {
         lock (_stateLock) {
             if (IsRunning) {
@@ -41,7 +44,13 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable {
             });
 
             _runtimeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _session = engine.CreateRealtimeSession(request);
+            _session = new ChunkedRealtimeTranscriptionSession(
+                transcribeChunkAsync: async (pcmChunk, _, ct) =>
+                    await _transcriptionService.TranscribePcmChunkAsync(pcmChunk, model, ct),
+                language: null,
+                interimWindowSeconds: 1,
+                finalWindowSeconds: 3,
+                interimIntervalMilliseconds: 900);
             _session.UpdateReceived += OnSessionUpdate;
             _audioCaptureService.FrameCaptured += OnFrameCaptured;
 
@@ -49,7 +58,7 @@ public sealed class LiveTranscriptionCoordinator : IAsyncDisposable {
             _forwardingTask = Task.Run(() => ForwardAudioLoopAsync(_runtimeCts.Token), _runtimeCts.Token);
             await _audioCaptureService.StartDefaultPlaybackAsync(_runtimeCts.Token);
 
-            StatusChanged?.Invoke(this, $"Live capture started (playback-only) with {engine.DisplayName}.");
+            StatusChanged?.Invoke(this, $"Live capture started (playback-only) with model {model}.");
         }
         catch {
             await CleanupFailedStartAsync(CancellationToken.None);

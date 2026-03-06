@@ -1,22 +1,28 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
+using System.Windows.Threading;
 using AudioTranscript.Abstractions;
-using AudioTranscript.Engines;
+using AudioTranscript.Audio;
 using AudioTranscript.Services;
 
 namespace AudioTranscript.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
-    private const string FixedTranscriptionLanguage = "auto";
+    private const int SeekStepSeconds = 5;
+    private const string TranscriptLineIndent = "    ";
 
     private readonly LiveTranscriptionCoordinator _liveCoordinator;
-    private readonly OpenAiOptions _openAiOptions;
+    private readonly ITranscriptionService _transcriptionService;
+    private readonly IAudioPlaybackService _audioPlaybackService;
+    private readonly OpenAiTranscriptionOptions _openAiOptions;
     private readonly OpenAiSettingsStore _openAiSettingsStore;
     private readonly OpenAiApiKeyValidationService _openAiApiKeyValidationService;
     private readonly ProcessLogService _processLogService;
-    private readonly WhisperProvisioningService _whisperProvisioningService;
     private readonly SynchronizationContext _uiContext;
+    private readonly DispatcherTimer _audioTimelineTimer;
 
     private EngineOptionViewModel? _selectedEngine;
     private string _interimText = "Interim transcript appears here while the model is revising...";
@@ -26,28 +32,37 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private bool _isBusy;
     private bool _isLiveRunning;
     private bool _isFileTranscribing;
+    private string _loadedAudioFilePath = string.Empty;
+    private bool _isAudioPlaying;
+    private double _audioSeekMaximumSeconds;
+    private double _audioSeekPositionSeconds;
+    private string _audioElapsedText = "00:00";
+    private string _audioRemainingText = "-00:00";
+    private bool _isUpdatingSeekFromPlayback;
     private CancellationTokenSource? _fileTranscriptionCts;
 
     public MainViewModel(
-        TranscriptionEngineRegistry engineRegistry,
+        IEnumerable<TranscriptionModelOption> models,
         LiveTranscriptionCoordinator liveCoordinator,
-        OpenAiOptions openAiOptions,
+        ITranscriptionService transcriptionService,
+        IAudioPlaybackService audioPlaybackService,
+        OpenAiTranscriptionOptions openAiOptions,
         OpenAiSettingsStore openAiSettingsStore,
         OpenAiApiKeyValidationService openAiApiKeyValidationService,
-        ProcessLogService processLogService,
-        WhisperProvisioningService whisperProvisioningService) {
+        ProcessLogService processLogService) {
         _liveCoordinator = liveCoordinator;
+        _transcriptionService = transcriptionService;
+        _audioPlaybackService = audioPlaybackService;
         _openAiOptions = openAiOptions;
         _openAiSettingsStore = openAiSettingsStore;
         _openAiApiKeyValidationService = openAiApiKeyValidationService;
         _processLogService = processLogService;
-        _whisperProvisioningService = whisperProvisioningService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
 
         _openAiApiKey = _openAiOptions.ApiKey;
 
         Engines = new ObservableCollection<EngineOptionViewModel>(
-            engineRegistry.Engines.Select(engine => new EngineOptionViewModel(engine)));
+            models.Select(model => new EngineOptionViewModel(model)));
         ProcessLogs = new ObservableCollection<ProcessLogEntryViewModel>();
 
         TranscribeFileCommand = new AsyncRelayCommand(TranscribeFileAsync, CanTranscribeFile);
@@ -55,30 +70,29 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         StopLiveCommand = new AsyncRelayCommand(StopLiveAsync, CanStopLive);
         ClearCommand = new AsyncRelayCommand(ClearAsync, CanClear);
         CancelCommand = new AsyncRelayCommand(CancelFileTranscriptionAsync, CanCancelFileTranscription);
+        PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
+        PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
+        StopAudioCommand = new AsyncRelayCommand(StopAudioAsync, CanStopAudio);
+        RewindAudioCommand = new AsyncRelayCommand(RewindAudioAsync, CanSeekAudio);
+        ForwardAudioCommand = new AsyncRelayCommand(ForwardAudioAsync, CanSeekAudio);
 
         _liveCoordinator.UpdateReceived += OnUpdateReceived;
         _liveCoordinator.StatusChanged += OnStatusChanged;
         _processLogService.LogEmitted += OnProcessLogEmitted;
+        _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
+        _isAudioPlaying = _audioPlaybackService.IsPlaying;
+        _audioTimelineTimer = new DispatcherTimer {
+            Interval = TimeSpan.FromMilliseconds(250),
+        };
+        _audioTimelineTimer.Tick += OnAudioTimelineTick;
+        _audioTimelineTimer.Start();
 
-        EngineOptionViewModel? localEngine = Engines.FirstOrDefault(engine =>
-            string.Equals(engine.Engine.Id, "whisper_cpp", StringComparison.OrdinalIgnoreCase));
-        EngineOptionViewModel? initialEngine;
-
-        if (!string.IsNullOrWhiteSpace(_openAiApiKey)) {
-            initialEngine = Engines.FirstOrDefault(engine =>
-                string.Equals(engine.Engine.Id, "openai_gpt4o_mini_transcribe", StringComparison.OrdinalIgnoreCase))
-                ?? Engines.FirstOrDefault(engine => IsOpenAiEngineId(engine.Engine.Id))
-                ?? localEngine
-                ?? Engines.FirstOrDefault();
-        }
-        else {
-            initialEngine = localEngine ?? Engines.FirstOrDefault();
-        }
-
-        SelectedEngine = initialEngine;
+        SelectedEngine = Engines.FirstOrDefault(engine =>
+            string.Equals(engine.Id, OpenAiTranscriptionModelCatalog.Gpt4oTranscribe, StringComparison.OrdinalIgnoreCase))
+            ?? Engines.FirstOrDefault();
 
         AppendLogCore("Application initialized.");
-        AppendLogCore($"Loaded {Engines.Count} engine(s).");
+        AppendLogCore($"Loaded {Engines.Count} transcription model(s).");
 
         if (!string.IsNullOrWhiteSpace(_openAiApiKey)) {
             AppendLogCore($"OpenAI API key loaded ({MaskApiKey(_openAiApiKey)}).");
@@ -87,29 +101,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             AppendLogCore("OpenAI API key is not configured.");
         }
 
-        IReadOnlyList<string> onlineEngines = Engines
-            .Where(engine => IsOpenAiEngineId(engine.Engine.Id))
-            .Select(engine => engine.DisplayName)
-            .ToArray();
-
-        if (onlineEngines.Count > 0) {
-            AppendLogCore($"Available OpenAI engines: {string.Join(", ", onlineEngines)}.");
+        if (Engines.Count > 0) {
+            string available = string.Join(", ", Engines.Select(model => model.DisplayName));
+            AppendLogCore($"Available OpenAI models: {available}.");
         }
 
-        if (!string.IsNullOrWhiteSpace(_openAiApiKey)
-            && SelectedEngine is not null
-            && string.Equals(SelectedEngine.Engine.Id, "openai_gpt4o_mini_transcribe", StringComparison.OrdinalIgnoreCase)) {
-            AppendLogCore("Startup selection: online gpt-4o-mini-transcribe selected because API key is present.");
-        }
-        else if (!string.IsNullOrWhiteSpace(_openAiApiKey)
-            && SelectedEngine is not null
-            && IsOpenAiEngineId(SelectedEngine.Engine.Id)) {
-            AppendLogCore("Startup selection: online OpenAI engine selected because API key is present.");
-        }
-        else if (string.IsNullOrWhiteSpace(_openAiApiKey)
-            && SelectedEngine is not null
-            && string.Equals(SelectedEngine.Engine.Id, "whisper_cpp", StringComparison.OrdinalIgnoreCase)) {
-            AppendLogCore("Startup selection: local whisper.cpp selected because OpenAI API key is missing.");
+        if (SelectedEngine is not null) {
+            AppendLogCore($"Startup selection: {SelectedEngine.DisplayName}.");
         }
     }
 
@@ -128,6 +126,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public AsyncRelayCommand ClearCommand { get; }
 
     public AsyncRelayCommand CancelCommand { get; }
+    public AsyncRelayCommand PlayAudioCommand { get; }
+    public AsyncRelayCommand PauseAudioCommand { get; }
+    public AsyncRelayCommand StopAudioCommand { get; }
+    public AsyncRelayCommand RewindAudioCommand { get; }
+    public AsyncRelayCommand ForwardAudioCommand { get; }
 
     public EngineOptionViewModel? SelectedEngine {
         get => _selectedEngine;
@@ -141,23 +144,94 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             RefreshCommandStates();
 
             if (value is null) {
-                AppendLog("Selected engine cleared.");
+                AppendLog("Selected model cleared.");
             }
             else {
-                AppendLog($"Selected engine: {value.DisplayName} (id: {value.Engine.Id}).");
+                AppendLog($"Selected model: {value.DisplayName} (id: {value.Id}).");
             }
         }
     }
 
-    public bool IsOpenAiEngineSelected =>
-        SelectedEngine is not null
-        && IsOpenAiEngineId(SelectedEngine.Engine.Id);
+    public bool IsOpenAiEngineSelected => SelectedEngine is not null;
 
     public bool IsEngineSelectionEnabled =>
         !IsBusy && !IsLiveRunning && !IsFileTranscribing;
 
     public bool IsOpenAiSettingsEnabled =>
         IsOpenAiEngineSelected && !IsBusy && !IsLiveRunning && !IsFileTranscribing;
+
+    public string LoadedAudioFilePath {
+        get => _loadedAudioFilePath;
+        private set {
+            if (!SetProperty(ref _loadedAudioFilePath, value)) {
+                return;
+            }
+
+            NotifyPropertyChanged(nameof(LoadedAudioFileName));
+            NotifyPropertyChanged(nameof(IsAudioFileLoaded));
+            RefreshCommandStates();
+        }
+    }
+
+    public string LoadedAudioFileName =>
+        string.IsNullOrWhiteSpace(LoadedAudioFilePath)
+            ? "No audio file selected."
+            : Path.GetFileName(LoadedAudioFilePath);
+
+    public bool IsAudioFileLoaded =>
+        !string.IsNullOrWhiteSpace(LoadedAudioFilePath);
+
+    public bool IsAudioPlaying {
+        get => _isAudioPlaying;
+        private set {
+            if (!SetProperty(ref _isAudioPlaying, value)) {
+                return;
+            }
+
+            RefreshCommandStates();
+        }
+    }
+
+    public double AudioSeekMaximumSeconds {
+        get => _audioSeekMaximumSeconds;
+        private set => SetProperty(ref _audioSeekMaximumSeconds, value);
+    }
+
+    public double AudioSeekPositionSeconds {
+        get => _audioSeekPositionSeconds;
+        set {
+            double clamped = Math.Max(0, Math.Min(value, AudioSeekMaximumSeconds));
+
+            if (!SetProperty(ref _audioSeekPositionSeconds, clamped)) {
+                return;
+            }
+
+            if (_isUpdatingSeekFromPlayback || !IsAudioFileLoaded) {
+                return;
+            }
+
+            try {
+                _audioPlaybackService.Seek(TimeSpan.FromSeconds(clamped));
+            }
+            catch (Exception ex) {
+                AppendLog($"Audio seek failed: {ex.Message}");
+            }
+
+            UpdateAudioTimeLabels(
+                elapsed: TimeSpan.FromSeconds(clamped),
+                duration: TimeSpan.FromSeconds(AudioSeekMaximumSeconds));
+        }
+    }
+
+    public string AudioElapsedText {
+        get => _audioElapsedText;
+        private set => SetProperty(ref _audioElapsedText, value);
+    }
+
+    public string AudioRemainingText {
+        get => _audioRemainingText;
+        private set => SetProperty(ref _audioRemainingText, value);
+    }
 
     public string InterimText {
         get => _interimText;
@@ -246,6 +320,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _liveCoordinator.UpdateReceived -= OnUpdateReceived;
         _liveCoordinator.StatusChanged -= OnStatusChanged;
         _processLogService.LogEmitted -= OnProcessLogEmitted;
+        _audioPlaybackService.PlaybackStateChanged -= OnAudioPlaybackStateChanged;
+        _audioTimelineTimer.Stop();
+        _audioTimelineTimer.Tick -= OnAudioTimelineTick;
+        _audioPlaybackService.Dispose();
         await _liveCoordinator.DisposeAsync();
         AppendLog("Disposed transcription resources.");
     }
@@ -274,12 +352,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         AppendLog("Command requested: Transcribe File.");
 
         if (SelectedEngine is null) {
-            AppendLog("Transcribe aborted: no engine selected.");
+            AppendLog("Transcribe aborted: no model selected.");
             return;
         }
 
-        if (!await EnsureSelectedEngineConfiguredAsync()) {
-            AppendLog("Transcribe aborted: selected engine is not ready.");
+        if (!EnsureSelectedModelConfigured()) {
+            AppendLog("Transcribe aborted: selected model is not ready.");
             return;
         }
 
@@ -297,6 +375,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             return;
         }
 
+        ClearOutputCore();
         AppendLog($"Selected file: {dialog.FileName}");
         try {
             long fileSize = new System.IO.FileInfo(dialog.FileName).Length;
@@ -306,6 +385,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             AppendLog("Unable to read selected file size.");
         }
 
+        TryLoadAudioPreview(dialog.FileName);
+
         _fileTranscriptionCts?.Dispose();
         _fileTranscriptionCts = new CancellationTokenSource();
         CancellationToken transcriptionToken = _fileTranscriptionCts.Token;
@@ -313,18 +394,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         IsBusy = true;
         IsFileTranscribing = true;
         StatusMessage = $"Transcribing file using {SelectedEngine.DisplayName}...";
-        AppendLog($"Submitting file transcription with {SelectedEngine.DisplayName}.");
 
         try {
-            TranscriptUpdate update = await SelectedEngine.Engine.TranscribeFileAsync(
+            TranscriptionResult result = await _transcriptionService.TranscribeFileAsync(
                 dialog.FileName,
-                BuildRequest(),
+                SelectedEngine.Id,
                 transcriptionToken);
 
-            AppendFinal(update.Text);
+            AppendFinalFromFileResult(result);
             InterimText = string.Empty;
             StatusMessage = "File transcription completed.";
-            AppendLog($"File transcription completed. Received {update.Text.Length:N0} characters.");
+            AppendLog(
+                $"File transcription completed. Received {result.Text.Length:N0} characters. " +
+                $"Logprobs={result.TokenLogprobs.Count:N0}, low-confidence={result.LowConfidenceTokens.Count:N0}.");
         }
         catch (OperationCanceledException) when (transcriptionToken.IsCancellationRequested) {
             InterimText = string.Empty;
@@ -347,22 +429,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         AppendLog("Command requested: Start Live.");
 
         if (SelectedEngine is null || IsLiveRunning) {
-            AppendLog("Start Live ignored: no engine selected or live already running.");
+            AppendLog("Start Live ignored: no model selected or live already running.");
             return;
         }
 
-        if (!await EnsureSelectedEngineConfiguredAsync()) {
-            AppendLog("Start Live aborted: selected engine is not ready.");
+        if (!EnsureSelectedModelConfigured()) {
+            AppendLog("Start Live aborted: selected model is not ready.");
             return;
         }
 
+        ClearOutputCore();
         IsBusy = true;
         AppendLog($"Starting live transcription with {SelectedEngine.DisplayName}.");
 
         try {
             await _liveCoordinator.StartAsync(
-                SelectedEngine.Engine,
-                BuildRequest(),
+                SelectedEngine.Id,
                 CancellationToken.None);
 
             IsLiveRunning = true;
@@ -405,12 +487,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     private Task ClearAsync() {
+        ClearOutputCore();
+        return Task.CompletedTask;
+    }
+
+    private void ClearOutputCore() {
         InterimText = string.Empty;
         FinalizedText = string.Empty;
         ProcessLogs.Clear();
         _statusMessage = "Transcript and logs cleared.";
         NotifyPropertyChanged(nameof(StatusMessage));
-        return Task.CompletedTask;
     }
 
     private Task CancelFileTranscriptionAsync() {
@@ -429,6 +515,91 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         AppendLog("Cancel signal sent to file transcription.");
+        return Task.CompletedTask;
+    }
+
+    private Task PlayAudioAsync() {
+        if (!IsAudioFileLoaded) {
+            return Task.CompletedTask;
+        }
+
+        try {
+            _audioPlaybackService.Play();
+            IsAudioPlaying = _audioPlaybackService.IsPlaying;
+            AppendLog($"Audio preview playing: {LoadedAudioFileName}");
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to play audio preview: {ex.Message}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task PauseAudioAsync() {
+        if (!IsAudioFileLoaded) {
+            return Task.CompletedTask;
+        }
+
+        try {
+            _audioPlaybackService.Pause();
+            IsAudioPlaying = _audioPlaybackService.IsPlaying;
+            AppendLog("Audio preview paused.");
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to pause audio preview: {ex.Message}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task StopAudioAsync() {
+        if (!IsAudioFileLoaded) {
+            return Task.CompletedTask;
+        }
+
+        try {
+            _audioPlaybackService.Stop();
+            IsAudioPlaying = _audioPlaybackService.IsPlaying;
+            AppendLog("Audio preview stopped.");
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to stop audio preview: {ex.Message}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task RewindAudioAsync() {
+        if (!IsAudioFileLoaded) {
+            return Task.CompletedTask;
+        }
+
+        try {
+            double targetSeconds = Math.Max(0, AudioSeekPositionSeconds - SeekStepSeconds);
+            AudioSeekPositionSeconds = targetSeconds;
+            AppendLog($"Audio preview rewound {SeekStepSeconds} seconds.");
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to rewind audio preview: {ex.Message}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task ForwardAudioAsync() {
+        if (!IsAudioFileLoaded) {
+            return Task.CompletedTask;
+        }
+
+        try {
+            double targetSeconds = Math.Min(AudioSeekMaximumSeconds, AudioSeekPositionSeconds + SeekStepSeconds);
+            AudioSeekPositionSeconds = targetSeconds;
+            AppendLog($"Audio preview forwarded {SeekStepSeconds} seconds.");
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to forward audio preview: {ex.Message}");
+        }
+
         return Task.CompletedTask;
     }
 
@@ -452,12 +623,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return IsFileTranscribing;
     }
 
+    private bool CanPlayAudio() {
+        return IsAudioFileLoaded && !IsAudioPlaying;
+    }
+
+    private bool CanPauseAudio() {
+        return IsAudioFileLoaded && IsAudioPlaying;
+    }
+
+    private bool CanStopAudio() {
+        return IsAudioFileLoaded;
+    }
+
+    private bool CanSeekAudio() {
+        return IsAudioFileLoaded;
+    }
+
     private void RefreshCommandStates() {
         TranscribeFileCommand.RaiseCanExecuteChanged();
         StartLiveCommand.RaiseCanExecuteChanged();
         StopLiveCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged();
+        PlayAudioCommand.RaiseCanExecuteChanged();
+        PauseAudioCommand.RaiseCanExecuteChanged();
+        StopAudioCommand.RaiseCanExecuteChanged();
+        RewindAudioCommand.RaiseCanExecuteChanged();
+        ForwardAudioCommand.RaiseCanExecuteChanged();
     }
 
     private void NotifyInteractionAvailabilityChanged() {
@@ -465,71 +657,191 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         NotifyPropertyChanged(nameof(IsOpenAiSettingsEnabled));
     }
 
-    private async Task<bool> EnsureSelectedEngineConfiguredAsync() {
+    private bool EnsureSelectedModelConfigured() {
         if (SelectedEngine is null) {
-            AppendLog("Engine configuration check failed: no selected engine.");
+            AppendLog("Model configuration check failed: no selected model.");
             return false;
         }
 
-        if (string.Equals(SelectedEngine.Engine.Id, "whisper_cpp", StringComparison.OrdinalIgnoreCase)) {
-            AppendLog("Preparing local whisper.cpp engine assets.");
-            StatusMessage = "Preparing local whisper.cpp engine...";
-            WhisperProvisioningResult provisioning = await _whisperProvisioningService.EnsureReadyAsync(CancellationToken.None);
-
-            if (!provisioning.IsReady) {
-                RaiseError(provisioning.Message);
-                AppendLog($"whisper.cpp provisioning failed: {provisioning.Message}");
-                return false;
-            }
-
-            StatusMessage = provisioning.Message;
-            AppendLog($"whisper.cpp provisioning result: {provisioning.Message}");
-        }
-        else if (IsOpenAiEngineId(SelectedEngine.Engine.Id)) {
-            if (string.IsNullOrWhiteSpace(OpenAiApiKey)) {
-                RaiseError("OpenAI API key is required for the online engine.");
-                AppendLog("OpenAI engine blocked: API key missing.");
-                return false;
-            }
-
-            AppendLog("OpenAI engine configuration verified.");
+        if (string.IsNullOrWhiteSpace(OpenAiApiKey)) {
+            RaiseError("OpenAI API key is required.");
+            AppendLog("OpenAI transcription blocked: API key missing.");
+            return false;
         }
 
+        AppendLog("OpenAI transcription configuration verified.");
         return true;
     }
 
-    private TranscriptionRequest BuildRequest() {
-        var request = new TranscriptionRequest(
-            IncludeTimestamps: true,
-            IncludePunctuation: true,
-            EnableDiarization: true,
-            Language: FixedTranscriptionLanguage);
-
-        AppendLog(
-            $"Transcription request: timestamps={request.IncludeTimestamps}, punctuation={request.IncludePunctuation}, diarization={request.EnableDiarization}, language='{request.Language}'.");
-
-        return request;
+    private void TryLoadAudioPreview(string filePath) {
+        try {
+            _audioPlaybackService.LoadFile(filePath);
+            LoadedAudioFilePath = _audioPlaybackService.LoadedFilePath ?? filePath;
+            IsAudioPlaying = _audioPlaybackService.IsPlaying;
+            UpdateAudioTimelineFromPlayback();
+            AppendLog($"Audio preview loaded: {LoadedAudioFileName}");
+        }
+        catch (Exception ex) {
+            LoadedAudioFilePath = string.Empty;
+            IsAudioPlaying = false;
+            ResetAudioTimeline();
+            AppendLog($"Audio preview load failed: {ex.Message}");
+        }
     }
 
-    private void AppendFinal(string text) {
+    private void AppendFinalFromFileResult(TranscriptionResult result) {
+        TimeSpan timelineDuration = ResolveFileTimelineDuration(result);
+        bool hasMeaningfulTimeline = HasMeaningfulTimeline(result.TimedLines);
+
+        IEnumerable<TranscriptionTimedLine> lines =
+            result.TimedLines is not null && result.TimedLines.Count > 0 && hasMeaningfulTimeline
+                ? result.TimedLines
+                : BuildMediaTimelineLines(result.Text, timelineDuration);
+
+        IEnumerable<string> formatted = lines
+            .Where(line => !string.IsNullOrWhiteSpace(line.Text))
+            .Select(line => $"{TranscriptLineIndent}{FormatFileTimelineTimestamp(line.StartOffset)} {line.Text.Trim()}");
+
+        AppendFinalLines(formatted, result.Text);
+    }
+
+    private void AppendFinalWithWallClockTimestamp(string text) {
         if (string.IsNullOrWhiteSpace(text)) {
             return;
         }
 
-        string trimmed = text.Trim();
+        string timestamp = DateTime.Now.ToString("HH:mm:ss");
+        IEnumerable<string> formatted = SplitTranscriptLines(text)
+            .Select(line => $"{TranscriptLineIndent}{timestamp} {line}");
+
+        AppendFinalLines(formatted, text);
+    }
+
+    private void AppendFinalLines(IEnumerable<string> lines, string rawTextForLog) {
+        string[] normalized = lines
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(line => line.Trim())
+            .ToArray();
+
+        if (normalized.Length == 0) {
+            return;
+        }
+
+        string block = string.Join(Environment.NewLine, normalized);
 
         FinalizedText = string.IsNullOrWhiteSpace(FinalizedText)
-            ? trimmed
-            : $"{FinalizedText}{Environment.NewLine}{trimmed}";
+            ? block
+            : $"{FinalizedText}{Environment.NewLine}{block}";
 
-        AppendLog($"Finalized text appended ({trimmed.Length:N0} chars): {TrimForLog(trimmed)}");
+        AppendLog($"Finalized text appended ({rawTextForLog.Trim().Length:N0} chars): {TrimForLog(rawTextForLog)}");
+    }
+
+    private TimeSpan ResolveFileTimelineDuration(TranscriptionResult result) {
+        if (result.Duration is not null && result.Duration.Value > TimeSpan.Zero) {
+            return result.Duration.Value;
+        }
+
+        TimeSpan previewDuration = _audioPlaybackService.Duration;
+        if (previewDuration > TimeSpan.Zero) {
+            return previewDuration;
+        }
+
+        return TimeSpan.Zero;
+    }
+
+    private static bool HasMeaningfulTimeline(IReadOnlyList<TranscriptionTimedLine>? timedLines) {
+        if (timedLines is null || timedLines.Count == 0) {
+            return false;
+        }
+
+        return timedLines.Any(line => line.StartOffset > TimeSpan.Zero);
+    }
+
+    private static IEnumerable<TranscriptionTimedLine> BuildMediaTimelineLines(string text, TimeSpan timelineDuration) {
+        string[] parts = SplitTranscriptSegments(text).ToArray();
+
+        if (parts.Length == 0) {
+            return Array.Empty<TranscriptionTimedLine>();
+        }
+
+        var output = new List<TranscriptionTimedLine>(parts.Length);
+        bool hasDuration = timelineDuration > TimeSpan.Zero;
+
+        int totalWeight = parts.Sum(part => Math.Max(part.Length, 1));
+        int cumulativeWeight = 0;
+
+        for (int index = 0; index < parts.Length; index++) {
+            TimeSpan offset;
+
+            if (hasDuration && totalWeight > 0) {
+                double ratio = cumulativeWeight / (double)totalWeight;
+                offset = TimeSpan.FromTicks((long)(timelineDuration.Ticks * ratio));
+            }
+            else {
+                offset = TimeSpan.FromSeconds(index);
+            }
+
+            output.Add(
+                new TranscriptionTimedLine(
+                    parts[index],
+                    StartOffset: offset));
+
+            cumulativeWeight += Math.Max(parts[index].Length, 1);
+        }
+
+        return output;
+    }
+
+    private static IEnumerable<string> SplitTranscriptLines(string text) {
+        if (string.IsNullOrWhiteSpace(text)) {
+            return Array.Empty<string>();
+        }
+
+        return text
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line));
+    }
+
+    private static IEnumerable<string> SplitTranscriptSegments(string text) {
+        string[] byLine = SplitTranscriptLines(text).ToArray();
+
+        if (byLine.Length > 1) {
+            return byLine;
+        }
+
+        if (byLine.Length == 0) {
+            return Array.Empty<string>();
+        }
+
+        string source = byLine[0];
+        string[] bySentence = Regex.Split(source, @"(?<=[\.\!\?])\s+")
+            .Select(part => part.Trim())
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .ToArray();
+
+        return bySentence.Length > 0 ? bySentence : byLine;
+    }
+
+    private static string FormatFileTimelineTimestamp(TimeSpan offset) {
+        if (offset < TimeSpan.Zero) {
+            offset = TimeSpan.Zero;
+        }
+
+        int totalMinutes = (int)offset.TotalMinutes;
+        return $"{totalMinutes:00}:{offset.Seconds:00}";
     }
 
     private void OnUpdateReceived(object? sender, TranscriptUpdate update) {
         _uiContext.Post(_ => {
             if (update.IsFinal) {
                 AppendLogCore($"Realtime final update received: {TrimForLog(update.Text)}");
-                AppendFinal(update.Text);
+
+                if (update.LowConfidenceTokens is not null && update.LowConfidenceTokens.Count > 0) {
+                    AppendLogCore($"Realtime final update contains {update.LowConfidenceTokens.Count:N0} low-confidence token(s).");
+                }
+
+                AppendFinalWithWallClockTimestamp(update.Text);
                 InterimText = string.Empty;
                 return;
             }
@@ -552,6 +864,92 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private void OnProcessLogEmitted(object? sender, string message) {
         _uiContext.Post(_ => AppendLogCore(message), null);
+    }
+
+    private void OnAudioPlaybackStateChanged(object? sender, EventArgs e) {
+        _uiContext.Post(_ => {
+            IsAudioPlaying = _audioPlaybackService.IsPlaying;
+            string? loadedFilePath = _audioPlaybackService.LoadedFilePath;
+            LoadedAudioFilePath = loadedFilePath ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(LoadedAudioFilePath)) {
+                ResetAudioTimeline();
+            }
+            else {
+                UpdateAudioTimelineFromPlayback();
+            }
+        }, null);
+    }
+
+    private void OnAudioTimelineTick(object? sender, EventArgs e) {
+        if (!IsAudioFileLoaded) {
+            return;
+        }
+
+        UpdateAudioTimelineFromPlayback();
+    }
+
+    private void UpdateAudioTimelineFromPlayback() {
+        TimeSpan duration = _audioPlaybackService.Duration;
+        TimeSpan position = _audioPlaybackService.Position;
+
+        if (duration < TimeSpan.Zero) {
+            duration = TimeSpan.Zero;
+        }
+
+        if (position < TimeSpan.Zero) {
+            position = TimeSpan.Zero;
+        }
+
+        if (duration > TimeSpan.Zero && position > duration) {
+            position = duration;
+        }
+
+        AudioSeekMaximumSeconds = Math.Max(duration.TotalSeconds, 0);
+
+        _isUpdatingSeekFromPlayback = true;
+        try {
+            AudioSeekPositionSeconds = Math.Min(position.TotalSeconds, AudioSeekMaximumSeconds);
+        }
+        finally {
+            _isUpdatingSeekFromPlayback = false;
+        }
+
+        UpdateAudioTimeLabels(position, duration);
+    }
+
+    private void ResetAudioTimeline() {
+        AudioSeekMaximumSeconds = 0;
+
+        _isUpdatingSeekFromPlayback = true;
+        try {
+            AudioSeekPositionSeconds = 0;
+        }
+        finally {
+            _isUpdatingSeekFromPlayback = false;
+        }
+
+        AudioElapsedText = "00:00";
+        AudioRemainingText = "-00:00";
+    }
+
+    private void UpdateAudioTimeLabels(TimeSpan elapsed, TimeSpan duration) {
+        TimeSpan remaining = duration - elapsed;
+
+        if (remaining < TimeSpan.Zero) {
+            remaining = TimeSpan.Zero;
+        }
+
+        AudioElapsedText = FormatPlaybackTime(elapsed);
+        AudioRemainingText = $"-{FormatPlaybackTime(remaining)}";
+    }
+
+    private static string FormatPlaybackTime(TimeSpan value) {
+        if (value.TotalHours >= 1) {
+            return value.ToString(@"hh\:mm\:ss");
+        }
+
+        return value.ToString(@"mm\:ss");
     }
 
     private void RaiseError(string message) {
@@ -628,9 +1026,5 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         return $"{trimmed[..4]}...{trimmed[^4..]}";
-    }
-
-    private static bool IsOpenAiEngineId(string engineId) {
-        return engineId.StartsWith("openai_", StringComparison.OrdinalIgnoreCase);
     }
 }

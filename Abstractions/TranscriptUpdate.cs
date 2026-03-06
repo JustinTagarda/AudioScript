@@ -7,5 +7,7 @@ public sealed record TranscriptUpdate(
     TimeSpan? SegmentStart = null,
     TimeSpan? SegmentEnd = null,
     string? Speaker = null,
-    string? Language = null
+    string? Language = null,
+    IReadOnlyList<TranscriptionTokenLogprob>? TokenLogprobs = null,
+    IReadOnlyList<LowConfidenceToken>? LowConfidenceTokens = null
 );

@@ -2,10 +2,10 @@ using System.Threading.Channels;
 using AudioTranscript.Abstractions;
 using AudioTranscript.Audio;
 
-namespace AudioTranscript.Engines;
+namespace AudioTranscript.Services;
 
 public sealed class ChunkedRealtimeTranscriptionSession : IRealtimeTranscriptionSession {
-    private readonly Func<byte[], bool, CancellationToken, Task<string>> _transcribeChunkAsync;
+    private readonly Func<byte[], bool, CancellationToken, Task<TranscriptionResult>> _transcribeChunkAsync;
     private readonly Channel<byte[]> _channel;
     private readonly object _bufferLock = new();
     private readonly List<byte> _buffer = new();
@@ -20,7 +20,7 @@ public sealed class ChunkedRealtimeTranscriptionSession : IRealtimeTranscription
     private bool _started;
 
     public ChunkedRealtimeTranscriptionSession(
-        Func<byte[], bool, CancellationToken, Task<string>> transcribeChunkAsync,
+        Func<byte[], bool, CancellationToken, Task<TranscriptionResult>> transcribeChunkAsync,
         string? language,
         int interimWindowSeconds = 2,
         int finalWindowSeconds = 5,
@@ -91,7 +91,7 @@ public sealed class ChunkedRealtimeTranscriptionSession : IRealtimeTranscription
 
     private async Task ProcessLoopAsync(CancellationToken cancellationToken) {
         while (await _channel.Reader.WaitToReadAsync(cancellationToken)) {
-            while (_channel.Reader.TryRead(out var chunk)) {
+            while (_channel.Reader.TryRead(out byte[]? chunk)) {
                 lock (_bufferLock) {
                     _buffer.AddRange(chunk);
                 }
@@ -158,24 +158,26 @@ public sealed class ChunkedRealtimeTranscriptionSession : IRealtimeTranscription
     }
 
     private async Task EmitUpdateAsync(byte[] pcmChunk, bool isFinal, CancellationToken cancellationToken) {
-        var text = await _transcribeChunkAsync(pcmChunk, isFinal, cancellationToken);
+        TranscriptionResult result = await _transcribeChunkAsync(pcmChunk, isFinal, cancellationToken);
 
-        if (string.IsNullOrWhiteSpace(text)) {
+        if (string.IsNullOrWhiteSpace(result.Text)) {
             return;
         }
 
-        var segmentStart = TimeSpan.FromSeconds(_finalizedBytes / (double)AudioFormatConstants.BytesPerSecond);
-        var segmentEnd = TimeSpan.FromSeconds(
+        TimeSpan segmentStart = TimeSpan.FromSeconds(_finalizedBytes / (double)AudioFormatConstants.BytesPerSecond);
+        TimeSpan segmentEnd = TimeSpan.FromSeconds(
             (_finalizedBytes + pcmChunk.Length) / (double)AudioFormatConstants.BytesPerSecond);
 
         UpdateReceived?.Invoke(
             this,
             new TranscriptUpdate(
-                Text: text.Trim(),
+                Text: result.Text.Trim(),
                 IsFinal: isFinal,
                 CreatedAt: DateTimeOffset.UtcNow,
                 SegmentStart: segmentStart,
                 SegmentEnd: segmentEnd,
-                Language: _language));
+                Language: _language,
+                TokenLogprobs: result.TokenLogprobs,
+                LowConfidenceTokens: result.LowConfidenceTokens));
     }
 }

@@ -26,6 +26,7 @@
                 Color="#FFC0D9E4"/>
         <SolidColorBrush x:Key="InterimTextBrush"
                 Color="#FF234A5D"/>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
 
         <Style x:Key="CardStyle"
                 TargetType="Border">
@@ -343,6 +344,37 @@
             <Setter Property="Margin"
                     Value="8,0,4,0"/>
         </Style>
+
+        <Style x:Key="PlaybackActionButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource ActionButtonStyle}">
+            <Setter Property="Height"
+                    Value="29"/>
+            <Setter Property="MinHeight"
+                    Value="29"/>
+            <Setter Property="Padding"
+                    Value="12,4"/>
+        </Style>
+
+        <Style x:Key="PlaybackSecondaryButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource SecondaryButtonStyle}">
+            <Setter Property="Height"
+                    Value="29"/>
+            <Setter Property="MinHeight"
+                    Value="29"/>
+            <Setter Property="Padding"
+                    Value="12,4"/>
+        </Style>
+
+        <Style x:Key="PlaybackIconButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource IconActionButtonStyle}">
+            <Setter Property="Height"
+                    Value="29"/>
+            <Setter Property="MinHeight"
+                    Value="29"/>
+        </Style>
     </Window.Resources>
 
     <Grid Background="#FFF4F7F8">
@@ -440,6 +472,99 @@
                                         IsEnabled="{Binding IsOpenAiSettingsEnabled}"
                                         Click="OpenOpenAiSettings_Click"/>
                             </UniformGrid>
+
+                            <TextBlock Text="Audio Preview"
+                                       Style="{StaticResource CaptionTextStyle}"
+                                       Margin="0,12,0,6"/>
+                            <Border Background="#FFFDFEFF"
+                                    BorderBrush="#FFD2E2E7"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="10">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding LoadedAudioFileName}"
+                                               FontFamily="Segoe UI Variable Text"
+                                               FontSize="12"
+                                               Foreground="{StaticResource SecondaryTextBrush}"
+                                               TextWrapping="Wrap"/>
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="0"
+                                                Content="Play"
+                                                Style="{StaticResource PlaybackActionButtonStyle}"
+                                                Command="{Binding PlayAudioCommand}"/>
+                                        <Button Grid.Column="1"
+                                                Content="Pause"
+                                                Style="{StaticResource PlaybackSecondaryButtonStyle}"
+                                                Command="{Binding PauseAudioCommand}"/>
+                                        <Button Grid.Column="2"
+                                                Content="Stop"
+                                                Style="{StaticResource PlaybackSecondaryButtonStyle}"
+                                                Command="{Binding StopAudioCommand}"/>
+                                        <Button Grid.Column="3"
+                                                ToolTip="Rewind 5 seconds"
+                                                AutomationProperties.Name="Rewind 5 seconds"
+                                                Style="{StaticResource PlaybackIconButtonStyle}"
+                                                Command="{Binding RewindAudioCommand}">
+                                            <Viewbox Width="11.2"
+                                                     Height="11.2"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center">
+                                                <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                      Stretch="Uniform"
+                                                      Data="M14,4 L8,10 L14,16 Z M8.5,4 L2.5,10 L8.5,16 Z"/>
+                                            </Viewbox>
+                                        </Button>
+                                        <Button Grid.Column="4"
+                                                ToolTip="Forward 5 seconds"
+                                                AutomationProperties.Name="Forward 5 seconds"
+                                                Style="{StaticResource PlaybackIconButtonStyle}"
+                                                Command="{Binding ForwardAudioCommand}">
+                                            <Viewbox Width="11.2"
+                                                     Height="11.2"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center">
+                                                <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                      Stretch="Uniform"
+                                                      Data="M2,4 L8,10 L2,16 Z M7.5,4 L13.5,10 L7.5,16 Z"/>
+                                            </Viewbox>
+                                        </Button>
+                                    </Grid>
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding AudioElapsedText}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,8,0"
+                                                   FontFamily="Consolas"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource SecondaryTextBrush}"/>
+                                        <Slider Grid.Column="1"
+                                                Minimum="0"
+                                                Maximum="{Binding AudioSeekMaximumSeconds}"
+                                                Value="{Binding AudioSeekPositionSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                VerticalAlignment="Center"
+                                                IsEnabled="{Binding IsAudioFileLoaded}"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding AudioRemainingText}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="8,0,0,0"
+                                                   FontFamily="Consolas"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource SecondaryTextBrush}"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
 
                             <Separator Margin="0,12,0,8"/>
                         </StackPanel>
@@ -542,11 +667,12 @@
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="16"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <StackPanel Grid.Row="0">
+                        <StackPanel Grid.Row="0"
+                                    Margin="0,0,0,16"
+                                    Visibility="{Binding IsLiveRunning, Converter={StaticResource BoolToVisibilityConverter}}">
                             <TextBlock Text="Interim Output"
                                        FontFamily="Bahnschrift"
                                        FontSize="20"
@@ -567,7 +693,7 @@
                             </Border>
                         </StackPanel>
 
-                        <Grid Grid.Row="2">
+                        <Grid Grid.Row="1">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>

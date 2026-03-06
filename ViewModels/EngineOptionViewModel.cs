@@ -3,13 +3,15 @@ using AudioTranscript.Abstractions;
 namespace AudioTranscript.ViewModels;
 
 public sealed class EngineOptionViewModel {
-    public EngineOptionViewModel(ITranscriptionEngine engine) {
-        Engine = engine;
+    public EngineOptionViewModel(TranscriptionModelOption model) {
+        Model = model;
     }
 
-    public ITranscriptionEngine Engine { get; }
+    public TranscriptionModelOption Model { get; }
 
-    public string DisplayName => Engine.DisplayName;
+    public string Id => Model.Id;
+
+    public string DisplayName => Model.DisplayName;
 
     public override string ToString() {
         return DisplayName;
