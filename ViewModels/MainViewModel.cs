@@ -26,6 +26,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private bool _isBusy;
     private bool _isLiveRunning;
     private bool _isFileTranscribing;
+    private CancellationTokenSource? _fileTranscriptionCts;
 
     public MainViewModel(
         TranscriptionEngineRegistry engineRegistry,
@@ -52,19 +53,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         TranscribeFileCommand = new AsyncRelayCommand(TranscribeFileAsync, CanTranscribeFile);
         StartLiveCommand = new AsyncRelayCommand(StartLiveAsync, CanStartLive);
         StopLiveCommand = new AsyncRelayCommand(StopLiveAsync, CanStopLive);
-        ClearCommand = new AsyncRelayCommand(ClearAsync);
+        ClearCommand = new AsyncRelayCommand(ClearAsync, CanClear);
+        CancelCommand = new AsyncRelayCommand(CancelFileTranscriptionAsync, CanCancelFileTranscription);
 
         _liveCoordinator.UpdateReceived += OnUpdateReceived;
         _liveCoordinator.StatusChanged += OnStatusChanged;
         _processLogService.LogEmitted += OnProcessLogEmitted;
 
-        EngineOptionViewModel? initialEngine = Engines.FirstOrDefault();
+        EngineOptionViewModel? localEngine = Engines.FirstOrDefault(engine =>
+            string.Equals(engine.Engine.Id, "whisper_cpp", StringComparison.OrdinalIgnoreCase));
+        EngineOptionViewModel? initialEngine;
 
         if (!string.IsNullOrWhiteSpace(_openAiApiKey)) {
             initialEngine = Engines.FirstOrDefault(engine =>
-                string.Equals(engine.Engine.Id, "openai_gpt4o_transcribe", StringComparison.OrdinalIgnoreCase))
+                string.Equals(engine.Engine.Id, "openai_gpt4o_mini_transcribe", StringComparison.OrdinalIgnoreCase))
                 ?? Engines.FirstOrDefault(engine => IsOpenAiEngineId(engine.Engine.Id))
-                ?? initialEngine;
+                ?? localEngine
+                ?? Engines.FirstOrDefault();
+        }
+        else {
+            initialEngine = localEngine ?? Engines.FirstOrDefault();
         }
 
         SelectedEngine = initialEngine;
@@ -90,8 +98,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         if (!string.IsNullOrWhiteSpace(_openAiApiKey)
             && SelectedEngine is not null
+            && string.Equals(SelectedEngine.Engine.Id, "openai_gpt4o_mini_transcribe", StringComparison.OrdinalIgnoreCase)) {
+            AppendLogCore("Startup selection: online gpt-4o-mini-transcribe selected because API key is present.");
+        }
+        else if (!string.IsNullOrWhiteSpace(_openAiApiKey)
+            && SelectedEngine is not null
             && IsOpenAiEngineId(SelectedEngine.Engine.Id)) {
             AppendLogCore("Startup selection: online OpenAI engine selected because API key is present.");
+        }
+        else if (string.IsNullOrWhiteSpace(_openAiApiKey)
+            && SelectedEngine is not null
+            && string.Equals(SelectedEngine.Engine.Id, "whisper_cpp", StringComparison.OrdinalIgnoreCase)) {
+            AppendLogCore("Startup selection: local whisper.cpp selected because OpenAI API key is missing.");
         }
     }
 
@@ -109,6 +127,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public AsyncRelayCommand ClearCommand { get; }
 
+    public AsyncRelayCommand CancelCommand { get; }
+
     public EngineOptionViewModel? SelectedEngine {
         get => _selectedEngine;
         set {
@@ -117,6 +137,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             NotifyPropertyChanged(nameof(IsOpenAiEngineSelected));
+            NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
 
             if (value is null) {
@@ -131,6 +152,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public bool IsOpenAiEngineSelected =>
         SelectedEngine is not null
         && IsOpenAiEngineId(SelectedEngine.Engine.Id);
+
+    public bool IsEngineSelectionEnabled =>
+        !IsBusy && !IsLiveRunning && !IsFileTranscribing;
+
+    public bool IsOpenAiSettingsEnabled =>
+        IsOpenAiEngineSelected && !IsBusy && !IsLiveRunning && !IsFileTranscribing;
 
     public string InterimText {
         get => _interimText;
@@ -159,6 +186,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             AppendLog($"Busy state: {(value ? "ON" : "OFF")}.");
+            NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
         }
     }
@@ -171,13 +199,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             AppendLog($"Live state: {(value ? "RUNNING" : "STOPPED")}.");
+            NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
         }
     }
 
     public bool IsFileTranscribing {
         get => _isFileTranscribing;
-        private set => SetProperty(ref _isFileTranscribing, value);
+        private set {
+            if (!SetProperty(ref _isFileTranscribing, value)) {
+                return;
+            }
+
+            NotifyInteractionAvailabilityChanged();
+            RefreshCommandStates();
+        }
     }
 
     public string OpenAiApiKey {
@@ -196,6 +232,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public async ValueTask DisposeAsync() {
         AppendLog("Disposing transcription resources...");
+
+        try {
+            _fileTranscriptionCts?.Cancel();
+        }
+        catch (ObjectDisposedException) {
+            // Ignore cancellation race at teardown.
+        }
+
+        _fileTranscriptionCts?.Dispose();
+        _fileTranscriptionCts = null;
+
         _liveCoordinator.UpdateReceived -= OnUpdateReceived;
         _liveCoordinator.StatusChanged -= OnStatusChanged;
         _processLogService.LogEmitted -= OnProcessLogEmitted;
@@ -259,6 +306,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             AppendLog("Unable to read selected file size.");
         }
 
+        _fileTranscriptionCts?.Dispose();
+        _fileTranscriptionCts = new CancellationTokenSource();
+        CancellationToken transcriptionToken = _fileTranscriptionCts.Token;
+
         IsBusy = true;
         IsFileTranscribing = true;
         StatusMessage = $"Transcribing file using {SelectedEngine.DisplayName}...";
@@ -268,17 +319,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             TranscriptUpdate update = await SelectedEngine.Engine.TranscribeFileAsync(
                 dialog.FileName,
                 BuildRequest(),
-                CancellationToken.None);
+                transcriptionToken);
 
             AppendFinal(update.Text);
             InterimText = string.Empty;
             StatusMessage = "File transcription completed.";
             AppendLog($"File transcription completed. Received {update.Text.Length:N0} characters.");
         }
+        catch (OperationCanceledException) when (transcriptionToken.IsCancellationRequested) {
+            InterimText = string.Empty;
+            StatusMessage = "File transcription canceled.";
+            AppendLog("File transcription canceled by user.");
+        }
         catch (Exception ex) {
             RaiseError($"File transcription failed: {ex.Message}");
         }
         finally {
+            _fileTranscriptionCts?.Dispose();
+            _fileTranscriptionCts = null;
             IsFileTranscribing = false;
             IsBusy = false;
             AppendLog("Command finished: Transcribe File.");
@@ -355,16 +413,43 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return Task.CompletedTask;
     }
 
+    private Task CancelFileTranscriptionAsync() {
+        if (!IsFileTranscribing) {
+            return Task.CompletedTask;
+        }
+
+        AppendLog("Command requested: Cancel.");
+        StatusMessage = "Canceling file transcription...";
+
+        try {
+            _fileTranscriptionCts?.Cancel();
+        }
+        catch (ObjectDisposedException) {
+            // Ignore cancellation race at teardown.
+        }
+
+        AppendLog("Cancel signal sent to file transcription.");
+        return Task.CompletedTask;
+    }
+
     private bool CanTranscribeFile() {
-        return SelectedEngine is not null && !IsBusy && !IsLiveRunning;
+        return SelectedEngine is not null && !IsBusy && !IsLiveRunning && !IsFileTranscribing;
     }
 
     private bool CanStartLive() {
-        return SelectedEngine is not null && !IsBusy && !IsLiveRunning;
+        return SelectedEngine is not null && !IsBusy && !IsLiveRunning && !IsFileTranscribing;
     }
 
     private bool CanStopLive() {
-        return IsLiveRunning && !IsBusy;
+        return IsLiveRunning && !IsBusy && !IsFileTranscribing;
+    }
+
+    private bool CanClear() {
+        return !IsBusy && !IsLiveRunning && !IsFileTranscribing;
+    }
+
+    private bool CanCancelFileTranscription() {
+        return IsFileTranscribing;
     }
 
     private void RefreshCommandStates() {
@@ -372,6 +457,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         StartLiveCommand.RaiseCanExecuteChanged();
         StopLiveCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
+        CancelCommand.RaiseCanExecuteChanged();
+    }
+
+    private void NotifyInteractionAvailabilityChanged() {
+        NotifyPropertyChanged(nameof(IsEngineSelectionEnabled));
+        NotifyPropertyChanged(nameof(IsOpenAiSettingsEnabled));
     }
 
     private async Task<bool> EnsureSelectedEngineConfiguredAsync() {
