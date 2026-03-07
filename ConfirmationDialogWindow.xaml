@@ -1,0 +1,72 @@
+<Window x:Class="AudioTranscript.ConfirmationDialogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Confirm Action"
+        Width="360"
+        Height="170"
+        MinWidth="360"
+        MinHeight="170"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Background="#FFF4F7F8">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="#CCFFFFFF"
+                BorderBrush="#55B7CAD2"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="6" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0"
+                        Background="#FFD7A14B"
+                        CornerRadius="3" />
+
+                <StackPanel Grid.Column="1"
+                            Margin="10,0,0,0">
+                    <TextBlock x:Name="DialogTitleText"
+                               FontFamily="Bahnschrift"
+                               FontSize="18"
+                               Foreground="#FF15232D" />
+                    <TextBlock x:Name="DialogMessageText"
+                               Margin="0,8,0,0"
+                               FontFamily="Segoe UI Variable Text"
+                               FontSize="11"
+                               Foreground="#FF49616F"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,8,0,0">
+            <Button x:Name="CancelButton"
+                    Width="88"
+                    MinHeight="28"
+                    FontSize="12"
+                    Style="{StaticResource SecondaryButtonStyle}"
+                    Click="CancelButton_Click" />
+            <Button x:Name="ProceedButton"
+                    Width="88"
+                    MinHeight="28"
+                    FontSize="12"
+                    Style="{StaticResource DangerButtonStyle}"
+                    Click="ProceedButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

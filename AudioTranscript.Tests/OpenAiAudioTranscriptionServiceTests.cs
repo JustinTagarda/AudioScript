@@ -162,7 +162,7 @@ public sealed class OpenAiAudioTranscriptionServiceTests {
                     return Task.FromResult(
                         new HttpResponseMessage(HttpStatusCode.OK) {
                             Content = new StringContent(
-                                $"{{\"text\":\"chunk-{chunkCall}\"}}",
+                                $"{{\"text\":\"chunk-{chunkCall}\",\"segments\":[{{\"start\":0.0,\"end\":1.0,\"text\":\"chunk-{chunkCall}\"}}]}}",
                                 Encoding.UTF8,
                                 "application/json"),
                         });
@@ -198,6 +198,8 @@ public sealed class OpenAiAudioTranscriptionServiceTests {
 
         return new OpenAiAudioTranscriptionService(
             new AudioStandardizer(),
+            new AudioChunkPlanner(),
+            new TranscriptionSegmentMerger(),
             httpClient,
             options,
             new ProcessLogService(),

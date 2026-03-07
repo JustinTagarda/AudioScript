@@ -62,82 +62,119 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
             throw new FileNotFoundException("Audio file was not found.", fullPath);
         }
 
+        var reader = new AudioFileReader(fullPath);
+        var output = new WaveOutEvent();
+        output.Init(reader);
+        output.PlaybackStopped += OnPlaybackStopped;
+
+        WaveOutEvent? previousOutput;
+        AudioFileReader? previousReader;
+
         lock (_sync) {
-            DisposePlaybackCore();
-
-            var reader = new AudioFileReader(fullPath);
-            var output = new WaveOutEvent();
-            output.Init(reader);
-            output.PlaybackStopped += OnPlaybackStopped;
-
+            previousOutput = _output;
+            previousReader = _reader;
             _reader = reader;
             _output = output;
             _loadedFilePath = fullPath;
         }
 
+        DisposePlaybackCore(previousOutput, previousReader);
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void UnloadFile() {
+        WaveOutEvent? output;
+        AudioFileReader? reader;
+
         lock (_sync) {
-            DisposePlaybackCore();
+            output = _output;
+            reader = _reader;
+            _output = null;
+            _reader = null;
             _loadedFilePath = null;
         }
 
+        DisposePlaybackCore(output, reader);
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void Play() {
+        WaveOutEvent? output;
+        AudioFileReader? reader;
+
         lock (_sync) {
-            if (_output is null || _reader is null) {
+            output = _output;
+            reader = _reader;
+
+            if (output is null || reader is null) {
                 throw new InvalidOperationException("No audio file is loaded.");
             }
 
-            if (_reader.Position >= _reader.Length) {
-                _reader.Position = 0;
+            if (reader.Position >= reader.Length) {
+                reader.Position = 0;
             }
-
-            _output.Play();
         }
 
+        output.Play();
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void Pause() {
-        lock (_sync) {
-            if (_output is null) {
-                return;
-            }
+        WaveOutEvent? output;
 
-            if (_output.PlaybackState == PlaybackState.Playing) {
-                _output.Pause();
-            }
+        lock (_sync) {
+            output = _output;
+        }
+
+        if (output is null) {
+            return;
+        }
+
+        if (output.PlaybackState == PlaybackState.Playing) {
+            output.Pause();
         }
 
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void Stop() {
+        WaveOutEvent? output;
+        AudioFileReader? reader;
+
         lock (_sync) {
-            if (_output is null || _reader is null) {
+            output = _output;
+            reader = _reader;
+        }
+
+        if (output is null || reader is null) {
+            return;
+        }
+
+        output.Stop();
+
+        lock (_sync) {
+            if (!ReferenceEquals(reader, _reader)) {
                 return;
             }
 
-            _output.Stop();
-            _reader.Position = 0;
+            reader.Position = 0;
         }
 
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void Seek(TimeSpan position) {
+        AudioFileReader? reader;
+        TimeSpan clamped = position;
+
         lock (_sync) {
-            if (_reader is null) {
+            reader = _reader;
+
+            if (reader is null) {
                 return;
             }
 
-            TimeSpan duration = _reader.TotalTime;
-            TimeSpan clamped = position;
+            TimeSpan duration = reader.TotalTime;
 
             if (clamped < TimeSpan.Zero) {
                 clamped = TimeSpan.Zero;
@@ -145,8 +182,14 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
             else if (duration > TimeSpan.Zero && clamped > duration) {
                 clamped = duration;
             }
+        }
 
-            _reader.CurrentTime = clamped;
+        lock (_sync) {
+            if (!ReferenceEquals(reader, _reader)) {
+                return;
+            }
+
+            reader.CurrentTime = clamped;
         }
 
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
@@ -166,16 +209,12 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void DisposePlaybackCore() {
-        if (_output is not null) {
-            _output.PlaybackStopped -= OnPlaybackStopped;
-            _output.Dispose();
-            _output = null;
+    private void DisposePlaybackCore(WaveOutEvent? output, AudioFileReader? reader) {
+        if (output is not null) {
+            output.PlaybackStopped -= OnPlaybackStopped;
         }
 
-        if (_reader is not null) {
-            _reader.Dispose();
-            _reader = null;
-        }
+        output?.Dispose();
+        reader?.Dispose();
     }
 }

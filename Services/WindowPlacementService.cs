@@ -39,6 +39,9 @@ public sealed class WindowPlacementService {
         }
 
         bounds = ClampToVirtualScreen(bounds);
+        if (!HasAccessibleTitleBar(bounds)) {
+            bounds = CenterOnPrimaryScreen(bounds);
+        }
 
         window.WindowStartupLocation = WindowStartupLocation.Manual;
         window.Left = bounds.Left;
@@ -153,6 +156,20 @@ public sealed class WindowPlacementService {
         var clampedTop = Math.Min(Math.Max(bounds.Top, virtualTop), maxTop);
 
         return new Rect(clampedLeft, clampedTop, clampedWidth, clampedHeight);
+    }
+
+    private static bool HasAccessibleTitleBar(Rect bounds) {
+        var titleBarProbe = new Rect(
+            bounds.Left,
+            bounds.Top,
+            Math.Min(bounds.Width, 220),
+            Math.Min(bounds.Height, 60));
+
+        return Forms.Screen.AllScreens.Any(screen => {
+            var area = screen.WorkingArea;
+            var workingRect = new Rect(area.Left, area.Top, area.Width, area.Height);
+            return workingRect.IntersectsWith(titleBarProbe);
+        });
     }
 
     private static string? TryGetCurrentScreenDeviceName(Window window) {

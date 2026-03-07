@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Specialized;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,17 +19,32 @@ using DataGridCellsPresenter = System.Windows.Controls.Primitives.DataGridCellsP
 namespace AudioTranscript;
 
 public partial class MainWindow : Window {
+    private const int TimelineColumnIndex = 0;
     private const int TranscriptTextColumnIndex = 1;
+    private const double ToastBottomMargin = 48;
+    private const double ToastHiddenOffsetY = -14;
+    private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
 
     private bool _isOpenAiDialogOpen;
-    private bool _isAdjustingTranscriptCell;
+    private bool _isApplyingTranscriptEditLoopSeek;
+    private bool _isTranscriptEditLoopRestartPending;
     private MainViewModel? _boundViewModel;
     private CancellationTokenSource? _copyToastCts;
+    private FinalizedTranscriptLineViewModel? _playbackMatchedLine;
+    private FinalizedTranscriptLineViewModel? _rowActionsLine;
+    private FinalizedTranscriptLineViewModel? _editLoopLine;
+    private FinalizedTranscriptLineViewModel? _timelineEditLine;
+    private TimeSpan? _editLoopStartOffset;
+    private TimeSpan? _editLoopRepeatOffset;
+    private string _timelineEditOriginalTimeline = string.Empty;
+    private bool _timelineEditShouldResumePlayback;
 
     public MainWindow() {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Closed += OnMainWindowClosed;
+        PreviewMouseDown += OnWindowMouseDismissToast;
+        PreviewMouseWheel += OnWindowMouseWheelDismissToast;
     }
 
     private void EngineComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) {
@@ -57,18 +73,35 @@ public partial class MainWindow : Window {
         }
 
         try {
-            string plainText = string.Join(
-                Environment.NewLine,
-                vm.FinalizedTranscriptLines
-                    .Select(line => line.Text?.Trim() ?? string.Empty)
-                    .Where(text => !string.IsNullOrWhiteSpace(text)));
+            string plainText = vm.CopyFinalizedWithTimeline
+                ? string.Join(
+                    Environment.NewLine,
+                    vm.FinalizedTranscriptLines
+                        .Select(line => {
+                            string timeline = line.Timeline?.Trim() ?? string.Empty;
+                            string text = line.Text?.Trim() ?? string.Empty;
+
+                            if (string.IsNullOrWhiteSpace(timeline)) {
+                                return text;
+                            }
+
+                            return string.IsNullOrWhiteSpace(text) ? timeline : $"{timeline} {text}";
+                        })
+                        .Where(text => !string.IsNullOrWhiteSpace(text)))
+                : string.Join(
+                    Environment.NewLine,
+                    vm.FinalizedTranscriptLines
+                        .Select(line => line.Text?.Trim() ?? string.Empty)
+                        .Where(text => !string.IsNullOrWhiteSpace(text)));
 
             System.Windows.Clipboard.SetText(plainText);
             ShowCopyToast(
                 "Copied to clipboard",
-                "Finalized transcript is ready to paste.");
+                "Finalized transcript is ready to paste.",
+                ToastNotificationType.Success);
         }
         catch (Exception ex) {
+            vm.LogHandledException("copy finalized transcript", ex);
             var dialog = new ErrorDialogWindow($"Unable to copy transcript to clipboard: {ex.Message}") {
                 Owner = this,
             };
@@ -98,15 +131,30 @@ public partial class MainWindow : Window {
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e) {
         if (_boundViewModel is not null) {
             _boundViewModel.ErrorOccurred -= OnErrorOccurred;
+            _boundViewModel.ConfirmationRequested -= OnConfirmationRequested;
+            _boundViewModel.ToastRequested -= OnToastRequested;
+            _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
             _boundViewModel.ProcessLogs.CollectionChanged -= OnProcessLogsCollectionChanged;
+            _boundViewModel.FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
             _boundViewModel = null;
         }
 
         if (e.NewValue is MainViewModel vm) {
             _boundViewModel = vm;
             _boundViewModel.ErrorOccurred += OnErrorOccurred;
+            _boundViewModel.ConfirmationRequested += OnConfirmationRequested;
+            _boundViewModel.ToastRequested += OnToastRequested;
+            _boundViewModel.PropertyChanged += OnViewModelPropertyChanged;
             _boundViewModel.ProcessLogs.CollectionChanged += OnProcessLogsCollectionChanged;
+            _boundViewModel.FinalizedTranscriptLines.CollectionChanged += OnFinalizedTranscriptLinesCollectionChanged;
             ScrollLogsToLatest();
+            UpdatePlaybackTimelineHighlight();
+            UpdateTranscriptRowActionsVisibility();
+        }
+        else {
+            ClearTranscriptEditPlaybackLoop();
+            SetPlaybackTimelineMatch(null);
+            SetTranscriptRowActionsLine(null);
         }
     }
 
@@ -117,33 +165,67 @@ public partial class MainWindow : Window {
         dialog.ShowDialog();
     }
 
+    private void OnConfirmationRequested(object? sender, ConfirmationRequest request) {
+        if (request is null) {
+            return;
+        }
+
+        var dialog = new ConfirmationDialogWindow(
+            request.Title,
+            request.Message,
+            request.ConfirmButtonText,
+            request.CancelButtonText) {
+            Owner = this,
+        };
+
+        request.IsConfirmed = dialog.ShowDialog() == true;
+    }
+
     private void OnMainWindowClosed(object? sender, EventArgs e) {
         CancelCopyToast();
-
+        PreviewMouseDown -= OnWindowMouseDismissToast;
+        PreviewMouseWheel -= OnWindowMouseWheelDismissToast;
         if (_boundViewModel is null) {
             return;
         }
 
         _boundViewModel.ErrorOccurred -= OnErrorOccurred;
+        _boundViewModel.ConfirmationRequested -= OnConfirmationRequested;
+        _boundViewModel.ToastRequested -= OnToastRequested;
+        _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _boundViewModel.ProcessLogs.CollectionChanged -= OnProcessLogsCollectionChanged;
+        _boundViewModel.FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
         _boundViewModel = null;
+        ClearTranscriptEditPlaybackLoop();
+        SetPlaybackTimelineMatch(null);
+        SetTranscriptRowActionsLine(null);
     }
 
-    private void ShowCopyToast(string title, string message) {
+    private void OnToastRequested(object? sender, ToastNotification notification) {
+        if (notification is null) {
+            return;
+        }
+
+        ShowCopyToast(notification.Title, notification.Message, notification.Type);
+    }
+
+    private void ShowCopyToast(string title, string message, ToastNotificationType type = ToastNotificationType.Info) {
         double startOpacity = CopyToastHost.Visibility == Visibility.Visible
             ? CopyToastHost.Opacity
             : 0;
         double startOffset = CopyToastHost.Visibility == Visibility.Visible
             ? CopyToastTransform.Y
-            : 14;
+            : ToastHiddenOffsetY;
 
         CancelCopyToast();
 
+        ApplyToastVisuals(type);
         CopyToastTitleText.Text = title;
         CopyToastMessageText.Text = message;
         CopyToastHost.Visibility = Visibility.Visible;
         CopyToastHost.Opacity = startOpacity;
         CopyToastTransform.Y = startOffset;
+        CopyToastHost.Margin = new Thickness(0, 0, 0, ToastBottomMargin);
 
         CopyToastHost.BeginAnimation(
             OpacityProperty,
@@ -166,7 +248,7 @@ public partial class MainWindow : Window {
 
     private async Task HideCopyToastAfterDelayAsync(CancellationTokenSource toastCts) {
         try {
-            await Task.Delay(TimeSpan.FromSeconds(3), toastCts.Token);
+            await Task.Delay(ToastDisplayDuration, toastCts.Token);
         }
         catch (OperationCanceledException) {
             return;
@@ -188,17 +270,47 @@ public partial class MainWindow : Window {
 
             CopyToastHost.Visibility = Visibility.Collapsed;
             CopyToastHost.Opacity = 0;
-            CopyToastTransform.Y = 14;
+            CopyToastTransform.Y = ToastHiddenOffsetY;
         };
 
         CopyToastHost.BeginAnimation(OpacityProperty, opacityAnimation);
         CopyToastTransform.BeginAnimation(
             TranslateTransform.YProperty,
-            new DoubleAnimation(CopyToastTransform.Y, 10, TimeSpan.FromMilliseconds(180)) {
+            new DoubleAnimation(CopyToastTransform.Y, -10, TimeSpan.FromMilliseconds(180)) {
                 EasingFunction = new CubicEase {
                     EasingMode = EasingMode.EaseIn,
                 },
             });
+    }
+
+    private void ApplyToastVisuals(ToastNotificationType type) {
+        ToastAppearance appearance = type switch {
+            ToastNotificationType.Success => new ToastAppearance(
+                IconBackgroundHex: "#FFE8F6EE",
+                IconBorderHex: "#FFC4E1CF",
+                IconStrokeHex: "#FF217A43",
+                IconData: "M2.5,8.5 L6.2,12.2 L13.5,4.5"),
+            ToastNotificationType.Warning => new ToastAppearance(
+                IconBackgroundHex: "#FFFFF1DE",
+                IconBorderHex: "#FFF0D3A0",
+                IconStrokeHex: "#FFB56B00",
+                IconData: "M8,1.7 L15.1,14.8 H0.9 Z M8,5.2 V9.1 M8,11.6 V12.2"),
+            ToastNotificationType.Error => new ToastAppearance(
+                IconBackgroundHex: "#FFFFEBEB",
+                IconBorderHex: "#FFF1C3C3",
+                IconStrokeHex: "#FFC53D3D",
+                IconData: "M8,1.8 A6.2,6.2 0 1 1 7.99,1.8 M5.1,5.1 L10.9,10.9 M10.9,5.1 L5.1,10.9"),
+            _ => new ToastAppearance(
+                IconBackgroundHex: "#FFE7F4F9",
+                IconBorderHex: "#FFC6DDE7",
+                IconStrokeHex: "#FF1B86AA",
+                IconData: "M8,1.8 A6.2,6.2 0 1 1 7.99,1.8 M8,6.2 V10.8 M8,4.2 V4.3"),
+        };
+
+        CopyToastIconHost.Background = CreateBrush(appearance.IconBackgroundHex);
+        CopyToastIconHost.BorderBrush = CreateBrush(appearance.IconBorderHex);
+        CopyToastIconPath.Stroke = CreateBrush(appearance.IconStrokeHex);
+        CopyToastIconPath.Data = Geometry.Parse(appearance.IconData);
     }
 
     private void CancelCopyToast() {
@@ -217,8 +329,74 @@ public partial class MainWindow : Window {
         CopyToastTransform.BeginAnimation(TranslateTransform.YProperty, null);
     }
 
+    private void OnWindowMouseDismissToast(object sender, MouseButtonEventArgs e) {
+        DismissToastImmediate();
+    }
+
+    private void OnWindowMouseWheelDismissToast(object sender, MouseWheelEventArgs e) {
+        DismissToastImmediate();
+    }
+
+    private void DismissToastImmediate() {
+        if (CopyToastHost.Visibility != Visibility.Visible) {
+            return;
+        }
+
+        CancelCopyToast();
+        CopyToastHost.Visibility = Visibility.Collapsed;
+        CopyToastHost.Opacity = 0;
+        CopyToastTransform.Y = ToastHiddenOffsetY;
+    }
+
     private void OnProcessLogsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
         ScrollLogsToLatest();
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e) {
+        if (e.PropertyName is nameof(MainViewModel.AudioSeekPositionSeconds)
+            or nameof(MainViewModel.LoadedAudioFilePath)
+            or nameof(MainViewModel.IsAudioFileLoaded)) {
+            if (_boundViewModel is not null && !_boundViewModel.IsAudioFileLoaded) {
+                ClearTranscriptEditPlaybackLoop();
+            }
+
+            EnforceTranscriptEditPlaybackLoop();
+            UpdatePlaybackTimelineHighlight();
+        }
+    }
+
+    private void OnFinalizedTranscriptLinesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
+        UpdatePlaybackTimelineHighlight();
+        UpdateTranscriptRowActionsVisibility();
+    }
+
+    private void FinalizedTranscriptGrid_CurrentCellChanged(object sender, EventArgs e) {
+        Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+    }
+
+    private void FinalizedTranscriptGrid_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) {
+        Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+    }
+
+    private void FinalizedTranscriptGrid_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) {
+        Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+    }
+
+    private void RecentSessionsList_MouseDoubleClick(object sender, MouseButtonEventArgs e) {
+        if (sender is not System.Windows.Controls.ListBox listBox || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        if (ItemsControl.ContainerFromElement(listBox, e.OriginalSource as DependencyObject) is not ListBoxItem) {
+            return;
+        }
+
+        if (!vm.OpenSelectedSessionCommand.CanExecute(null)) {
+            return;
+        }
+
+        vm.OpenSelectedSessionCommand.Execute(null);
+        e.Handled = true;
     }
 
     private void ScrollLogsToLatest() {
@@ -235,36 +413,193 @@ public partial class MainWindow : Window {
         }), DispatcherPriority.Background);
     }
 
-    private void FinalizedTranscriptGrid_CurrentCellChanged(object sender, EventArgs e) {
-        if (_isAdjustingTranscriptCell) {
+    private void InsertTranscriptRowBelow_Click(object sender, RoutedEventArgs e) {
+        if (sender is not System.Windows.Controls.Button button
+            || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
+            || DataContext is not MainViewModel vm) {
             return;
         }
 
-        if (FinalizedTranscriptGrid.Columns.Count <= TranscriptTextColumnIndex) {
+        try {
+            List<FinalizedTranscriptLineViewModel> displayedLines = GetDisplayedTranscriptLines();
+            int currentIndex = displayedLines.IndexOf(currentLine);
+
+            if (currentIndex < 0
+                || currentIndex >= displayedLines.Count - 1
+                || !TryGetLineTimelineOffset(currentLine, out TimeSpan currentOffset)
+                || !TryGetLineTimelineOffset(displayedLines[currentIndex + 1], out TimeSpan nextOffset)
+                || nextOffset - currentOffset <= TimeSpan.FromSeconds(1)) {
+                ShowCopyToast(
+                    "Row not added",
+                    "Cannot add new row because of the timeline values.",
+                    ToastNotificationType.Warning);
+                return;
+            }
+
+            int insertIndex = vm.FinalizedTranscriptLines.IndexOf(currentLine);
+            if (insertIndex < 0) {
+                ShowCopyToast(
+                    "Row not added",
+                    "Cannot add new row because of the timeline values.",
+                    ToastNotificationType.Warning);
+                return;
+            }
+
+            TimeSpan newOffset = currentOffset + TimeSpan.FromSeconds(1);
+            var newLine = new FinalizedTranscriptLineViewModel(
+                startOffset: newOffset,
+                endOffset: newOffset,
+                isTimestampEstimated: true,
+                text: string.Empty);
+
+            if (!vm.InsertFinalizedTranscriptLine(insertIndex + 1, newLine)) {
+                ShowCopyToast(
+                    "Row not added",
+                    "Unable to insert a new row right now.",
+                    ToastNotificationType.Error);
+                return;
+            }
+
+            Dispatcher.BeginInvoke(new Action(() => {
+                FocusGridCell(newLine, TranscriptTextColumnIndex, beginEdit: true);
+            }), DispatcherPriority.Background);
+        }
+        catch (Exception ex) {
+            vm.LogHandledException("insert transcript row below", ex);
+            ShowCopyToast(
+                "Row not added",
+                "Unable to insert a new row right now.",
+                ToastNotificationType.Error);
+        }
+    }
+
+    private void DeleteTranscriptRow_Click(object sender, RoutedEventArgs e) {
+        if (sender is not System.Windows.Controls.Button button
+            || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
+            || DataContext is not MainViewModel vm) {
             return;
         }
 
-        DataGridCellInfo current = FinalizedTranscriptGrid.CurrentCell;
-        DataGridColumn transcriptColumn = FinalizedTranscriptGrid.Columns[TranscriptTextColumnIndex];
+        var dialog = new ConfirmationDialogWindow(
+            title: "Delete this Row?",
+            message: "This transcript row will be removed.",
+            confirmButtonText: "Yes",
+            cancelButtonText: "No") {
+            Owner = this,
+        };
 
-        if (current.Column == transcriptColumn) {
+        if (dialog.ShowDialog() != true) {
             return;
         }
 
-        Dispatcher.BeginInvoke(
-            new Action(() => EnsureTranscriptColumnFocused(beginEdit: false)),
-            DispatcherPriority.Background);
+        try {
+            List<FinalizedTranscriptLineViewModel> displayedLines = GetDisplayedTranscriptLines();
+            int currentIndex = displayedLines.IndexOf(currentLine);
+            FinalizedTranscriptLineViewModel? nextFocusLine = null;
+
+            if (currentIndex >= 0) {
+                if (currentIndex + 1 < displayedLines.Count) {
+                    nextFocusLine = displayedLines[currentIndex + 1];
+                }
+                else if (currentIndex - 1 >= 0) {
+                    nextFocusLine = displayedLines[currentIndex - 1];
+                }
+            }
+
+            SetTranscriptRowActionsLine(null);
+
+            if (!vm.RemoveFinalizedTranscriptLine(currentLine)) {
+                ShowCopyToast(
+                    "Row not deleted",
+                    "Unable to remove the selected row.",
+                    ToastNotificationType.Error);
+                return;
+            }
+
+            if (nextFocusLine is not null && vm.FinalizedTranscriptLines.Contains(nextFocusLine)) {
+                Dispatcher.BeginInvoke(new Action(() => {
+                    FocusGridCell(nextFocusLine, TranscriptTextColumnIndex, beginEdit: false);
+                }), DispatcherPriority.Background);
+            }
+            else {
+                Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+            }
+        }
+        catch (Exception ex) {
+            vm.LogHandledException("delete transcript row", ex);
+            ShowCopyToast(
+                "Row not deleted",
+                "Unable to remove the selected row.",
+                ToastNotificationType.Error);
+        }
+    }
+
+    private void FinalizedTranscriptGrid_BeginningEdit(object sender, DataGridBeginningEditEventArgs e) {
+        if (DataContext is not MainViewModel vm
+            || e.Row?.Item is not FinalizedTranscriptLineViewModel line) {
+            ClearTimelineEditState();
+            ClearTranscriptEditPlaybackLoop();
+            return;
+        }
+
+        if (IsTimelineColumn(e.Column)) {
+            BeginTimelineEdit(vm, line);
+            return;
+        }
+
+        ClearTimelineEditState();
+
+        if (!vm.IsAudioFileLoaded || line.StartOffset is null) {
+            ClearTranscriptEditPlaybackLoop();
+            return;
+        }
+
+        try {
+            vm.SeekAudioPreview(line.StartOffset.Value);
+            ConfigureTranscriptEditPlaybackLoop(vm, line);
+
+            if (!vm.IsAudioPlaying && vm.PlayAudioCommand.CanExecute(null)) {
+                vm.PlayAudioCommand.Execute(null);
+            }
+        }
+        catch (Exception ex) {
+            vm.LogHandledException("transcript edit playback sync", ex);
+        }
+    }
+
+    private void FinalizedTranscriptGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e) {
+        if (IsTimelineColumn(e.Column)) {
+            HandleTimelineCellEditEnding(e);
+            return;
+        }
+
+        if (DataContext is not MainViewModel vm) {
+            ClearTranscriptEditPlaybackLoop();
+            Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+            return;
+        }
+
+        if (e.Row?.Item is FinalizedTranscriptLineViewModel line && ReferenceEquals(line, _editLoopLine)) {
+            PausePlaybackAfterTranscriptEdit(vm);
+            return;
+        }
+
+        if (e.EditAction is DataGridEditAction.Cancel or DataGridEditAction.Commit) {
+            PausePlaybackAfterTranscriptEdit(vm);
+        }
+
+        Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
     }
 
     private void FinalizedTranscriptGrid_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e) {
-        if (FinalizedTranscriptGrid.Items.Count == 0 || FinalizedTranscriptGrid.Columns.Count <= TranscriptTextColumnIndex) {
+        if (FinalizedTranscriptGrid.Items.Count == 0) {
             return;
         }
 
         if (e.Key == Key.Enter) {
-            if (!IsCurrentTranscriptCellEditing()) {
+            if (!IsCurrentGridCellEditing()) {
                 e.Handled = true;
-                EnsureTranscriptColumnFocused(beginEdit: true);
+                EnsureCurrentGridCellFocused(beginEdit: true);
             }
 
             return;
@@ -274,11 +609,11 @@ public partial class MainWindow : Window {
             e.Handled = true;
             FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Cell, true);
             FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Row, true);
-            MoveTranscriptFocusByRow(e.Key == Key.Up ? -1 : 1);
+            MoveCurrentGridCellFocusByRow(e.Key == Key.Up ? -1 : 1);
         }
     }
 
-    private void MoveTranscriptFocusByRow(int delta) {
+    private void MoveCurrentGridCellFocusByRow(int delta) {
         IList<object> rowItems = GetTranscriptRowItems();
         if (rowItems.Count == 0) {
             return;
@@ -300,11 +635,14 @@ public partial class MainWindow : Window {
             rowItems.Count - 1);
 
         object targetItem = rowItems[targetIndex];
-        FocusTranscriptCell(targetItem, beginEdit: false);
+        FocusGridCell(
+            targetItem,
+            GetActiveColumnIndex(defaultColumnIndex: TranscriptTextColumnIndex),
+            beginEdit: false);
     }
 
-    private void EnsureTranscriptColumnFocused(bool beginEdit) {
-        if (FinalizedTranscriptGrid.Columns.Count <= TranscriptTextColumnIndex) {
+    private void EnsureCurrentGridCellFocused(bool beginEdit) {
+        if (!FinalizedTranscriptGrid.IsKeyboardFocusWithin) {
             return;
         }
 
@@ -323,18 +661,19 @@ public partial class MainWindow : Window {
             targetItem = rowItems[0];
         }
 
-        FocusTranscriptCell(targetItem, beginEdit);
+        FocusGridCell(
+            targetItem,
+            GetActiveColumnIndex(defaultColumnIndex: TranscriptTextColumnIndex),
+            beginEdit);
     }
 
-    private void FocusTranscriptCell(object targetItem, bool beginEdit) {
-        if (FinalizedTranscriptGrid.Columns.Count <= TranscriptTextColumnIndex) {
+    private void FocusGridCell(object targetItem, int columnIndex, bool beginEdit) {
+        if (columnIndex < 0 || columnIndex >= FinalizedTranscriptGrid.Columns.Count) {
             return;
         }
 
         try {
-            _isAdjustingTranscriptCell = true;
-
-            DataGridColumn targetColumn = FinalizedTranscriptGrid.Columns[TranscriptTextColumnIndex];
+            DataGridColumn targetColumn = FinalizedTranscriptGrid.Columns[columnIndex];
             var cellInfo = new DataGridCellInfo(targetItem, targetColumn);
 
             if (!cellInfo.IsValid) {
@@ -347,7 +686,7 @@ public partial class MainWindow : Window {
             FinalizedTranscriptGrid.ScrollIntoView(targetItem, targetColumn);
             FinalizedTranscriptGrid.UpdateLayout();
 
-            DataGridCell? targetCell = TryGetTranscriptCell(targetItem);
+            DataGridCell? targetCell = TryGetDataCell(targetItem, columnIndex);
             if (targetCell is not null) {
                 targetCell.Focus();
             }
@@ -359,32 +698,46 @@ public partial class MainWindow : Window {
                 FinalizedTranscriptGrid.BeginEdit();
             }
         }
-        catch {
-            // Ignore focus correction failures to keep UI responsive.
-        }
-        finally {
-            _isAdjustingTranscriptCell = false;
+        catch (Exception ex) {
+            _boundViewModel?.LogHandledException("transcript focus correction", ex);
         }
     }
 
-    private bool IsCurrentTranscriptCellEditing() {
+    private bool IsCurrentGridCellEditing() {
         DataGridCellInfo current = FinalizedTranscriptGrid.CurrentCell;
 
         if (current.Column is null || current.Item is null) {
             return false;
         }
 
-        FrameworkElement? element = current.Column.GetCellContent(current.Item);
-        System.Windows.Controls.DataGridCell? cell = element?.Parent as System.Windows.Controls.DataGridCell;
-        return cell?.IsEditing == true;
+        int columnIndex = FinalizedTranscriptGrid.Columns.IndexOf(current.Column);
+        DataGridCell? cell = TryGetDataCell(current.Item, columnIndex);
+        return cell?.IsEditing ?? false;
     }
 
-    private System.Windows.Controls.DataGridCell? TryGetTranscriptCell(object item) {
-        if (FinalizedTranscriptGrid.Columns.Count <= TranscriptTextColumnIndex) {
+    private int GetActiveColumnIndex(int defaultColumnIndex) {
+        DataGridColumn? currentColumn = FinalizedTranscriptGrid.CurrentCell.Column;
+        int currentColumnIndex = currentColumn is null
+            ? -1
+            : FinalizedTranscriptGrid.Columns.IndexOf(currentColumn);
+
+        if (currentColumnIndex >= 0 && currentColumnIndex < FinalizedTranscriptGrid.Columns.Count) {
+            return currentColumnIndex;
+        }
+
+        if (defaultColumnIndex >= 0 && defaultColumnIndex < FinalizedTranscriptGrid.Columns.Count) {
+            return defaultColumnIndex;
+        }
+
+        return 0;
+    }
+
+    private System.Windows.Controls.DataGridCell? TryGetDataCell(object item, int columnIndex) {
+        if (columnIndex < 0 || columnIndex >= FinalizedTranscriptGrid.Columns.Count) {
             return null;
         }
 
-        DataGridColumn targetColumn = FinalizedTranscriptGrid.Columns[TranscriptTextColumnIndex];
+        DataGridColumn targetColumn = FinalizedTranscriptGrid.Columns[columnIndex];
         DataGridRow? row = FinalizedTranscriptGrid.ItemContainerGenerator.ContainerFromItem(item) as DataGridRow;
         if (row is null) {
             FinalizedTranscriptGrid.ScrollIntoView(item, targetColumn);
@@ -407,15 +760,517 @@ public partial class MainWindow : Window {
         }
 
         System.Windows.Controls.DataGridCell? cell =
-            presenter.ItemContainerGenerator.ContainerFromIndex(TranscriptTextColumnIndex) as System.Windows.Controls.DataGridCell;
+            presenter.ItemContainerGenerator.ContainerFromIndex(columnIndex) as System.Windows.Controls.DataGridCell;
         if (cell is null) {
             FinalizedTranscriptGrid.ScrollIntoView(item, targetColumn);
             FinalizedTranscriptGrid.UpdateLayout();
             cell =
-                presenter.ItemContainerGenerator.ContainerFromIndex(TranscriptTextColumnIndex) as System.Windows.Controls.DataGridCell;
+                presenter.ItemContainerGenerator.ContainerFromIndex(columnIndex) as System.Windows.Controls.DataGridCell;
         }
 
         return cell;
+    }
+
+    private bool IsTimelineColumn(DataGridColumn? column) {
+        return column is not null
+            && FinalizedTranscriptGrid.Columns.IndexOf(column) == TimelineColumnIndex;
+    }
+
+    private void UpdateTranscriptRowActionsVisibility() {
+        FinalizedTranscriptLineViewModel? targetLine = null;
+
+        if (FinalizedTranscriptGrid.IsKeyboardFocusWithin) {
+            DataGridCellInfo currentCell = FinalizedTranscriptGrid.CurrentCell;
+
+            if (currentCell.IsValid
+                && currentCell.Item is FinalizedTranscriptLineViewModel line) {
+                targetLine = line;
+            }
+        }
+
+        SetTranscriptRowActionsLine(targetLine);
+    }
+
+    private void SetTranscriptRowActionsLine(FinalizedTranscriptLineViewModel? targetLine) {
+        if (ReferenceEquals(_rowActionsLine, targetLine)) {
+            return;
+        }
+
+        if (_rowActionsLine is not null) {
+            _rowActionsLine.AreRowActionsVisible = false;
+        }
+
+        _rowActionsLine = targetLine;
+
+        if (_rowActionsLine is not null) {
+            _rowActionsLine.AreRowActionsVisible = true;
+        }
+    }
+
+    private void BeginTimelineEdit(MainViewModel vm, FinalizedTranscriptLineViewModel line) {
+        ClearTranscriptEditPlaybackLoop();
+        _timelineEditLine = line;
+        _timelineEditOriginalTimeline = line.Timeline ?? string.Empty;
+        _timelineEditShouldResumePlayback = vm.IsAudioPlaying;
+
+        if (_timelineEditShouldResumePlayback && vm.PauseAudioCommand.CanExecute(null)) {
+            vm.PauseAudioCommand.Execute(null);
+        }
+    }
+
+    private void HandleTimelineCellEditEnding(DataGridCellEditEndingEventArgs e) {
+        if (DataContext is not MainViewModel vm
+            || e.Row?.Item is not FinalizedTranscriptLineViewModel line) {
+            ClearTimelineEditState();
+            return;
+        }
+
+        System.Windows.Controls.TextBox? textBox = TryGetTimelineEditingTextBox(e.EditingElement);
+
+        if (e.EditAction == DataGridEditAction.Cancel) {
+            RestoreTimelineEditDisplay(textBox);
+            ResumePlaybackAfterTimelineEdit(vm);
+            ClearTimelineEditState();
+            return;
+        }
+
+        if (textBox is null) {
+            e.Cancel = true;
+            ShowCopyToast(
+                "Timeline not updated",
+                "The timeline editor could not be validated. Try editing the value again.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        if (!TryValidateTimelineEdit(vm, line, textBox.Text, out string normalized, out string validationMessage)) {
+            e.Cancel = true;
+            ShowCopyToast("Timeline not updated", validationMessage, ToastNotificationType.Warning);
+            Dispatcher.BeginInvoke(new Action(() => {
+                textBox.Focus();
+                textBox.SelectAll();
+            }), DispatcherPriority.Input);
+            return;
+        }
+
+        textBox.Text = normalized;
+        textBox.Tag = normalized;
+
+        BindingExpression? binding = textBox.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty);
+        binding?.UpdateSource();
+
+        ResumePlaybackAfterTimelineEdit(vm);
+        ClearTimelineEditState();
+    }
+
+    private System.Windows.Controls.TextBox? TryGetTimelineEditingTextBox(FrameworkElement? editingElement) {
+        if (editingElement is null) {
+            return null;
+        }
+
+        if (editingElement is System.Windows.Controls.TextBox textBox) {
+            return textBox;
+        }
+
+        return FindVisualChild<System.Windows.Controls.TextBox>(editingElement);
+    }
+
+    private void RestoreTimelineEditDisplay(System.Windows.Controls.TextBox? textBox) {
+        if (textBox is null) {
+            return;
+        }
+
+        string fallbackTimeline = string.IsNullOrWhiteSpace(_timelineEditOriginalTimeline)
+            ? "00:00"
+            : _timelineEditOriginalTimeline;
+        textBox.Text = fallbackTimeline;
+        textBox.Tag = fallbackTimeline;
+        textBox.SelectionLength = 0;
+        textBox.CaretIndex = 0;
+    }
+
+    private void ResumePlaybackAfterTimelineEdit(MainViewModel vm) {
+        if (_timelineEditShouldResumePlayback && vm.PlayAudioCommand.CanExecute(null)) {
+            vm.PlayAudioCommand.Execute(null);
+        }
+    }
+
+    private void ClearTimelineEditState() {
+        _timelineEditLine = null;
+        _timelineEditOriginalTimeline = string.Empty;
+        _timelineEditShouldResumePlayback = false;
+    }
+
+    private bool TryValidateTimelineEdit(
+        MainViewModel vm,
+        FinalizedTranscriptLineViewModel line,
+        string? candidateTimeline,
+        out string normalized,
+        out string validationMessage) {
+        normalized = string.Empty;
+        validationMessage = string.Empty;
+
+        if (!FinalizedTranscriptLineViewModel.TryNormalizeTimeline(candidateTimeline, out normalized)
+            || !FinalizedTranscriptLineViewModel.TryParseTimeline(normalized, out TimeSpan candidateOffset)) {
+            validationMessage = "Timeline must use the strict 00:00 format, and seconds must stay within 00 to 59.";
+            return false;
+        }
+
+        List<FinalizedTranscriptLineViewModel> displayedLines = GetDisplayedTranscriptLines();
+        int currentIndex = displayedLines.IndexOf(line);
+        if (currentIndex < 0) {
+            validationMessage = "The timeline row could not be validated. Try editing the row again.";
+            return false;
+        }
+
+        FinalizedTranscriptLineViewModel? previousLine = FindNeighborTimelineLine(displayedLines, currentIndex, searchBackward: true);
+        if (TryGetLineTimelineOffset(previousLine, out TimeSpan previousOffset) && candidateOffset <= previousOffset) {
+            string previousTimeline = previousLine?.Timeline ?? "the previous row";
+            validationMessage = $"Timeline must be later than the previous row ({previousTimeline}).";
+            return false;
+        }
+
+        FinalizedTranscriptLineViewModel? nextLine = FindNeighborTimelineLine(displayedLines, currentIndex, searchBackward: false);
+        if (TryGetLineTimelineOffset(nextLine, out TimeSpan nextOffset) && candidateOffset >= nextOffset) {
+            string nextTimeline = nextLine?.Timeline ?? "the next row";
+            validationMessage = $"Timeline must be earlier than the next row ({nextTimeline}).";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static FinalizedTranscriptLineViewModel? FindNeighborTimelineLine(
+        IReadOnlyList<FinalizedTranscriptLineViewModel> lines,
+        int currentIndex,
+        bool searchBackward) {
+        if (searchBackward) {
+            for (int index = currentIndex - 1; index >= 0; index--) {
+                if (lines[index].StartOffset is not null) {
+                    return lines[index];
+                }
+            }
+
+            return null;
+        }
+
+        for (int index = currentIndex + 1; index < lines.Count; index++) {
+            if (lines[index].StartOffset is not null) {
+                return lines[index];
+            }
+        }
+
+        return null;
+    }
+
+    private List<FinalizedTranscriptLineViewModel> GetDisplayedTranscriptLines() {
+        return GetTranscriptRowItems()
+            .OfType<FinalizedTranscriptLineViewModel>()
+            .ToList();
+    }
+
+    private static bool TryGetLineTimelineOffset(FinalizedTranscriptLineViewModel? line, out TimeSpan offset) {
+        offset = TimeSpan.Zero;
+
+        if (line is null) {
+            return false;
+        }
+
+        if (FinalizedTranscriptLineViewModel.TryParseTimeline(line.Timeline, out offset)) {
+            return true;
+        }
+
+        if (line.StartOffset is TimeSpan startOffset) {
+            offset = startOffset;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void TimelineEditingTextBox_Loaded(object sender, RoutedEventArgs e) {
+        if (sender is not System.Windows.Controls.TextBox textBox) {
+            return;
+        }
+
+        string normalized = NormalizeTimelineEditingText(textBox.Text, textBox.Tag as string);
+        textBox.Tag = normalized;
+        textBox.Text = normalized;
+        textBox.CaretIndex = 0;
+        textBox.SelectionLength = 0;
+    }
+
+    private void TimelineEditingTextBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) {
+        if (sender is not System.Windows.Controls.TextBox textBox) {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(new Action(() => {
+            if (!textBox.IsKeyboardFocusWithin) {
+                return;
+            }
+
+            int caretIndex = GetEditableTimelineIndexAtOrAfter(textBox.CaretIndex);
+            textBox.CaretIndex = caretIndex >= 0 ? caretIndex : 0;
+            textBox.SelectionLength = 0;
+        }), DispatcherPriority.Input);
+    }
+
+    private void TimelineEditingTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e) {
+        if (sender is not System.Windows.Controls.TextBox textBox) {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(e.Text) || e.Text.Any(character => !char.IsAsciiDigit(character))) {
+            e.Handled = true;
+            return;
+        }
+
+        ReplaceTimelineDigits(textBox, e.Text);
+        e.Handled = true;
+    }
+
+    private void TimelineEditingTextBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e) {
+        if (sender is not System.Windows.Controls.TextBox textBox) {
+            return;
+        }
+
+        if (e.Key == Key.Space) {
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Back) {
+            ZeroTimelineDigits(textBox, deleteForward: false);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Delete) {
+            ZeroTimelineDigits(textBox, deleteForward: true);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Left) {
+            MoveTimelineCaret(textBox, moveForward: false);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Right) {
+            MoveTimelineCaret(textBox, moveForward: true);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Home) {
+            textBox.CaretIndex = 0;
+            textBox.SelectionLength = 0;
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.End) {
+            textBox.CaretIndex = 5;
+            textBox.SelectionLength = 0;
+            e.Handled = true;
+        }
+    }
+
+    private void TimelineEditingTextBox_Pasting(object sender, DataObjectPastingEventArgs e) {
+        if (sender is not System.Windows.Controls.TextBox textBox) {
+            e.CancelCommand();
+            return;
+        }
+
+        string pastedText = e.SourceDataObject.GetData(System.Windows.DataFormats.UnicodeText) as string
+            ?? e.SourceDataObject.GetData(System.Windows.DataFormats.Text) as string
+            ?? string.Empty;
+
+        if (!TryNormalizePastedTimeline(pastedText, out string normalized)) {
+            e.CancelCommand();
+            return;
+        }
+
+        textBox.Text = normalized;
+        textBox.CaretIndex = 5;
+        textBox.SelectionLength = 0;
+        e.CancelCommand();
+    }
+
+    private void ReplaceTimelineDigits(System.Windows.Controls.TextBox textBox, string digits) {
+        char[] characters = EnsureMaskedTimelineEditingText(textBox.Text, textBox.Tag as string).ToCharArray();
+        int replacementIndex = ResolveTimelineReplacementIndex(textBox);
+
+        foreach (char digit in digits) {
+            if (replacementIndex < 0 || replacementIndex >= characters.Length) {
+                break;
+            }
+
+            characters[replacementIndex] = digit;
+            replacementIndex = GetEditableTimelineIndexAfter(replacementIndex);
+        }
+
+        textBox.Text = new string(characters);
+        textBox.SelectionLength = 0;
+        textBox.CaretIndex = replacementIndex >= 0 ? replacementIndex : 5;
+    }
+
+    private void ZeroTimelineDigits(System.Windows.Controls.TextBox textBox, bool deleteForward) {
+        char[] characters = EnsureMaskedTimelineEditingText(textBox.Text, textBox.Tag as string).ToCharArray();
+
+        if (textBox.SelectionLength > 0) {
+            bool updated = false;
+
+            for (int index = textBox.SelectionStart; index < textBox.SelectionStart + textBox.SelectionLength && index < characters.Length; index++) {
+                if (!IsEditableTimelineIndex(index)) {
+                    continue;
+                }
+
+                characters[index] = '0';
+                updated = true;
+            }
+
+            if (!updated) {
+                return;
+            }
+
+            textBox.Text = new string(characters);
+            textBox.CaretIndex = GetEditableTimelineIndexAtOrAfter(textBox.SelectionStart) is int selectionIndex && selectionIndex >= 0
+                ? selectionIndex
+                : 5;
+            textBox.SelectionLength = 0;
+            return;
+        }
+
+        int targetIndex = deleteForward
+            ? GetEditableTimelineIndexAtOrAfter(textBox.CaretIndex)
+            : GetEditableTimelineIndexBefore(textBox.CaretIndex);
+
+        if (targetIndex < 0) {
+            return;
+        }
+
+        characters[targetIndex] = '0';
+        textBox.Text = new string(characters);
+        textBox.CaretIndex = deleteForward ? targetIndex : targetIndex + 1;
+        textBox.SelectionLength = 0;
+    }
+
+    private void MoveTimelineCaret(System.Windows.Controls.TextBox textBox, bool moveForward) {
+        int nextIndex = moveForward
+            ? GetEditableTimelineIndexAtOrAfter(textBox.CaretIndex + 1)
+            : GetEditableTimelineIndexBefore(textBox.CaretIndex);
+
+        if (nextIndex < 0) {
+            nextIndex = moveForward ? 5 : 0;
+        }
+
+        textBox.CaretIndex = nextIndex;
+        textBox.SelectionLength = 0;
+    }
+
+    private static string NormalizeTimelineEditingText(string? currentText, string? fallbackText) {
+        if (TryNormalizePastedTimeline(currentText, out string normalized)) {
+            return normalized;
+        }
+
+        if (TryNormalizePastedTimeline(fallbackText, out normalized)) {
+            return normalized;
+        }
+
+        return "00:00";
+    }
+
+    private static string EnsureMaskedTimelineEditingText(string? currentText, string? fallbackText) {
+        string trimmed = currentText?.Trim() ?? string.Empty;
+
+        if (trimmed.Length == 5
+            && trimmed[2] == ':'
+            && char.IsAsciiDigit(trimmed[0])
+            && char.IsAsciiDigit(trimmed[1])
+            && char.IsAsciiDigit(trimmed[3])
+            && char.IsAsciiDigit(trimmed[4])) {
+            return trimmed;
+        }
+
+        return NormalizeTimelineEditingText(currentText, fallbackText);
+    }
+
+    private static bool TryNormalizePastedTimeline(string? value, out string normalized) {
+        normalized = string.Empty;
+
+        if (FinalizedTranscriptLineViewModel.TryNormalizeTimeline(value, out normalized)) {
+            return true;
+        }
+
+        string digitsOnly = new string((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+        if (digitsOnly.Length != 4) {
+            return false;
+        }
+
+        return FinalizedTranscriptLineViewModel.TryNormalizeTimeline(
+            $"{digitsOnly[..2]}:{digitsOnly[2..]}",
+            out normalized);
+    }
+
+    private static int ResolveTimelineReplacementIndex(System.Windows.Controls.TextBox textBox) {
+        if (textBox.SelectionLength > 0) {
+            for (int index = textBox.SelectionStart; index < textBox.SelectionStart + textBox.SelectionLength; index++) {
+                if (IsEditableTimelineIndex(index)) {
+                    return index;
+                }
+            }
+        }
+
+        return GetEditableTimelineIndexAtOrAfter(textBox.CaretIndex);
+    }
+
+    private static int GetEditableTimelineIndexAtOrAfter(int index) {
+        if (index <= 0) {
+            return 0;
+        }
+
+        if (index <= 1) {
+            return index;
+        }
+
+        if (index <= 3) {
+            return 3;
+        }
+
+        if (index <= 4) {
+            return 4;
+        }
+
+        return -1;
+    }
+
+    private static int GetEditableTimelineIndexAfter(int index) {
+        return index switch {
+            < 0 => 0,
+            0 => 1,
+            1 => 3,
+            2 => 3,
+            3 => 4,
+            _ => -1,
+        };
+    }
+
+    private static int GetEditableTimelineIndexBefore(int index) {
+        return index switch {
+            <= 0 => -1,
+            1 => 0,
+            2 => 1,
+            3 => 1,
+            4 => 3,
+            _ => 4,
+        };
+    }
+
+    private static bool IsEditableTimelineIndex(int index) {
+        return index is 0 or 1 or 3 or 4;
     }
 
     private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject {
@@ -436,6 +1291,35 @@ public partial class MainWindow : Window {
         return null;
     }
 
+    private static T? FindVisualAncestor<T>(DependencyObject? start) where T : DependencyObject {
+        DependencyObject? current = start;
+
+        while (current is not null) {
+            if (current is T match) {
+                return match;
+            }
+
+            current = GetVisualOrLogicalParent(current);
+        }
+
+        return null;
+    }
+
+    private static DependencyObject? GetVisualOrLogicalParent(DependencyObject current) {
+        if (current is Visual || current is System.Windows.Media.Media3D.Visual3D) {
+            DependencyObject? visualParent = VisualTreeHelper.GetParent(current);
+            if (visualParent is not null) {
+                return visualParent;
+            }
+        }
+
+        return current switch {
+            FrameworkElement frameworkElement => frameworkElement.Parent,
+            FrameworkContentElement frameworkContentElement => frameworkContentElement.Parent,
+            _ => null,
+        };
+    }
+
     private IList<object> GetTranscriptRowItems() {
         return FinalizedTranscriptGrid.Items
             .Cast<object>()
@@ -443,9 +1327,207 @@ public partial class MainWindow : Window {
             .ToList();
     }
 
+    private void UpdatePlaybackTimelineHighlight() {
+        if (_boundViewModel is null
+            || !_boundViewModel.IsAudioFileLoaded
+            || _boundViewModel.FinalizedTranscriptLines.Count == 0) {
+            SetPlaybackTimelineMatch(null);
+            return;
+        }
+
+        TimeSpan playbackPosition = TimeSpan.FromSeconds(Math.Max(_boundViewModel.AudioSeekPositionSeconds, 0));
+        FinalizedTranscriptLineViewModel? matchedLine = FindPlaybackTimelineMatch(
+            _boundViewModel.FinalizedTranscriptLines,
+            playbackPosition);
+        SetPlaybackTimelineMatch(matchedLine);
+    }
+
+    private void SetPlaybackTimelineMatch(FinalizedTranscriptLineViewModel? matchedLine) {
+        if (ReferenceEquals(_playbackMatchedLine, matchedLine)) {
+            return;
+        }
+
+        if (_playbackMatchedLine is not null) {
+            _playbackMatchedLine.IsPlaybackTimelineMatch = false;
+        }
+
+        _playbackMatchedLine = matchedLine;
+
+        if (_playbackMatchedLine is not null) {
+            _playbackMatchedLine.IsPlaybackTimelineMatch = true;
+        }
+    }
+
+    private static FinalizedTranscriptLineViewModel? FindPlaybackTimelineMatch(
+        IEnumerable<FinalizedTranscriptLineViewModel> lines,
+        TimeSpan playbackPosition) {
+        List<FinalizedTranscriptLineViewModel> candidates = lines
+            .Where(line => line.StartOffset is not null)
+            .OrderBy(line => line.StartOffset)
+            .ToList();
+
+        if (candidates.Count == 0) {
+            return null;
+        }
+
+        for (int index = 0; index < candidates.Count; index++) {
+            FinalizedTranscriptLineViewModel current = candidates[index];
+            TimeSpan start = current.StartOffset ?? TimeSpan.Zero;
+            TimeSpan end = current.EndOffset ?? start;
+
+            if (end < start) {
+                end = start;
+            }
+
+            if (playbackPosition >= start && playbackPosition <= end) {
+                return current;
+            }
+
+            if (index < candidates.Count - 1) {
+                TimeSpan nextStart = candidates[index + 1].StartOffset ?? end;
+                if (playbackPosition >= start && playbackPosition < nextStart) {
+                    return current;
+                }
+            }
+            else if (playbackPosition >= start) {
+                return current;
+            }
+        }
+
+        return candidates
+            .OrderBy(line => Abs((line.StartOffset ?? TimeSpan.Zero) - playbackPosition))
+            .FirstOrDefault();
+    }
+
+    private void ConfigureTranscriptEditPlaybackLoop(
+        MainViewModel viewModel,
+        FinalizedTranscriptLineViewModel currentLine) {
+        ClearTranscriptEditPlaybackLoop();
+
+        if (currentLine.StartOffset is null) {
+            return;
+        }
+
+        int currentIndex = viewModel.FinalizedTranscriptLines.IndexOf(currentLine);
+        if (currentIndex < 0) {
+            return;
+        }
+
+        TimeSpan startOffset = currentLine.StartOffset.Value;
+        TimeSpan? repeatOffset = null;
+
+        for (int index = currentIndex + 1; index < viewModel.FinalizedTranscriptLines.Count; index++) {
+            FinalizedTranscriptLineViewModel candidate = viewModel.FinalizedTranscriptLines[index];
+            if (candidate.StartOffset is null) {
+                continue;
+            }
+
+            if (candidate.StartOffset.Value > startOffset) {
+                repeatOffset = candidate.StartOffset.Value;
+                break;
+            }
+        }
+
+        if (repeatOffset is null) {
+            return;
+        }
+
+        _editLoopLine = currentLine;
+        _editLoopStartOffset = startOffset;
+        _editLoopRepeatOffset = repeatOffset;
+    }
+
+    private void ClearTranscriptEditPlaybackLoop() {
+        _editLoopLine = null;
+        _editLoopStartOffset = null;
+        _editLoopRepeatOffset = null;
+        _isTranscriptEditLoopRestartPending = false;
+    }
+
+    private void PausePlaybackAfterTranscriptEdit(MainViewModel vm) {
+        ClearTranscriptEditPlaybackLoop();
+
+        try {
+            if (vm.PauseAudioCommand.CanExecute(null)) {
+                vm.PauseAudioCommand.Execute(null);
+            }
+        }
+        catch (Exception ex) {
+            vm.LogHandledException("transcript edit playback pause", ex);
+        }
+    }
+
+    private void EnforceTranscriptEditPlaybackLoop() {
+        if (_isApplyingTranscriptEditLoopSeek
+            || _boundViewModel is null
+            || _editLoopLine is null
+            || _editLoopStartOffset is null
+            || _editLoopRepeatOffset is null
+            || !_boundViewModel.IsAudioFileLoaded) {
+            return;
+        }
+
+        double currentSeconds = Math.Max(_boundViewModel.AudioSeekPositionSeconds, 0);
+
+        if (_isTranscriptEditLoopRestartPending) {
+            double repeatSeconds = _editLoopRepeatOffset.Value.TotalSeconds;
+
+            if (currentSeconds < repeatSeconds - 0.05d) {
+                _isTranscriptEditLoopRestartPending = false;
+            }
+
+            return;
+        }
+
+        if (currentSeconds < _editLoopRepeatOffset.Value.TotalSeconds) {
+            return;
+        }
+
+        _isTranscriptEditLoopRestartPending = true;
+        Dispatcher.BeginInvoke(
+            new Action(ApplyTranscriptEditPlaybackLoopRestart),
+            DispatcherPriority.Background);
+    }
+
+    private void ApplyTranscriptEditPlaybackLoopRestart() {
+        if (_boundViewModel is null
+            || _editLoopLine is null
+            || _editLoopStartOffset is null
+            || _editLoopRepeatOffset is null
+            || !_boundViewModel.IsAudioFileLoaded) {
+            _isTranscriptEditLoopRestartPending = false;
+            return;
+        }
+
+        try {
+            _isApplyingTranscriptEditLoopSeek = true;
+            _boundViewModel.RestartAudioPreviewSegment(_editLoopStartOffset.Value);
+        }
+        catch (Exception ex) {
+            _boundViewModel.LogHandledException("transcript edit playback loop", ex);
+            ClearTranscriptEditPlaybackLoop();
+        }
+        finally {
+            _isApplyingTranscriptEditLoopSeek = false;
+        }
+    }
+
+    private static TimeSpan Abs(TimeSpan value) => value < TimeSpan.Zero ? value.Negate() : value;
+
     private static bool IsDataItem(object? item) {
         return item is not null
             && !ReferenceEquals(item, CollectionView.NewItemPlaceholder)
             && !ReferenceEquals(item, DependencyProperty.UnsetValue);
     }
+
+    private static SolidColorBrush CreateBrush(string colorHex) {
+        return (SolidColorBrush)new BrushConverter().ConvertFromString(colorHex)!;
+    }
+
+    private sealed record ToastAppearance(
+        string IconBackgroundHex,
+        string IconBorderHex,
+        string IconStrokeHex,
+        string IconData
+    );
 }

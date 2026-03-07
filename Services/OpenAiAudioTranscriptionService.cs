@@ -13,17 +13,17 @@ using NAudio.Wave;
 namespace AudioTranscript.Services;
 
 public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
-    private const long MaxUploadBytes = 25L * 1024L * 1024L;
-    private const long ChunkWaveHeaderSafetyBytes = 1024L;
-    private const long ChunkTargetBytes = MaxUploadBytes - ChunkWaveHeaderSafetyBytes;
-
-    private const string ResponseFormat = "json";
+    private const string StandardResponseFormat = "json";
+    private const string TimestampedResponseFormat = "verbose_json";
     private const string Temperature = "0";
     private const string ChunkingStrategy = "auto";
     private const string IncludeLogprobs = "logprobs";
     private const string StreamDisabled = "false";
+    private const string TimestampGranularitySegment = "segment";
 
     private readonly AudioStandardizer _audioStandardizer;
+    private readonly AudioChunkPlanner _audioChunkPlanner;
+    private readonly TranscriptionSegmentMerger _segmentMerger;
     private readonly HttpClient _httpClient;
     private readonly OpenAiTranscriptionOptions _options;
     private readonly ProcessLogService _processLogService;
@@ -31,11 +31,15 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
 
     public OpenAiAudioTranscriptionService(
         AudioStandardizer audioStandardizer,
+        AudioChunkPlanner audioChunkPlanner,
+        TranscriptionSegmentMerger segmentMerger,
         HttpClient httpClient,
         OpenAiTranscriptionOptions options,
         ProcessLogService processLogService,
         OpenAiTranscriptionResponseParser responseParser) {
         _audioStandardizer = audioStandardizer;
+        _audioChunkPlanner = audioChunkPlanner;
+        _segmentMerger = segmentMerger;
         _httpClient = httpClient;
         _options = options;
         _processLogService = processLogService;
@@ -45,7 +49,8 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
     public async Task<TranscriptionResult> TranscribeFileAsync(
         string audioFilePath,
         string model,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken,
+        IProgress<TranscriptionProgressUpdate>? progress = null) {
         string validatedModel = ValidateModel(model);
         string validatedPath = ValidateAndResolveFilePath(audioFilePath);
         var info = new FileInfo(validatedPath);
@@ -58,11 +63,20 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
             $"Transcription request started for file '{info.Name}' (ext='{info.Extension}', " +
             $"size={info.Length:N0} bytes) using model '{validatedModel}'.");
 
-        if (info.Length >= MaxUploadBytes) {
+        if (info.Length >= AudioChunkPlanner.MaxUploadBytes) {
             Log(
                 $"File size is >= 25 MB ({info.Length:N0} bytes). " +
-                "Splitting into chunks before transcription.");
-            return await TranscribeFileWithChunkingAsync(validatedPath, validatedModel, cancellationToken);
+                "Transcribing in multiple chunks with absolute timeline merge.");
+            progress?.Report(new TranscriptionProgressUpdate(
+                StatusMessage: "Large file detected. It will be transcribed in multiple parts automatically.",
+                IsLargeFile: true));
+
+            return await TranscribeFileWithChunkingAsync(
+                validatedPath,
+                validatedModel,
+                cancellationToken,
+                progress,
+                announceLargeFile: true);
         }
 
         try {
@@ -80,43 +94,74 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
                 mediaType: ResolveMediaType(info.Extension),
                 fileSizeBytes: info.Length,
                 model: validatedModel,
+                requestMode: TranscriptionRequestMode.Standard,
                 cancellationToken: cancellationToken);
         }
         catch (InvalidOperationException ex) when (LooksLikeDurationLimitError(ex)) {
             Log(
                 "Transcription failed due to model duration limit. " +
                 "Retrying with chunked transcription.");
-            return await TranscribeFileWithChunkingAsync(validatedPath, validatedModel, cancellationToken);
+
+            return await TranscribeFileWithChunkingAsync(
+                validatedPath,
+                validatedModel,
+                cancellationToken,
+                progress,
+                announceLargeFile: false);
         }
     }
 
     private async Task<TranscriptionResult> TranscribeFileWithChunkingAsync(
         string sourcePath,
         string model,
-        CancellationToken cancellationToken) {
+        CancellationToken cancellationToken,
+        IProgress<TranscriptionProgressUpdate>? progress,
+        bool announceLargeFile) {
+        progress?.Report(new TranscriptionProgressUpdate(
+            StatusMessage: "Preparing audio for multi-part transcription...",
+            IsLargeFile: announceLargeFile));
+
         string standardizedWavePath = _audioStandardizer.ConvertFileToEngineWav(sourcePath);
-        List<WaveChunkInfo> chunks = SplitWaveFileIntoChunks(standardizedWavePath, ChunkTargetBytes);
+        List<PreparedWaveChunk> chunks;
+        TimeSpan totalDuration;
+
+        try {
+            chunks = CreateWaveChunks(standardizedWavePath);
+
+            using var durationReader = new WaveFileReader(standardizedWavePath);
+            totalDuration = durationReader.TotalTime;
+        }
+        catch {
+            TryDeleteFile(standardizedWavePath);
+            throw;
+        }
 
         if (chunks.Count == 0) {
+            TryDeleteFile(standardizedWavePath);
             throw new InvalidOperationException("Unable to split audio file into transcription chunks.");
         }
 
         Log($"Prepared {chunks.Count} chunk(s) for transcription.");
 
-        var textBuilder = new StringBuilder();
         var combinedLogprobs = new List<TranscriptionTokenLogprob>();
         var combinedLowConfidence = new List<LowConfidenceToken>();
-        var combinedTimedLines = new List<TranscriptionTimedLine>();
-        TimeSpan totalDuration = TimeSpan.Zero;
+        var absoluteSegments = new List<ChunkTranscriptionSegment>();
         int tokenIndex = 0;
 
         try {
-            foreach (WaveChunkInfo chunk in chunks) {
+            foreach (PreparedWaveChunk chunk in chunks) {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                progress?.Report(new TranscriptionProgressUpdate(
+                    StatusMessage: $"Transcribing chunk {chunk.Plan.ChunkIndex + 1} of {chunks.Count}...",
+                    IsLargeFile: announceLargeFile,
+                    ChunkIndex: chunk.Plan.ChunkIndex + 1,
+                    TotalChunks: chunks.Count));
+
                 Log(
-                    $"Transcribing chunk {chunk.Number}/{chunks.Count} " +
-                    $"(size={chunk.SizeBytes:N0} bytes, duration={chunk.Duration.TotalSeconds:F2}s).");
+                    $"Transcribing chunk {chunk.Plan.ChunkIndex + 1}/{chunks.Count} " +
+                    $"(size={chunk.SizeBytes:N0} bytes, start={chunk.Plan.StartOffset.TotalSeconds:F2}s, " +
+                    $"duration={chunk.Plan.Duration.TotalSeconds:F2}s).");
 
                 await using var chunkStream = new FileStream(
                     chunk.Path,
@@ -132,29 +177,22 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
                     mediaType: "audio/wav",
                     fileSizeBytes: chunk.SizeBytes,
                     model: model,
+                    requestMode: TranscriptionRequestMode.TimestampedChunk,
                     cancellationToken: cancellationToken);
 
-                TimeSpan chunkStart = totalDuration;
-                TimeSpan chunkDuration = chunkResult.Duration ?? chunk.Duration;
-
-                if (!string.IsNullOrWhiteSpace(chunkResult.Text)) {
-                    if (textBuilder.Length > 0) {
-                        textBuilder.AppendLine();
-                    }
-
-                    textBuilder.Append(chunkResult.Text.Trim());
+                if (chunkResult.TimedLines is null || chunkResult.TimedLines.Count == 0) {
+                    throw new InvalidOperationException(
+                        "Chunk transcription did not return timestamped segments needed to merge the final transcript accurately.");
                 }
 
-                IReadOnlyList<TranscriptionTimedLine> chunkLines =
-                    chunkResult.TimedLines is not null && chunkResult.TimedLines.Count > 0
-                        ? chunkResult.TimedLines
-                        : BuildTimedLines(chunkResult.Text, TimeSpan.Zero, chunkDuration);
-
-                foreach (TranscriptionTimedLine line in chunkLines) {
-                    combinedTimedLines.Add(
-                        new TranscriptionTimedLine(
-                            line.Text,
-                            chunkStart + line.StartOffset));
+                foreach (TranscriptionTimedLine line in chunkResult.TimedLines.Where(line => !string.IsNullOrWhiteSpace(line.Text))) {
+                    TimeSpan localEnd = line.EndOffset ?? line.StartOffset;
+                    absoluteSegments.Add(new ChunkTranscriptionSegment(
+                        ChunkIndex: chunk.Plan.ChunkIndex,
+                        ChunkStartOffset: chunk.Plan.StartOffset,
+                        LocalStartOffset: line.StartOffset,
+                        LocalEndOffset: localEnd,
+                        Text: line.Text));
                 }
 
                 foreach (TranscriptionTokenLogprob item in chunkResult.TokenLogprobs) {
@@ -167,26 +205,43 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
 
                     tokenIndex++;
                 }
-
-                totalDuration += chunkDuration;
             }
         }
         finally {
             TryDeleteFile(standardizedWavePath);
 
-            foreach (WaveChunkInfo chunk in chunks) {
+            foreach (PreparedWaveChunk chunk in chunks) {
                 TryDeleteFile(chunk.Path);
             }
         }
 
+        progress?.Report(new TranscriptionProgressUpdate(
+            StatusMessage: "Merging chunk timelines...",
+            IsLargeFile: announceLargeFile,
+            ChunkIndex: chunks.Count,
+            TotalChunks: chunks.Count));
+
+        IReadOnlyList<TranscriptionTimedLine> mergedTimedLines = _segmentMerger.Merge(absoluteSegments);
+
+        if (mergedTimedLines.Count == 0) {
+            throw new InvalidOperationException(
+                "Large-file chunk transcription completed but did not produce a merged transcript timeline.");
+        }
+
+        string mergedText = string.Join(
+            Environment.NewLine,
+            mergedTimedLines
+                .Select(line => line.Text?.Trim() ?? string.Empty)
+                .Where(text => !string.IsNullOrWhiteSpace(text)));
+
         return new TranscriptionResult(
-            Text: textBuilder.ToString().Trim(),
+            Text: mergedText,
             Model: model,
             CreatedAt: DateTimeOffset.UtcNow,
-            Duration: totalDuration == TimeSpan.Zero ? null : totalDuration,
+            Duration: totalDuration > TimeSpan.Zero ? totalDuration : null,
             TokenLogprobs: combinedLogprobs,
             LowConfidenceTokens: combinedLowConfidence,
-            TimedLines: combinedTimedLines);
+            TimedLines: mergedTimedLines);
     }
 
     private async Task<TranscriptionResult> SendRequestAsync(
@@ -195,6 +250,7 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         string mediaType,
         long fileSizeBytes,
         string model,
+        TranscriptionRequestMode requestMode,
         CancellationToken cancellationToken) {
         EnsureConfigured();
         audioStream.Position = 0;
@@ -210,12 +266,23 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
 
         using var multipart = new MultipartFormDataContent();
         multipart.Add(new StringContent(model), "model");
-        multipart.Add(new StringContent(ResponseFormat), "response_format");
+        multipart.Add(
+            new StringContent(
+                requestMode == TranscriptionRequestMode.TimestampedChunk
+                    ? TimestampedResponseFormat
+                    : StandardResponseFormat),
+            "response_format");
         multipart.Add(new StringContent(Temperature), "temperature");
-        multipart.Add(new StringContent(ChunkingStrategy), "chunking_strategy");
-        multipart.Add(new StringContent(IncludeLogprobs), "include[]");
         multipart.Add(new StringContent(StreamDisabled), "stream");
         multipart.Add(new StringContent(_options.Prompt.Trim()), "prompt");
+
+        if (requestMode == TranscriptionRequestMode.Standard) {
+            multipart.Add(new StringContent(ChunkingStrategy), "chunking_strategy");
+            multipart.Add(new StringContent(IncludeLogprobs), "include[]");
+        }
+        else {
+            multipart.Add(new StringContent(TimestampGranularitySegment), "timestamp_granularities[]");
+        }
 
         var audioContent = new StreamContent(audioStream);
         audioContent.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
@@ -271,15 +338,6 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
                     responseBody,
                     model,
                     _options.LowConfidenceLogprobThreshold);
-
-                IReadOnlyList<TranscriptionTimedLine> timedLines = BuildTimedLines(
-                    result.Text,
-                    TimeSpan.Zero,
-                    result.Duration);
-
-                result = result with {
-                    TimedLines = timedLines,
-                };
             }
             catch (Exception ex) {
                 Log($"Transcription response parsing failed for '{fileName}': {ex.Message}");
@@ -296,55 +354,40 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         }
     }
 
-    private List<WaveChunkInfo> SplitWaveFileIntoChunks(string wavePath, long maxChunkFileSizeBytes) {
+    private List<PreparedWaveChunk> CreateWaveChunks(string wavePath) {
         using var reader = new WaveFileReader(wavePath);
 
         WaveFormat format = reader.WaveFormat;
-        int blockAlign = Math.Max(format.BlockAlign, 1);
-        int bytesPerSecond = Math.Max(format.AverageBytesPerSecond, 1);
+        IReadOnlyList<AudioChunkPlan> plans = _audioChunkPlanner.PlanWaveChunks(
+            waveDataBytes: reader.Length,
+            averageBytesPerSecond: Math.Max(format.AverageBytesPerSecond, 1),
+            blockAlign: Math.Max(format.BlockAlign, 1));
 
-        long chunkDataBytes = Math.Max(maxChunkFileSizeBytes - ChunkWaveHeaderSafetyBytes, blockAlign);
-        chunkDataBytes -= chunkDataBytes % blockAlign;
-        chunkDataBytes = Math.Max(chunkDataBytes, blockAlign);
-
-        var chunks = new List<WaveChunkInfo>();
+        var chunks = new List<PreparedWaveChunk>(plans.Count);
         byte[] buffer = new byte[81920];
-        int chunkIndex = 0;
 
-        while (reader.Position < reader.Length) {
+        foreach (AudioChunkPlan plan in plans) {
             string chunkPath = Path.Combine(
                 Path.GetTempPath(),
-                $"audiotranscript-chunk-{Guid.NewGuid():N}-{chunkIndex:D4}.wav");
+                $"audiotranscript-chunk-{Guid.NewGuid():N}-{plan.ChunkIndex:D4}.wav");
 
-            long written = 0;
+            reader.Position = plan.StartDataOffsetBytes;
+            long remaining = plan.DataBytes;
 
             using (var writer = new WaveFileWriter(chunkPath, format)) {
-                while (written < chunkDataBytes && reader.Position < reader.Length) {
-                    int bytesToRead = (int)Math.Min(buffer.Length, chunkDataBytes - written);
-                    int read = reader.Read(buffer, 0, bytesToRead);
-
+                while (remaining > 0) {
+                    int read = reader.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
                     if (read <= 0) {
                         break;
                     }
 
                     writer.Write(buffer, 0, read);
-                    written += read;
+                    remaining -= read;
                 }
             }
 
-            if (written <= 0) {
-                TryDeleteFile(chunkPath);
-                break;
-            }
-
-            long chunkSize = TryGetFileSize(chunkPath);
-            TimeSpan chunkDuration = TimeSpan.FromSeconds(written / (double)bytesPerSecond);
-            chunks.Add(new WaveChunkInfo(
-                Number: chunkIndex + 1,
-                Path: chunkPath,
-                SizeBytes: chunkSize,
-                Duration: chunkDuration));
-            chunkIndex++;
+            long chunkFileSize = TryGetFileSize(chunkPath);
+            chunks.Add(new PreparedWaveChunk(plan, chunkPath, chunkFileSize));
         }
 
         return chunks;
@@ -372,7 +415,7 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         }
 
         try {
-            using FileStream stream = File.Open(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using FileStream _ = File.Open(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         }
         catch (Exception ex) {
             throw new IOException($"Audio file cannot be accessed: {ex.Message}", ex);
@@ -443,38 +486,6 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         return $"Unable to reach OpenAI transcription service: {exception.Message}";
     }
 
-    private static IReadOnlyList<TranscriptionTimedLine> BuildTimedLines(
-        string text,
-        TimeSpan startOffset,
-        TimeSpan? duration) {
-        if (string.IsNullOrWhiteSpace(text)) {
-            return Array.Empty<TranscriptionTimedLine>();
-        }
-
-        string[] parts = text
-            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.Trim())
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .ToArray();
-
-        if (parts.Length == 0) {
-            return Array.Empty<TranscriptionTimedLine>();
-        }
-
-        var lines = new List<TranscriptionTimedLine>(parts.Length);
-        double totalSeconds = Math.Max(duration?.TotalSeconds ?? 0, 0);
-        double stepSeconds = parts.Length > 1 && totalSeconds > 0
-            ? totalSeconds / parts.Length
-            : 0;
-
-        for (int index = 0; index < parts.Length; index++) {
-            TimeSpan offset = startOffset + TimeSpan.FromSeconds(stepSeconds * index);
-            lines.Add(new TranscriptionTimedLine(parts[index], offset));
-        }
-
-        return lines;
-    }
-
     private void Log(string message) {
         _processLogService.Log("OpenAI", message);
     }
@@ -507,10 +518,14 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         }
     }
 
-    private sealed record WaveChunkInfo(
-        int Number,
+    private enum TranscriptionRequestMode {
+        Standard,
+        TimestampedChunk,
+    }
+
+    private sealed record PreparedWaveChunk(
+        AudioChunkPlan Plan,
         string Path,
-        long SizeBytes,
-        TimeSpan Duration
+        long SizeBytes
     );
 }

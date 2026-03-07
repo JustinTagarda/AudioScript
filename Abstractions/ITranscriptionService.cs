@@ -4,5 +4,6 @@ public interface ITranscriptionService {
     Task<TranscriptionResult> TranscribeFileAsync(
         string audioFilePath,
         string model,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        IProgress<TranscriptionProgressUpdate>? progress = null);
 }

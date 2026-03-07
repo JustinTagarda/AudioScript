@@ -22,6 +22,7 @@ public partial class App : System.Windows.Application {
     private WindowPlacementService? _windowPlacementService;
     private OpenAiSettingsStore? _openAiSettingsStore;
     private OpenAiApiKeyValidationService? _openAiApiKeyValidationService;
+    private AppPreferencesStore? _appPreferencesStore;
 
     protected override void OnStartup(System.Windows.StartupEventArgs e) {
         base.OnStartup(e);
@@ -45,8 +46,10 @@ public partial class App : System.Windows.Application {
 
         var openAiOptions = new OpenAiTranscriptionOptions();
         _openAiSettingsStore = new OpenAiSettingsStore();
+        _appPreferencesStore = new AppPreferencesStore();
 
         OpenAiSettingsSnapshot openAiSnapshot = _openAiSettingsStore.Load(openAiOptions.ApiKey);
+        AppPreferencesSnapshot appPreferencesSnapshot = _appPreferencesStore.Load();
         openAiOptions.ApiKey = openAiSnapshot.ApiKey;
 
         _httpClient = new HttpClient();
@@ -54,9 +57,14 @@ public partial class App : System.Windows.Application {
         var processLogService = new ProcessLogService();
         var responseParser = new OpenAiTranscriptionResponseParser();
         var audioStandardizer = new AudioStandardizer();
+        var audioChunkPlanner = new AudioChunkPlanner();
+        var segmentMerger = new TranscriptionSegmentMerger();
         var audioPlaybackService = new NaudioAudioPlaybackService();
+        var sessionStore = new TranscriptSessionStore(processLogService: processLogService);
         var transcriptionService = new OpenAiAudioTranscriptionService(
             audioStandardizer,
+            audioChunkPlanner,
+            segmentMerger,
             _httpClient,
             openAiOptions,
             processLogService,
@@ -71,7 +79,10 @@ public partial class App : System.Windows.Application {
             openAiOptions,
             _openAiSettingsStore,
             _openAiApiKeyValidationService,
-            processLogService);
+            processLogService,
+            sessionStore,
+            _appPreferencesStore,
+            appPreferencesSnapshot);
 
         var mainWindow = new MainWindow {
             DataContext = _mainViewModel,

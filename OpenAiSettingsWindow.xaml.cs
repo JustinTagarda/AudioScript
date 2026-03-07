@@ -41,6 +41,7 @@ public partial class OpenAiSettingsWindow : Window {
             DialogResult = true;
         }
         catch (Exception ex) {
+            viewModel.LogHandledException("OpenAI settings save", ex);
             ShowError($"Unable to validate API key: {ex.Message}");
         }
         finally {

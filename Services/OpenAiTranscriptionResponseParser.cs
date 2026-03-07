@@ -31,6 +31,7 @@ public sealed class OpenAiTranscriptionResponseParser {
 
             TimeSpan? duration = ExtractDuration(root);
             IReadOnlyList<TranscriptionTokenLogprob> tokenLogprobs = ExtractTokenLogprobs(root);
+            IReadOnlyList<TranscriptionTimedLine> timedLines = ExtractTimedLines(root);
             IReadOnlyList<LowConfidenceToken> lowConfidenceTokens = tokenLogprobs
                 .Where(item => item.Logprob <= lowConfidenceThreshold)
                 .Select(item => new LowConfidenceToken(item.Token, item.Logprob, item.Index))
@@ -42,7 +43,8 @@ public sealed class OpenAiTranscriptionResponseParser {
                 CreatedAt: DateTimeOffset.UtcNow,
                 Duration: duration,
                 TokenLogprobs: tokenLogprobs,
-                LowConfidenceTokens: lowConfidenceTokens);
+                LowConfidenceTokens: lowConfidenceTokens,
+                TimedLines: timedLines);
         }
     }
 
@@ -205,5 +207,80 @@ public sealed class OpenAiTranscriptionResponseParser {
         }
 
         return false;
+    }
+
+    private static IReadOnlyList<TranscriptionTimedLine> ExtractTimedLines(JsonElement root) {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("segments", out JsonElement segmentsNode)
+            || segmentsNode.ValueKind != JsonValueKind.Array) {
+            return Array.Empty<TranscriptionTimedLine>();
+        }
+
+        var lines = new List<TranscriptionTimedLine>();
+
+        foreach (JsonElement segmentNode in segmentsNode.EnumerateArray()) {
+            if (segmentNode.ValueKind != JsonValueKind.Object) {
+                continue;
+            }
+
+            if (!TryExtractSegment(segmentNode, out TranscriptionTimedLine? line) || line is null) {
+                continue;
+            }
+
+            lines.Add(line);
+        }
+
+        return lines;
+    }
+
+    private static bool TryExtractSegment(JsonElement node, out TranscriptionTimedLine? line) {
+        line = null;
+
+        if (!node.TryGetProperty("text", out JsonElement textNode)
+            || textNode.ValueKind != JsonValueKind.String) {
+            return false;
+        }
+
+        string text = textNode.GetString()?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text)) {
+            return false;
+        }
+
+        if (!node.TryGetProperty("start", out JsonElement startNode)
+            || !TryReadNonNegativeSeconds(startNode, out double startSeconds)) {
+            return false;
+        }
+
+        double? endSeconds = null;
+        if (node.TryGetProperty("end", out JsonElement endNode)
+            && TryReadNonNegativeSeconds(endNode, out double parsedEndSeconds)) {
+            endSeconds = parsedEndSeconds;
+        }
+
+        TimeSpan startOffset = TimeSpan.FromSeconds(startSeconds);
+        TimeSpan? endOffset = endSeconds is null
+            ? null
+            : TimeSpan.FromSeconds(Math.Max(endSeconds.Value, startSeconds));
+
+        line = new TranscriptionTimedLine(
+            Text: text,
+            StartOffset: startOffset,
+            EndOffset: endOffset,
+            IsTimestampEstimated: false);
+        return true;
+    }
+
+    private static bool TryReadNonNegativeSeconds(JsonElement node, out double seconds) {
+        seconds = 0;
+
+        if (!TryReadLogprob(node, out seconds)) {
+            return false;
+        }
+
+        if (seconds < 0) {
+            seconds = 0;
+        }
+
+        return true;
     }
 }

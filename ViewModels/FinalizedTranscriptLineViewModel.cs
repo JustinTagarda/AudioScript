@@ -4,16 +4,65 @@ using System.Runtime.CompilerServices;
 namespace AudioTranscript.ViewModels;
 
 public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
+    private TimeSpan? _startOffset;
+    private TimeSpan? _endOffset;
     private string _text;
+    private bool _isPlaybackTimelineMatch;
+    private bool _areRowActionsVisible;
 
-    public FinalizedTranscriptLineViewModel(string timeline, string text) {
-        Timeline = timeline?.Trim() ?? string.Empty;
+    public FinalizedTranscriptLineViewModel(
+        TimeSpan? startOffset,
+        TimeSpan? endOffset,
+        bool isTimestampEstimated,
+        string text) {
+        _startOffset = startOffset;
+        _endOffset = endOffset;
+        IsTimestampEstimated = isTimestampEstimated;
         _text = text ?? string.Empty;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public string Timeline { get; }
+    public TimeSpan? StartOffset => _startOffset;
+
+    public TimeSpan? EndOffset => _endOffset;
+
+    public bool IsTimestampEstimated { get; }
+
+    public string Timeline {
+        get => _startOffset is null
+            ? string.Empty
+            : FormatTimeline(_startOffset.Value);
+        set {
+            if (!TryParseTimeline(value, out TimeSpan parsed)) {
+                OnPropertyChanged(nameof(Timeline));
+                return;
+            }
+
+            TimeSpan? previousStart = _startOffset;
+            TimeSpan? previousEnd = _endOffset;
+            if (previousStart == parsed) {
+                OnPropertyChanged(nameof(Timeline));
+                return;
+            }
+
+            _startOffset = parsed;
+
+            if (previousStart is not null
+                && previousEnd is not null
+                && previousEnd.Value >= previousStart.Value) {
+                TimeSpan duration = previousEnd.Value - previousStart.Value;
+                _endOffset = parsed + duration;
+            }
+            else if (_endOffset is not null && _endOffset.Value < parsed) {
+                _endOffset = parsed;
+            }
+
+            OnPropertyChanged(nameof(Timeline));
+            OnPropertyChanged(nameof(StartOffset));
+            OnPropertyChanged(nameof(EndOffset));
+        }
+    }
 
     public string Text {
         get => _text;
@@ -29,7 +78,79 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         }
     }
 
+    public bool IsPlaybackTimelineMatch {
+        get => _isPlaybackTimelineMatch;
+        set {
+            if (_isPlaybackTimelineMatch == value) {
+                return;
+            }
+
+            _isPlaybackTimelineMatch = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool AreRowActionsVisible {
+        get => _areRowActionsVisible;
+        set {
+            if (_areRowActionsVisible == value) {
+                return;
+            }
+
+            _areRowActionsVisible = value;
+            OnPropertyChanged();
+        }
+    }
+
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    public static bool TryParseTimeline(string? value, out TimeSpan offset) {
+        offset = TimeSpan.Zero;
+
+        if (!TryNormalizeTimeline(value, out string normalized)) {
+            return false;
+        }
+
+        int minutes = ((normalized[0] - '0') * 10) + (normalized[1] - '0');
+        int seconds = ((normalized[3] - '0') * 10) + (normalized[4] - '0');
+        offset = new TimeSpan(0, minutes, seconds);
+        return true;
+    }
+
+    public static bool TryNormalizeTimeline(string? value, out string normalized) {
+        normalized = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(value)) {
+            return false;
+        }
+
+        string trimmed = value.Trim();
+        if (trimmed.Length != 5
+            || trimmed[2] != ':'
+            || !char.IsAsciiDigit(trimmed[0])
+            || !char.IsAsciiDigit(trimmed[1])
+            || !char.IsAsciiDigit(trimmed[3])
+            || !char.IsAsciiDigit(trimmed[4])) {
+            return false;
+        }
+
+        int seconds = ((trimmed[3] - '0') * 10) + (trimmed[4] - '0');
+        if (seconds > 59) {
+            return false;
+        }
+
+        normalized = trimmed;
+        return true;
+    }
+
+    private static string FormatTimeline(TimeSpan offset) {
+        if (offset < TimeSpan.Zero) {
+            offset = TimeSpan.Zero;
+        }
+
+        int totalMinutes = (int)offset.TotalMinutes;
+        return $"{totalMinutes:00}:{offset.Seconds:00}";
     }
 }
