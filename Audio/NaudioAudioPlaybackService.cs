@@ -78,6 +78,15 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public void UnloadFile() {
+        lock (_sync) {
+            DisposePlaybackCore();
+            _loadedFilePath = null;
+        }
+
+        PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public void Play() {
         lock (_sync) {
             if (_output is null || _reader is null) {
@@ -144,10 +153,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
     }
 
     public void Dispose() {
-        lock (_sync) {
-            DisposePlaybackCore();
-            _loadedFilePath = null;
-        }
+        UnloadFile();
     }
 
     private void OnPlaybackStopped(object? sender, StoppedEventArgs e) {

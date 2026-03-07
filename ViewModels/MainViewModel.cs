@@ -14,7 +14,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private const int SeekStepSeconds = 5;
     private const string AudioFileDialogFilter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*";
 
-    private readonly LiveTranscriptionCoordinator _liveCoordinator;
     private readonly ITranscriptionService _transcriptionService;
     private readonly IAudioPlaybackService _audioPlaybackService;
     private readonly OpenAiTranscriptionOptions _openAiOptions;
@@ -25,12 +24,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private readonly DispatcherTimer _audioTimelineTimer;
 
     private EngineOptionViewModel? _selectedEngine;
-    private string _interimText = "Interim transcript appears here while the model is revising...";
     private string _finalizedText = string.Empty;
     private string _statusMessage = "Ready.";
     private string _openAiApiKey;
     private bool _isBusy;
-    private bool _isLiveRunning;
     private bool _isFileTranscribing;
     private string _loadedAudioFilePath = string.Empty;
     private bool _isAudioPlaying;
@@ -43,14 +40,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public MainViewModel(
         IEnumerable<TranscriptionModelOption> models,
-        LiveTranscriptionCoordinator liveCoordinator,
         ITranscriptionService transcriptionService,
         IAudioPlaybackService audioPlaybackService,
         OpenAiTranscriptionOptions openAiOptions,
         OpenAiSettingsStore openAiSettingsStore,
         OpenAiApiKeyValidationService openAiApiKeyValidationService,
         ProcessLogService processLogService) {
-        _liveCoordinator = liveCoordinator;
         _transcriptionService = transcriptionService;
         _audioPlaybackService = audioPlaybackService;
         _openAiOptions = openAiOptions;
@@ -67,8 +62,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         FinalizedTranscriptLines = new ObservableCollection<FinalizedTranscriptLineViewModel>();
 
         TranscribeFileCommand = new AsyncRelayCommand(TranscribeFileAsync, CanTranscribeFile);
-        StartLiveCommand = new AsyncRelayCommand(StartLiveAsync, CanStartLive);
-        StopLiveCommand = new AsyncRelayCommand(StopLiveAsync, CanStopLive);
         ClearCommand = new AsyncRelayCommand(ClearAsync, CanClear);
         CancelCommand = new AsyncRelayCommand(CancelFileTranscriptionAsync, CanCancelFileTranscription);
         OpenAudioFileCommand = new AsyncRelayCommand(OpenAudioFileAsync, CanOpenAudioFile);
@@ -78,8 +71,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         RewindAudioCommand = new AsyncRelayCommand(RewindAudioAsync, CanSeekAudio);
         ForwardAudioCommand = new AsyncRelayCommand(ForwardAudioAsync, CanSeekAudio);
 
-        _liveCoordinator.UpdateReceived += OnUpdateReceived;
-        _liveCoordinator.StatusChanged += OnStatusChanged;
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
         _isAudioPlaying = _audioPlaybackService.IsPlaying;
@@ -122,10 +113,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public AsyncRelayCommand TranscribeFileCommand { get; }
 
-    public AsyncRelayCommand StartLiveCommand { get; }
-
-    public AsyncRelayCommand StopLiveCommand { get; }
-
     public AsyncRelayCommand ClearCommand { get; }
 
     public AsyncRelayCommand CancelCommand { get; }
@@ -159,10 +146,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public bool IsOpenAiEngineSelected => SelectedEngine is not null;
 
     public bool IsEngineSelectionEnabled =>
-        !IsBusy && !IsLiveRunning && !IsFileTranscribing;
+        !IsBusy && !IsFileTranscribing;
 
     public bool IsOpenAiSettingsEnabled =>
-        IsOpenAiEngineSelected && !IsBusy && !IsLiveRunning && !IsFileTranscribing;
+        IsOpenAiEngineSelected && !IsBusy && !IsFileTranscribing;
 
     public string LoadedAudioFilePath {
         get => _loadedAudioFilePath;
@@ -237,11 +224,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         private set => SetProperty(ref _audioRemainingText, value);
     }
 
-    public string InterimText {
-        get => _interimText;
-        set => SetProperty(ref _interimText, value);
-    }
-
     public string FinalizedText {
         get => _finalizedText;
         set => SetProperty(ref _finalizedText, value);
@@ -264,19 +246,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             AppendLog($"Busy state: {(value ? "ON" : "OFF")}.");
-            NotifyInteractionAvailabilityChanged();
-            RefreshCommandStates();
-        }
-    }
-
-    public bool IsLiveRunning {
-        get => _isLiveRunning;
-        private set {
-            if (!SetProperty(ref _isLiveRunning, value)) {
-                return;
-            }
-
-            AppendLog($"Live state: {(value ? "RUNNING" : "STOPPED")}.");
             NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
         }
@@ -308,7 +277,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
     }
 
-    public async ValueTask DisposeAsync() {
+    public ValueTask DisposeAsync() {
         AppendLog("Disposing transcription resources...");
 
         try {
@@ -320,17 +289,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         _fileTranscriptionCts?.Dispose();
         _fileTranscriptionCts = null;
-
-        _liveCoordinator.UpdateReceived -= OnUpdateReceived;
-        _liveCoordinator.StatusChanged -= OnStatusChanged;
         _processLogService.LogEmitted -= OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged -= OnAudioPlaybackStateChanged;
         UnsubscribeFromFinalizedLineChanges();
         _audioTimelineTimer.Stop();
         _audioTimelineTimer.Tick -= OnAudioTimelineTick;
         _audioPlaybackService.Dispose();
-        await _liveCoordinator.DisposeAsync();
         AppendLog("Disposed transcription resources.");
+        return ValueTask.CompletedTask;
     }
 
     public async Task<OpenAiApiKeyValidationResult> ValidateOpenAiApiKeyAsync(string apiKey, CancellationToken cancellationToken) {
@@ -378,7 +344,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             return;
         }
 
-        ClearOutputCore();
+        ClearOutputCore(unloadAudioPreview: false);
         AppendLog($"Using loaded audio file: {selectedFilePath}");
         try {
             long fileSize = new System.IO.FileInfo(selectedFilePath).Length;
@@ -403,14 +369,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 transcriptionToken);
 
             AppendFinalFromFileResult(result);
-            InterimText = string.Empty;
             StatusMessage = "File transcription completed.";
             AppendLog(
                 $"File transcription completed. Received {result.Text.Length:N0} characters. " +
                 $"Logprobs={result.TokenLogprobs.Count:N0}, low-confidence={result.LowConfidenceTokens.Count:N0}.");
         }
         catch (OperationCanceledException) when (transcriptionToken.IsCancellationRequested) {
-            InterimText = string.Empty;
             StatusMessage = "File transcription canceled.";
             AppendLog("File transcription canceled by user.");
         }
@@ -440,79 +404,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return Task.CompletedTask;
     }
 
-    private async Task StartLiveAsync() {
-        AppendLog("Command requested: Start Live.");
-
-        if (SelectedEngine is null || IsLiveRunning) {
-            AppendLog("Start Live ignored: no model selected or live already running.");
-            return;
-        }
-
-        if (!EnsureSelectedModelConfigured()) {
-            AppendLog("Start Live aborted: selected model is not ready.");
-            return;
-        }
-
-        ClearOutputCore();
-        IsBusy = true;
-        AppendLog($"Starting live transcription with {SelectedEngine.DisplayName}.");
-
-        try {
-            await _liveCoordinator.StartAsync(
-                SelectedEngine.Id,
-                CancellationToken.None);
-
-            IsLiveRunning = true;
-            InterimText = "Monitoring default system playback...";
-            AppendLog("Live transcription started; monitoring default system playback.");
-        }
-        catch (Exception ex) {
-            RaiseError($"Unable to start live transcription: {ex.Message}");
-        }
-        finally {
-            IsBusy = false;
-            AppendLog("Command finished: Start Live.");
-        }
-    }
-
-    private async Task StopLiveAsync() {
-        AppendLog("Command requested: Stop Live.");
-
-        if (!IsLiveRunning) {
-            AppendLog("Stop Live ignored: live transcription is not running.");
-            return;
-        }
-
-        IsBusy = true;
-        AppendLog("Stopping live transcription.");
-
-        try {
-            await _liveCoordinator.StopAsync(CancellationToken.None);
-            IsLiveRunning = false;
-            InterimText = string.Empty;
-            AppendLog("Live transcription stopped.");
-        }
-        catch (Exception ex) {
-            RaiseError($"Unable to stop live transcription: {ex.Message}");
-        }
-        finally {
-            IsBusy = false;
-            AppendLog("Command finished: Stop Live.");
-        }
-    }
-
     private Task ClearAsync() {
-        ClearOutputCore();
+        ClearOutputCore(unloadAudioPreview: true);
         return Task.CompletedTask;
     }
 
-    private void ClearOutputCore() {
-        InterimText = string.Empty;
+    private void ClearOutputCore(bool unloadAudioPreview) {
+        if (unloadAudioPreview) {
+            _audioPlaybackService.UnloadFile();
+        }
+
         UnsubscribeFromFinalizedLineChanges();
         FinalizedTranscriptLines.Clear();
         FinalizedText = string.Empty;
         ProcessLogs.Clear();
-        _statusMessage = "Transcript and logs cleared.";
+        _statusMessage = unloadAudioPreview
+            ? "Transcript, logs, and audio preview cleared."
+            : "Transcript and logs cleared.";
         NotifyPropertyChanged(nameof(StatusMessage));
     }
 
@@ -619,20 +527,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return SelectedEngine is not null
             && IsAudioFileLoaded
             && !IsBusy
-            && !IsLiveRunning
             && !IsFileTranscribing;
     }
 
-    private bool CanStartLive() {
-        return SelectedEngine is not null && !IsBusy && !IsLiveRunning && !IsFileTranscribing;
-    }
-
-    private bool CanStopLive() {
-        return IsLiveRunning && !IsBusy && !IsFileTranscribing;
-    }
-
     private bool CanClear() {
-        return !IsBusy && !IsLiveRunning && !IsFileTranscribing;
+        return !IsBusy && !IsFileTranscribing;
     }
 
     private bool CanCancelFileTranscription() {
@@ -640,7 +539,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     private bool CanOpenAudioFile() {
-        return !IsBusy && !IsLiveRunning && !IsFileTranscribing;
+        return !IsBusy && !IsFileTranscribing;
     }
 
     private bool CanPlayAudio() {
@@ -661,8 +560,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private void RefreshCommandStates() {
         TranscribeFileCommand.RaiseCanExecuteChanged();
-        StartLiveCommand.RaiseCanExecuteChanged();
-        StopLiveCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged();
         OpenAudioFileCommand.RaiseCanExecuteChanged();
@@ -738,18 +635,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 text: line.Text.Trim()));
 
         AppendFinalEntries(formatted, result.Text);
-    }
-
-    private void AppendFinalWithWallClockTimestamp(string text) {
-        if (string.IsNullOrWhiteSpace(text)) {
-            return;
-        }
-
-        string timestamp = DateTime.Now.ToString("HH:mm:ss");
-        IEnumerable<FinalizedTranscriptLineViewModel> formatted = SplitTranscriptLines(text)
-            .Select(line => new FinalizedTranscriptLineViewModel(timestamp, line));
-
-        AppendFinalEntries(formatted, text);
     }
 
     private void AppendFinalEntries(IEnumerable<FinalizedTranscriptLineViewModel> lines, string rawTextForLog) {
@@ -898,36 +783,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return $"{totalMinutes:00}:{offset.Seconds:00}";
     }
 
-    private void OnUpdateReceived(object? sender, TranscriptUpdate update) {
-        _uiContext.Post(_ => {
-            if (update.IsFinal) {
-                AppendLogCore($"Realtime final update received: {TrimForLog(update.Text)}");
-
-                if (update.LowConfidenceTokens is not null && update.LowConfidenceTokens.Count > 0) {
-                    AppendLogCore($"Realtime final update contains {update.LowConfidenceTokens.Count:N0} low-confidence token(s).");
-                }
-
-                AppendFinalWithWallClockTimestamp(update.Text);
-                InterimText = string.Empty;
-                return;
-            }
-
-            InterimText = update.Text;
-            AppendLogCore($"Realtime interim update: {TrimForLog(update.Text)}");
-        }, null);
-    }
-
-    private void OnStatusChanged(object? sender, string status) {
-        _uiContext.Post(_ => {
-            StatusMessage = status;
-            AppendLogCore($"Coordinator status: {status}");
-
-            if (LooksLikeErrorStatus(status)) {
-                RaiseError(status);
-            }
-        }, null);
-    }
-
     private void OnProcessLogEmitted(object? sender, string message) {
         _uiContext.Post(_ => AppendLogCore(message), null);
     }
@@ -1025,12 +880,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         AppendLog($"ERROR: {message}");
         _uiContext.Post(_ => ErrorOccurred?.Invoke(this, message), null);
-    }
-
-    private static bool LooksLikeErrorStatus(string status) {
-        return status.Contains("error", StringComparison.OrdinalIgnoreCase)
-            || status.Contains("failed", StringComparison.OrdinalIgnoreCase)
-            || status.Contains("unable", StringComparison.OrdinalIgnoreCase);
     }
 
     private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null) {

@@ -62,14 +62,10 @@ public partial class App : System.Windows.Application {
             processLogService,
             responseParser);
 
-        var captureService = new WasapiAudioCaptureService(audioStandardizer);
-        var liveCoordinator = new LiveTranscriptionCoordinator(captureService, transcriptionService);
-
         _windowPlacementService = new WindowPlacementService();
 
         _mainViewModel = new MainViewModel(
             OpenAiTranscriptionModelCatalog.Models,
-            liveCoordinator,
             transcriptionService,
             audioPlaybackService,
             openAiOptions,

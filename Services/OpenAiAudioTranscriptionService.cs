@@ -90,34 +90,6 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         }
     }
 
-    public async Task<TranscriptionResult> TranscribePcmChunkAsync(
-        ReadOnlyMemory<byte> pcm16KhzMono,
-        string model,
-        CancellationToken cancellationToken) {
-        string validatedModel = ValidateModel(model);
-
-        if (pcm16KhzMono.IsEmpty) {
-            return new TranscriptionResult(
-                Text: string.Empty,
-                Model: validatedModel,
-                CreatedAt: DateTimeOffset.UtcNow,
-                Duration: null,
-                TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
-                LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
-                TimedLines: Array.Empty<TranscriptionTimedLine>());
-        }
-
-        await using MemoryStream wavStream = CreateWaveStream(pcm16KhzMono.Span);
-
-        return await SendRequestAsync(
-            audioStream: wavStream,
-            fileName: $"live-{Guid.NewGuid():N}.wav",
-            mediaType: "audio/wav",
-            fileSizeBytes: wavStream.Length,
-            model: validatedModel,
-            cancellationToken: cancellationToken);
-    }
-
     private async Task<TranscriptionResult> TranscribeFileWithChunkingAsync(
         string sourcePath,
         string model,
@@ -435,37 +407,6 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
             ".wma" => "audio/x-ms-wma",
             _ => "application/octet-stream",
         };
-    }
-
-    private static MemoryStream CreateWaveStream(ReadOnlySpan<byte> pcm16KhzMono) {
-        int sampleRate = AudioFormatConstants.EngineWaveFormat.SampleRate;
-        short bitsPerSample = (short)AudioFormatConstants.EngineWaveFormat.BitsPerSample;
-        short channels = (short)AudioFormatConstants.EngineWaveFormat.Channels;
-        short blockAlign = (short)(channels * (bitsPerSample / 8));
-        int byteRate = sampleRate * blockAlign;
-        int dataLength = pcm16KhzMono.Length;
-
-        var stream = new MemoryStream(capacity: dataLength + 44);
-
-        using (var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true)) {
-            writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-            writer.Write(36 + dataLength);
-            writer.Write(Encoding.ASCII.GetBytes("WAVE"));
-            writer.Write(Encoding.ASCII.GetBytes("fmt "));
-            writer.Write(16);
-            writer.Write((short)1);
-            writer.Write(channels);
-            writer.Write(sampleRate);
-            writer.Write(byteRate);
-            writer.Write(blockAlign);
-            writer.Write(bitsPerSample);
-            writer.Write(Encoding.ASCII.GetBytes("data"));
-            writer.Write(dataLength);
-            writer.Write(pcm16KhzMono);
-        }
-
-        stream.Position = 0;
-        return stream;
     }
 
     private static string ExtractApiErrorMessage(string responseBody) {

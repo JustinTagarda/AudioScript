@@ -15,6 +15,8 @@ public interface IAudioPlaybackService : IDisposable {
 
     void LoadFile(string filePath);
 
+    void UnloadFile();
+
     void Play();
 
     void Pause();

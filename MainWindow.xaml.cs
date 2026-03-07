@@ -2,11 +2,14 @@ using System;
 using System.Collections.Specialized;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using AudioTranscript.ViewModels;
 using DataGridCell = System.Windows.Controls.DataGridCell;
@@ -20,6 +23,7 @@ public partial class MainWindow : Window {
     private bool _isOpenAiDialogOpen;
     private bool _isAdjustingTranscriptCell;
     private MainViewModel? _boundViewModel;
+    private CancellationTokenSource? _copyToastCts;
 
     public MainWindow() {
         InitializeComponent();
@@ -53,7 +57,16 @@ public partial class MainWindow : Window {
         }
 
         try {
-            System.Windows.Clipboard.SetText(vm.FinalizedText ?? string.Empty);
+            string plainText = string.Join(
+                Environment.NewLine,
+                vm.FinalizedTranscriptLines
+                    .Select(line => line.Text?.Trim() ?? string.Empty)
+                    .Where(text => !string.IsNullOrWhiteSpace(text)));
+
+            System.Windows.Clipboard.SetText(plainText);
+            ShowCopyToast(
+                "Copied to clipboard",
+                "Finalized transcript is ready to paste.");
         }
         catch (Exception ex) {
             var dialog = new ErrorDialogWindow($"Unable to copy transcript to clipboard: {ex.Message}") {
@@ -105,6 +118,8 @@ public partial class MainWindow : Window {
     }
 
     private void OnMainWindowClosed(object? sender, EventArgs e) {
+        CancelCopyToast();
+
         if (_boundViewModel is null) {
             return;
         }
@@ -112,6 +127,94 @@ public partial class MainWindow : Window {
         _boundViewModel.ErrorOccurred -= OnErrorOccurred;
         _boundViewModel.ProcessLogs.CollectionChanged -= OnProcessLogsCollectionChanged;
         _boundViewModel = null;
+    }
+
+    private void ShowCopyToast(string title, string message) {
+        double startOpacity = CopyToastHost.Visibility == Visibility.Visible
+            ? CopyToastHost.Opacity
+            : 0;
+        double startOffset = CopyToastHost.Visibility == Visibility.Visible
+            ? CopyToastTransform.Y
+            : 14;
+
+        CancelCopyToast();
+
+        CopyToastTitleText.Text = title;
+        CopyToastMessageText.Text = message;
+        CopyToastHost.Visibility = Visibility.Visible;
+        CopyToastHost.Opacity = startOpacity;
+        CopyToastTransform.Y = startOffset;
+
+        CopyToastHost.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(startOpacity, 1, TimeSpan.FromMilliseconds(180)) {
+                EasingFunction = new CubicEase {
+                    EasingMode = EasingMode.EaseOut,
+                },
+            });
+        CopyToastTransform.BeginAnimation(
+            TranslateTransform.YProperty,
+            new DoubleAnimation(startOffset, 0, TimeSpan.FromMilliseconds(180)) {
+                EasingFunction = new CubicEase {
+                    EasingMode = EasingMode.EaseOut,
+                },
+            });
+
+        _copyToastCts = new CancellationTokenSource();
+        _ = HideCopyToastAfterDelayAsync(_copyToastCts);
+    }
+
+    private async Task HideCopyToastAfterDelayAsync(CancellationTokenSource toastCts) {
+        try {
+            await Task.Delay(TimeSpan.FromSeconds(3), toastCts.Token);
+        }
+        catch (OperationCanceledException) {
+            return;
+        }
+
+        if (toastCts.Token.IsCancellationRequested) {
+            return;
+        }
+
+        var opacityAnimation = new DoubleAnimation(CopyToastHost.Opacity, 0, TimeSpan.FromMilliseconds(180)) {
+            EasingFunction = new CubicEase {
+                EasingMode = EasingMode.EaseIn,
+            },
+        };
+        opacityAnimation.Completed += (_, _) => {
+            if (toastCts.Token.IsCancellationRequested) {
+                return;
+            }
+
+            CopyToastHost.Visibility = Visibility.Collapsed;
+            CopyToastHost.Opacity = 0;
+            CopyToastTransform.Y = 14;
+        };
+
+        CopyToastHost.BeginAnimation(OpacityProperty, opacityAnimation);
+        CopyToastTransform.BeginAnimation(
+            TranslateTransform.YProperty,
+            new DoubleAnimation(CopyToastTransform.Y, 10, TimeSpan.FromMilliseconds(180)) {
+                EasingFunction = new CubicEase {
+                    EasingMode = EasingMode.EaseIn,
+                },
+            });
+    }
+
+    private void CancelCopyToast() {
+        if (_copyToastCts is not null) {
+            try {
+                _copyToastCts.Cancel();
+            }
+            catch (ObjectDisposedException) {
+            }
+
+            _copyToastCts.Dispose();
+            _copyToastCts = null;
+        }
+
+        CopyToastHost.BeginAnimation(OpacityProperty, null);
+        CopyToastTransform.BeginAnimation(TranslateTransform.YProperty, null);
     }
 
     private void OnProcessLogsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {

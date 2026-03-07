@@ -20,13 +20,12 @@
                 Color="#FF15232D"/>
         <SolidColorBrush x:Key="SecondaryTextBrush"
                 Color="#FF49616F"/>
-        <SolidColorBrush x:Key="InterimSurfaceBrush"
-                Color="#FFF3FAFD"/>
-        <SolidColorBrush x:Key="InterimBorderBrush"
-                Color="#FFC0D9E4"/>
-        <SolidColorBrush x:Key="InterimTextBrush"
-                Color="#FF234A5D"/>
-        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+        <SolidColorBrush x:Key="AccentBrush"
+                Color="#FF1B86AA"/>
+        <SolidColorBrush x:Key="AccentSurfaceBrush"
+                Color="#FFE7F4F9"/>
+        <SolidColorBrush x:Key="AccentBorderBrush"
+                Color="#FFC6DDE7"/>
 
         <Style x:Key="CardStyle"
                 TargetType="Border">
@@ -106,19 +105,6 @@
                     Value="0,12,0,6"/>
             <Setter Property="FontSize"
                     Value="11"/>
-        </Style>
-
-        <Style x:Key="LiveDotStyle"
-                TargetType="Ellipse">
-            <Setter Property="Fill"
-                    Value="#FF95A8B3"/>
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsLiveRunning}"
-                        Value="True">
-                    <Setter Property="Fill"
-                            Value="#FF18C180"/>
-                </DataTrigger>
-            </Style.Triggers>
         </Style>
 
         <Style x:Key="FooterProgressBarStyle"
@@ -435,10 +421,6 @@
                                BorderThickness="0">
                     <StackPanel Orientation="Horizontal">
                         <ProgressBar Style="{StaticResource FooterProgressBarStyle}"/>
-                        <Ellipse Width="10"
-                                 Height="10"
-                                 Margin="0,0,8,0"
-                                 Style="{StaticResource LiveDotStyle}"/>
                         <TextBlock Text="{Binding SelectedEngine.DisplayName, TargetNullValue=No engine selected}"
                                    FontFamily="Segoe UI Variable Text"
                                    FontSize="12"
@@ -491,6 +473,35 @@
                                       Style="{StaticResource ModernComboBoxStyle}"
                                       ItemContainerStyle="{StaticResource ModernComboBoxItemStyle}"/>
 
+                            <TextBlock Text="Transcription"
+                                       Style="{StaticResource CaptionTextStyle}"
+                                       Margin="0,14,0,6"/>
+                            <Border Background="#FFFDFEFF"
+                                    BorderBrush="#FFD2E2E7"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="10">
+                                <UniformGrid Columns="3"
+                                             Rows="2">
+                                    <Button Content="Open"
+                                            Style="{StaticResource PlaybackSecondaryButtonStyle}"
+                                            Command="{Binding OpenAudioFileCommand}"/>
+                                    <Button Content="Transcribe File"
+                                            Style="{StaticResource PlaybackActionButtonStyle}"
+                                            Command="{Binding TranscribeFileCommand}"/>
+                                    <Button Content="Clear Output"
+                                            Style="{StaticResource PlaybackActionButtonStyle}"
+                                            Command="{Binding ClearCommand}"/>
+                                    <Button Content="Cancel"
+                                            Style="{StaticResource PlaybackActionButtonStyle}"
+                                            Command="{Binding CancelCommand}"/>
+                                    <Button Content="OpenAI settings"
+                                            Style="{StaticResource PlaybackActionButtonStyle}"
+                                            IsEnabled="{Binding IsOpenAiSettingsEnabled}"
+                                            Click="OpenOpenAiSettings_Click"/>
+                                </UniformGrid>
+                            </Border>
+
                             <TextBlock Text="Audio File"
                                        Style="{StaticResource CaptionTextStyle}"
                                        Margin="0,14,0,6"/>
@@ -505,9 +516,8 @@
                                                FontSize="12"
                                                Foreground="{StaticResource SecondaryTextBrush}"
                                                TextWrapping="Wrap"/>
-                                    <Grid Margin="0,8,0,0">
+                                    <Grid Margin="0,10,0,0">
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="*"/>
@@ -515,22 +525,18 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <Button Grid.Column="0"
-                                                Content="Open"
-                                                Style="{StaticResource PlaybackSecondaryButtonStyle}"
-                                                Command="{Binding OpenAudioFileCommand}"/>
-                                        <Button Grid.Column="1"
                                                 Content="Play"
                                                 Style="{StaticResource PlaybackActionButtonStyle}"
                                                 Command="{Binding PlayAudioCommand}"/>
-                                        <Button Grid.Column="2"
+                                        <Button Grid.Column="1"
                                                 Content="Pause"
                                                 Style="{StaticResource PlaybackSecondaryButtonStyle}"
                                                 Command="{Binding PauseAudioCommand}"/>
-                                        <Button Grid.Column="3"
+                                        <Button Grid.Column="2"
                                                 Content="Stop"
                                                 Style="{StaticResource PlaybackSecondaryButtonStyle}"
                                                 Command="{Binding StopAudioCommand}"/>
-                                        <Button Grid.Column="4"
+                                        <Button Grid.Column="3"
                                                 ToolTip="Rewind 5 seconds"
                                                 AutomationProperties.Name="Rewind 5 seconds"
                                                 Style="{StaticResource PlaybackIconButtonStyle}"
@@ -544,7 +550,7 @@
                                                       Data="M14,4 L8,10 L14,16 Z M8.5,4 L2.5,10 L8.5,16 Z"/>
                                             </Viewbox>
                                         </Button>
-                                        <Button Grid.Column="5"
+                                        <Button Grid.Column="4"
                                                 ToolTip="Forward 5 seconds"
                                                 AutomationProperties.Name="Forward 5 seconds"
                                                 Style="{StaticResource PlaybackIconButtonStyle}"
@@ -588,36 +594,13 @@
                                     </Grid>
                                 </StackPanel>
                             </Border>
-                            <UniformGrid Columns="3"
-                                         Rows="2"
-                                         Margin="0,12,0,0">
-                                <Button Content="Transcribe File"
-                                        Style="{StaticResource PlaybackActionButtonStyle}"
-                                        Command="{Binding TranscribeFileCommand}"/>
-                                <Button Content="Live Transcription"
-                                        Style="{StaticResource PlaybackActionButtonStyle}"
-                                        Command="{Binding StartLiveCommand}"/>
-                                <Button Content="Clear Output"
-                                        Style="{StaticResource PlaybackActionButtonStyle}"
-                                        Command="{Binding ClearCommand}"/>
-                                <Button Content="Cancel"
-                                        Style="{StaticResource PlaybackActionButtonStyle}"
-                                        Command="{Binding CancelCommand}"/>
-                                <Button Content="Stop Live"
-                                        Style="{StaticResource PlaybackActionButtonStyle}"
-                                        Command="{Binding StopLiveCommand}"/>
-                                <Button Content="OpenAI settings"
-                                        Style="{StaticResource PlaybackActionButtonStyle}"
-                                        IsEnabled="{Binding IsOpenAiSettingsEnabled}"
-                                        Click="OpenOpenAiSettings_Click"/>
-                            </UniformGrid>
 
                         </StackPanel>
 
                         <TextBlock Grid.Row="1"
                                    Text="Process Logs"
                                    Style="{StaticResource CaptionTextStyle}"
-                                   Margin="0,2,0,6"/>
+                                   Margin="0,15,0,6"/>
 
                         <Border Grid.Row="2"
                                 Background="#FFFDFEFF"
@@ -716,195 +699,232 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-
-                        <StackPanel Grid.Row="0"
-                                    Margin="0,0,0,16"
-                                    Visibility="{Binding IsLiveRunning, Converter={StaticResource BoolToVisibilityConverter}}">
-                            <TextBlock Text="Interim Output"
+                        <DockPanel Grid.Row="0"
+                                   LastChildFill="False">
+                            <TextBlock Text="Finalized Transcript"
+                                       DockPanel.Dock="Left"
                                        FontFamily="Bahnschrift"
                                        FontSize="20"
                                        Foreground="{StaticResource PrimaryTextBrush}"/>
-                            <Border Background="{StaticResource InterimSurfaceBrush}"
-                                    BorderBrush="{StaticResource InterimBorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="10"
-                                    Padding="10"
-                                    Margin="0,10,0,0">
-                                <TextBlock Text="{Binding InterimText}"
-                                           FontFamily="Segoe UI Variable Text"
-                                           FontSize="17"
-                                           FontWeight="SemiBold"
-                                           TextWrapping="Wrap"
-                                           Foreground="{StaticResource InterimTextBrush}"
-                                           MinHeight="30"/>
-                            </Border>
-                        </StackPanel>
+                            <Button DockPanel.Dock="Right"
+                                    Style="{StaticResource IconActionButtonStyle}"
+                                    ToolTip="Copy to Clipboard"
+                                    AutomationProperties.Name="Copy to Clipboard"
+                                    IsEnabled="{Binding IsEngineSelectionEnabled}"
+                                    Click="CopyFinalizedToClipboard_Click">
+                                <Viewbox Width="16"
+                                         Height="16">
+                                    <Path Fill="White"
+                                          Data="M16,1H4A2,2 0 0,0 2,3V17H4V3H16M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5Z"/>
+                                </Viewbox>
+                            </Button>
+                        </DockPanel>
 
-                        <Grid Grid.Row="1">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-
-                            <DockPanel Grid.Row="0"
-                                       LastChildFill="False">
-                                <TextBlock Text="Finalized Transcript"
-                                           DockPanel.Dock="Left"
-                                           FontFamily="Bahnschrift"
-                                           FontSize="20"
-                                           Foreground="{StaticResource PrimaryTextBrush}"/>
-                                <Button DockPanel.Dock="Right"
-                                        Style="{StaticResource IconActionButtonStyle}"
-                                        ToolTip="Copy to Clipboard"
-                                        AutomationProperties.Name="Copy to Clipboard"
-                                        IsEnabled="{Binding IsEngineSelectionEnabled}"
-                                        Click="CopyFinalizedToClipboard_Click">
-                                    <Viewbox Width="16"
-                                             Height="16">
-                                        <Path Fill="White"
-                                              Data="M16,1H4A2,2 0 0,0 2,3V17H4V3H16M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5Z"/>
-                                    </Viewbox>
-                                </Button>
-                            </DockPanel>
-
-                            <Border Grid.Row="1"
-                                    Background="#FFFDFEFF"
-                                    BorderBrush="#FFD2E2E7"
-                                    BorderThickness="1"
-                                    CornerRadius="10"
-                                    Margin="0,10,0,0"
-                                    ClipToBounds="True">
-                                <DataGrid x:Name="FinalizedTranscriptGrid"
-                                          Style="{StaticResource RoundedDataGridStyle}"
-                                          ItemsSource="{Binding FinalizedTranscriptLines}"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          CanUserDeleteRows="False"
-                                          CanUserResizeRows="False"
-                                          HeadersVisibility="Column"
-                                          RowHeaderWidth="0"
-                                          GridLinesVisibility="None"
-                                          SelectionMode="Single"
-                                          SelectionUnit="Cell"
-                                          CurrentCellChanged="FinalizedTranscriptGrid_CurrentCellChanged"
-                                          PreviewKeyDown="FinalizedTranscriptGrid_PreviewKeyDown"
-                                          BorderThickness="0"
-                                          Background="Transparent"
-                                          RowBackground="#00FFFFFF"
-                                          AlternatingRowBackground="#05EAF4F8"
-                                          FontFamily="Consolas"
-                                          FontSize="15"
-                                          Foreground="{StaticResource PrimaryTextBrush}"
-                                          VerticalScrollBarVisibility="Auto"
-                                          HorizontalScrollBarVisibility="Disabled">
-                                    <DataGrid.Resources>
-                                        <Style TargetType="{x:Type DataGridColumnHeader}">
-                                            <Setter Property="FontFamily"
-                                                    Value="Segoe UI Variable Text"/>
-                                            <Setter Property="FontSize"
-                                                    Value="12"/>
-                                            <Setter Property="FontWeight"
-                                                    Value="SemiBold"/>
-                                            <Setter Property="Foreground"
-                                                    Value="{StaticResource SecondaryTextBrush}"/>
-                                            <Setter Property="Background"
-                                                    Value="#FFF6FAFC"/>
-                                            <Setter Property="BorderBrush"
-                                                    Value="#FFD2E2E7"/>
-                                            <Setter Property="BorderThickness"
-                                                    Value="0,0,0,1"/>
-                                            <Setter Property="Padding"
-                                                    Value="6,5"/>
-                                        </Style>
-                                        <Style TargetType="{x:Type DataGridCell}">
-                                            <Setter Property="Padding"
-                                                    Value="6,3"/>
-                                            <Setter Property="VerticalContentAlignment"
-                                                    Value="Top"/>
-                                            <Setter Property="BorderThickness"
-                                                    Value="1"/>
-                                            <Setter Property="BorderBrush"
-                                                    Value="Transparent"/>
-                                            <Setter Property="Background"
-                                                    Value="Transparent"/>
-                                            <Setter Property="Foreground"
-                                                    Value="{StaticResource PrimaryTextBrush}"/>
-                                            <Setter Property="FocusVisualStyle"
-                                                    Value="{x:Null}"/>
-                                            <Style.Triggers>
-                                                <Trigger Property="IsSelected"
-                                                         Value="True">
-                                                    <Setter Property="Background"
-                                                            Value="#14D7E7EF"/>
-                                                    <Setter Property="Foreground"
-                                                            Value="{StaticResource PrimaryTextBrush}"/>
-                                                </Trigger>
-                                                <Trigger Property="IsEditing"
-                                                         Value="True">
-                                                    <Setter Property="BorderBrush"
-                                                            Value="#6495ED"/>
-                                                    <Setter Property="BorderThickness"
-                                                            Value="1"/>
-                                                </Trigger>
-                                                <MultiTrigger>
-                                                    <MultiTrigger.Conditions>
-                                                        <Condition Property="IsKeyboardFocusWithin"
-                                                                   Value="True"/>
-                                                        <Condition Property="IsEditing"
-                                                                   Value="False"/>
-                                                    </MultiTrigger.Conditions>
-                                                    <Setter Property="BorderBrush"
-                                                            Value="#C0C0C0"/>
-                                                    <Setter Property="BorderThickness"
-                                                            Value="1"/>
-                                                </MultiTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                        <Style TargetType="{x:Type DataGridRow}">
-                                            <Setter Property="Foreground"
-                                                    Value="{StaticResource PrimaryTextBrush}"/>
-                                            <Setter Property="VerticalAlignment"
-                                                    Value="Top"/>
-                                            <Setter Property="VerticalContentAlignment"
-                                                    Value="Top"/>
-                                            <Setter Property="BorderThickness"
-                                                    Value="0"/>
-                                            <Style.Triggers>
-                                                <Trigger Property="IsSelected"
-                                                         Value="True">
-                                                    <Setter Property="Foreground"
-                                                            Value="{StaticResource PrimaryTextBrush}"/>
-                                                </Trigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                        <Style TargetType="{x:Type TextBox}">
-                                            <Setter Property="Foreground"
-                                                    Value="{StaticResource PrimaryTextBrush}"/>
-                                            <Setter Property="BorderThickness"
-                                                    Value="0"/>
-                                            <Setter Property="Background"
-                                                    Value="Transparent"/>
-                                            <Setter Property="FocusVisualStyle"
-                                                    Value="{x:Null}"/>
-                                        </Style>
-                                    </DataGrid.Resources>
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="Timeline"
-                                                            Binding="{Binding Timeline}"
-                                                            IsReadOnly="True"
-                                                            CanUserSort="False"
-                                                            Width="86"/>
-                                        <DataGridTextColumn Header="Transcription"
-                                                            Binding="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                            CanUserSort="False"
-                                                            Width="*"/>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </Border>
-                        </Grid>
+                        <Border Grid.Row="1"
+                                Background="#FFFDFEFF"
+                                BorderBrush="#FFD2E2E7"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Margin="0,10,0,0"
+                                ClipToBounds="True">
+                            <DataGrid x:Name="FinalizedTranscriptGrid"
+                                      Style="{StaticResource RoundedDataGridStyle}"
+                                      ItemsSource="{Binding FinalizedTranscriptLines}"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      CanUserDeleteRows="False"
+                                      CanUserResizeRows="False"
+                                      HeadersVisibility="Column"
+                                      RowHeaderWidth="0"
+                                      GridLinesVisibility="None"
+                                      SelectionMode="Single"
+                                      SelectionUnit="Cell"
+                                      CurrentCellChanged="FinalizedTranscriptGrid_CurrentCellChanged"
+                                      PreviewKeyDown="FinalizedTranscriptGrid_PreviewKeyDown"
+                                      BorderThickness="0"
+                                      Background="Transparent"
+                                      RowBackground="#00FFFFFF"
+                                      AlternatingRowBackground="#05EAF4F8"
+                                      FontFamily="Consolas"
+                                      FontSize="15"
+                                      Foreground="{StaticResource PrimaryTextBrush}"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                                <DataGrid.Resources>
+                                    <Style TargetType="{x:Type DataGridColumnHeader}">
+                                        <Setter Property="FontFamily"
+                                                Value="Segoe UI Variable Text"/>
+                                        <Setter Property="FontSize"
+                                                Value="12"/>
+                                        <Setter Property="FontWeight"
+                                                Value="SemiBold"/>
+                                        <Setter Property="Foreground"
+                                                Value="{StaticResource SecondaryTextBrush}"/>
+                                        <Setter Property="Background"
+                                                Value="#FFF6FAFC"/>
+                                        <Setter Property="BorderBrush"
+                                                Value="#FFD2E2E7"/>
+                                        <Setter Property="BorderThickness"
+                                                Value="0,0,0,1"/>
+                                        <Setter Property="Padding"
+                                                Value="6,5"/>
+                                    </Style>
+                                    <Style TargetType="{x:Type DataGridCell}">
+                                        <Setter Property="Padding"
+                                                Value="6,3"/>
+                                        <Setter Property="VerticalContentAlignment"
+                                                Value="Top"/>
+                                        <Setter Property="BorderThickness"
+                                                Value="1"/>
+                                        <Setter Property="BorderBrush"
+                                                Value="Transparent"/>
+                                        <Setter Property="Background"
+                                                Value="Transparent"/>
+                                        <Setter Property="Foreground"
+                                                Value="{StaticResource PrimaryTextBrush}"/>
+                                        <Setter Property="FocusVisualStyle"
+                                                Value="{x:Null}"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected"
+                                                     Value="True">
+                                                <Setter Property="Background"
+                                                        Value="#14D7E7EF"/>
+                                                <Setter Property="Foreground"
+                                                        Value="{StaticResource PrimaryTextBrush}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsEditing"
+                                                     Value="True">
+                                                <Setter Property="BorderBrush"
+                                                        Value="#6495ED"/>
+                                                <Setter Property="BorderThickness"
+                                                        Value="1"/>
+                                            </Trigger>
+                                            <MultiTrigger>
+                                                <MultiTrigger.Conditions>
+                                                    <Condition Property="IsKeyboardFocusWithin"
+                                                               Value="True"/>
+                                                    <Condition Property="IsEditing"
+                                                               Value="False"/>
+                                                </MultiTrigger.Conditions>
+                                                <Setter Property="BorderBrush"
+                                                        Value="#C0C0C0"/>
+                                                <Setter Property="BorderThickness"
+                                                        Value="1"/>
+                                            </MultiTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                    <Style TargetType="{x:Type DataGridRow}">
+                                        <Setter Property="Foreground"
+                                                Value="{StaticResource PrimaryTextBrush}"/>
+                                        <Setter Property="VerticalAlignment"
+                                                Value="Top"/>
+                                        <Setter Property="VerticalContentAlignment"
+                                                Value="Top"/>
+                                        <Setter Property="BorderThickness"
+                                                Value="0"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected"
+                                                     Value="True">
+                                                <Setter Property="Foreground"
+                                                        Value="{StaticResource PrimaryTextBrush}"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                    <Style TargetType="{x:Type TextBox}">
+                                        <Setter Property="Foreground"
+                                                Value="{StaticResource PrimaryTextBrush}"/>
+                                        <Setter Property="BorderThickness"
+                                                Value="0"/>
+                                        <Setter Property="Background"
+                                                Value="Transparent"/>
+                                        <Setter Property="FocusVisualStyle"
+                                                Value="{x:Null}"/>
+                                    </Style>
+                                </DataGrid.Resources>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Timeline"
+                                                        Binding="{Binding Timeline}"
+                                                        IsReadOnly="True"
+                                                        CanUserSort="False"
+                                                        Width="86"/>
+                                    <DataGridTextColumn Header="Transcription"
+                                                        Binding="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                        CanUserSort="False"
+                                                        Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
                     </Grid>
                 </Border>
             </Grid>
         </DockPanel>
+
+        <Border x:Name="CopyToastHost"
+                Panel.ZIndex="20"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,18,48"
+                Opacity="0"
+                Visibility="Collapsed"
+                IsHitTestVisible="False">
+            <Border.RenderTransform>
+                <TranslateTransform x:Name="CopyToastTransform"
+                                    Y="14"/>
+            </Border.RenderTransform>
+            <Border Background="#FFFDFEFF"
+                    BorderBrush="#FFD2E2E7"
+                    BorderThickness="1"
+                    CornerRadius="14"
+                    Padding="14,12"
+                    MaxWidth="320">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="26"
+                                      ShadowDepth="0"
+                                      Opacity="0.2"
+                                      Color="#FF7F97A6"/>
+                </Border.Effect>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Width="34"
+                            Height="34"
+                            CornerRadius="17"
+                            Background="{StaticResource AccentSurfaceBrush}"
+                            BorderBrush="{StaticResource AccentBorderBrush}"
+                            BorderThickness="1"
+                            VerticalAlignment="Top">
+                        <Viewbox Width="15"
+                                 Height="15"
+                                 HorizontalAlignment="Center"
+                                 VerticalAlignment="Center">
+                            <Path Stroke="{StaticResource AccentBrush}"
+                                  StrokeThickness="2.6"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round"
+                                  Data="M2.5,8.5 L6.2,12.2 L13.5,4.5"/>
+                        </Viewbox>
+                    </Border>
+                    <StackPanel Grid.Column="1"
+                                Margin="12,0,0,0">
+                        <TextBlock x:Name="CopyToastTitleText"
+                                   Text="Copied to clipboard"
+                                   FontFamily="Segoe UI Variable Text"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}"/>
+                        <TextBlock x:Name="CopyToastMessageText"
+                                   Text="Finalized transcript is ready to paste."
+                                   Margin="0,3,0,0"
+                                   FontFamily="Segoe UI Variable Text"
+                                   FontSize="11"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Border>
     </Grid>
 </Window>
