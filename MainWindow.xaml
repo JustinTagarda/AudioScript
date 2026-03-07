@@ -675,13 +675,22 @@
                                             </DataTemplate>
                                         </ListBox.ItemTemplate>
                                     </ListBox>
-                                    <Button Content="Open"
-                                            Margin="0,6,0,0"
-                                            HorizontalAlignment="Right"
-                                            Style="{StaticResource PlaybackSecondaryButtonStyle}"
-                                            MinWidth="0"
-                                            Width="80"
-                                            Command="{Binding OpenSelectedSessionCommand}"/>
+                                    <StackPanel Orientation="Horizontal"
+                                                HorizontalAlignment="Right"
+                                                Margin="0,6,0,0">
+                                        <Button Content="Open"
+                                                Style="{StaticResource PlaybackSecondaryButtonStyle}"
+                                                MinWidth="0"
+                                                Width="80"
+                                                Margin="0,0,6,0"
+                                                Command="{Binding OpenSelectedSessionCommand}"/>
+                                        <Button Content="Delete"
+                                                Style="{StaticResource DangerButtonStyle}"
+                                                MinWidth="0"
+                                                Width="80"
+                                                Height="32"
+                                                Command="{Binding DeleteSelectedSessionCommand}"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 

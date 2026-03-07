@@ -148,6 +148,31 @@ public sealed class TranscriptSessionStoreTests {
         }
     }
 
+    [Fact]
+    public void DeleteSession_RemovesSessionDirectoryAndRecentEntry() {
+        string rootPath = CreateTempDirectory();
+        string audioPath = CreateSilentWaveFile(16000);
+
+        try {
+            var store = new TranscriptSessionStore(rootPath);
+            TranscriptSessionLoadResult imported = store.ImportAudioFile(audioPath);
+            string sessionDirectory = store.GetSessionDirectoryPath(imported.Document.SessionId);
+
+            Assert.True(Directory.Exists(sessionDirectory));
+
+            store.DeleteSession(imported.Document.SessionId);
+
+            Assert.False(Directory.Exists(sessionDirectory));
+            Assert.DoesNotContain(
+                store.ListRecentSessions(),
+                session => string.Equals(session.SessionId, imported.Document.SessionId, StringComparison.OrdinalIgnoreCase));
+        }
+        finally {
+            DeleteDirectory(rootPath);
+            File.Delete(audioPath);
+        }
+    }
+
     private static string CreateTempDirectory() {
         string path = Path.Combine(Path.GetTempPath(), $"audiotranscript-session-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);

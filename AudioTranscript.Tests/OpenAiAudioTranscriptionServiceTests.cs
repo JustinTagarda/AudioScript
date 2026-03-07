@@ -162,12 +162,11 @@ public sealed class OpenAiAudioTranscriptionServiceTests {
                     return Task.FromResult(
                         new HttpResponseMessage(HttpStatusCode.OK) {
                             Content = new StringContent(
-                                $"{{\"text\":\"chunk-{chunkCall}\",\"segments\":[{{\"start\":0.0,\"end\":1.0,\"text\":\"chunk-{chunkCall}\"}}]}}",
+                                $"{{\"text\":\"chunk-{chunkCall}\"}}",
                                 Encoding.UTF8,
                                 "application/json"),
                         });
-                },
-                captureBody: false);
+                });
 
             OpenAiAudioTranscriptionService service = CreateService(handler);
 
@@ -179,6 +178,12 @@ public sealed class OpenAiAudioTranscriptionServiceTests {
             Assert.True(handler.RequestCount >= 2, "Expected chunked uploads for file >= 25 MB.");
             Assert.Contains("chunk-1", result.Text, StringComparison.Ordinal);
             Assert.Contains("chunk-2", result.Text, StringComparison.Ordinal);
+            Assert.NotNull(result.TimedLines);
+            Assert.Empty(result.TimedLines!);
+            AssertFormField(handler.LastRequestBody, "response_format");
+            Assert.Contains("json", handler.LastRequestBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("verbose_json", handler.LastRequestBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("timestamp_granularities[]", handler.LastRequestBody, StringComparison.OrdinalIgnoreCase);
         }
         finally {
             File.Delete(filePath);

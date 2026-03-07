@@ -15,6 +15,7 @@ namespace AudioTranscript.Services;
 public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
     private const string StandardResponseFormat = "json";
     private const string TimestampedResponseFormat = "verbose_json";
+    private const string Whisper1Model = "whisper-1";
     private const string Temperature = "0";
     private const string ChunkingStrategy = "auto";
     private const string IncludeLogprobs = "logprobs";
@@ -117,16 +118,28 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         CancellationToken cancellationToken,
         IProgress<TranscriptionProgressUpdate>? progress,
         bool announceLargeFile) {
+        bool supportsTimestampedChunkResponses = SupportsTimestampedChunkResponses(model);
+
         progress?.Report(new TranscriptionProgressUpdate(
             StatusMessage: "Preparing audio for multi-part transcription...",
             IsLargeFile: announceLargeFile));
+
+        if (!supportsTimestampedChunkResponses) {
+            Log(
+                $"Model '{model}' does not support timestamped chunk responses on the transcription API. " +
+                "Falling back to JSON chunk responses with estimated merged timeline output.");
+        }
 
         string standardizedWavePath = _audioStandardizer.ConvertFileToEngineWav(sourcePath);
         List<PreparedWaveChunk> chunks;
         TimeSpan totalDuration;
 
         try {
-            chunks = CreateWaveChunks(standardizedWavePath);
+            chunks = CreateWaveChunks(
+                standardizedWavePath,
+                supportsTimestampedChunkResponses
+                    ? null
+                    : TimeSpan.Zero);
 
             using var durationReader = new WaveFileReader(standardizedWavePath);
             totalDuration = durationReader.TotalTime;
@@ -146,6 +159,7 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         var combinedLogprobs = new List<TranscriptionTokenLogprob>();
         var combinedLowConfidence = new List<LowConfidenceToken>();
         var absoluteSegments = new List<ChunkTranscriptionSegment>();
+        var mergedChunkTexts = new List<string>();
         int tokenIndex = 0;
 
         try {
@@ -177,22 +191,29 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
                     mediaType: "audio/wav",
                     fileSizeBytes: chunk.SizeBytes,
                     model: model,
-                    requestMode: TranscriptionRequestMode.TimestampedChunk,
+                    requestMode: supportsTimestampedChunkResponses
+                        ? TranscriptionRequestMode.TimestampedChunk
+                        : TranscriptionRequestMode.Standard,
                     cancellationToken: cancellationToken);
 
-                if (chunkResult.TimedLines is null || chunkResult.TimedLines.Count == 0) {
-                    throw new InvalidOperationException(
-                        "Chunk transcription did not return timestamped segments needed to merge the final transcript accurately.");
-                }
+                if (supportsTimestampedChunkResponses) {
+                    if (chunkResult.TimedLines is null || chunkResult.TimedLines.Count == 0) {
+                        throw new InvalidOperationException(
+                            "Chunk transcription did not return timestamped segments needed to merge the final transcript accurately.");
+                    }
 
-                foreach (TranscriptionTimedLine line in chunkResult.TimedLines.Where(line => !string.IsNullOrWhiteSpace(line.Text))) {
-                    TimeSpan localEnd = line.EndOffset ?? line.StartOffset;
-                    absoluteSegments.Add(new ChunkTranscriptionSegment(
-                        ChunkIndex: chunk.Plan.ChunkIndex,
-                        ChunkStartOffset: chunk.Plan.StartOffset,
-                        LocalStartOffset: line.StartOffset,
-                        LocalEndOffset: localEnd,
-                        Text: line.Text));
+                    foreach (TranscriptionTimedLine line in chunkResult.TimedLines.Where(line => !string.IsNullOrWhiteSpace(line.Text))) {
+                        TimeSpan localEnd = line.EndOffset ?? line.StartOffset;
+                        absoluteSegments.Add(new ChunkTranscriptionSegment(
+                            ChunkIndex: chunk.Plan.ChunkIndex,
+                            ChunkStartOffset: chunk.Plan.StartOffset,
+                            LocalStartOffset: line.StartOffset,
+                            LocalEndOffset: localEnd,
+                            Text: line.Text));
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(chunkResult.Text)) {
+                    mergedChunkTexts.Add(chunkResult.Text.Trim());
                 }
 
                 foreach (TranscriptionTokenLogprob item in chunkResult.TokenLogprobs) {
@@ -216,10 +237,27 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         }
 
         progress?.Report(new TranscriptionProgressUpdate(
-            StatusMessage: "Merging chunk timelines...",
+            StatusMessage: supportsTimestampedChunkResponses
+                ? "Merging chunk timelines..."
+                : "Merging chunk transcript...",
             IsLargeFile: announceLargeFile,
             ChunkIndex: chunks.Count,
             TotalChunks: chunks.Count));
+
+        if (!supportsTimestampedChunkResponses) {
+            string mergedText = string.Join(
+                Environment.NewLine,
+                mergedChunkTexts.Where(text => !string.IsNullOrWhiteSpace(text)));
+
+            return new TranscriptionResult(
+                Text: mergedText,
+                Model: model,
+                CreatedAt: DateTimeOffset.UtcNow,
+                Duration: totalDuration > TimeSpan.Zero ? totalDuration : null,
+                TokenLogprobs: combinedLogprobs,
+                LowConfidenceTokens: combinedLowConfidence,
+                TimedLines: Array.Empty<TranscriptionTimedLine>());
+        }
 
         IReadOnlyList<TranscriptionTimedLine> mergedTimedLines = _segmentMerger.Merge(absoluteSegments);
 
@@ -228,14 +266,14 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
                 "Large-file chunk transcription completed but did not produce a merged transcript timeline.");
         }
 
-        string mergedText = string.Join(
+        string mergedTimedText = string.Join(
             Environment.NewLine,
             mergedTimedLines
                 .Select(line => line.Text?.Trim() ?? string.Empty)
                 .Where(text => !string.IsNullOrWhiteSpace(text)));
 
         return new TranscriptionResult(
-            Text: mergedText,
+            Text: mergedTimedText,
             Model: model,
             CreatedAt: DateTimeOffset.UtcNow,
             Duration: totalDuration > TimeSpan.Zero ? totalDuration : null,
@@ -354,14 +392,15 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         }
     }
 
-    private List<PreparedWaveChunk> CreateWaveChunks(string wavePath) {
+    private List<PreparedWaveChunk> CreateWaveChunks(string wavePath, TimeSpan? overlap) {
         using var reader = new WaveFileReader(wavePath);
 
         WaveFormat format = reader.WaveFormat;
         IReadOnlyList<AudioChunkPlan> plans = _audioChunkPlanner.PlanWaveChunks(
             waveDataBytes: reader.Length,
             averageBytesPerSecond: Math.Max(format.AverageBytesPerSecond, 1),
-            blockAlign: Math.Max(format.BlockAlign, 1));
+            blockAlign: Math.Max(format.BlockAlign, 1),
+            overlap: overlap);
 
         var chunks = new List<PreparedWaveChunk>(plans.Count);
         byte[] buffer = new byte[81920];
@@ -434,6 +473,10 @@ public sealed class OpenAiAudioTranscriptionService : ITranscriptionService {
         }
 
         return trimmed;
+    }
+
+    private static bool SupportsTimestampedChunkResponses(string model) {
+        return string.Equals(model, Whisper1Model, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ResolveMediaType(string extension) {

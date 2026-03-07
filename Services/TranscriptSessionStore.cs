@@ -201,6 +201,19 @@ public sealed class TranscriptSessionStore {
         WriteAllTextAtomic(sessionFilePath, json);
     }
 
+    public void DeleteSession(string sessionId) {
+        if (string.IsNullOrWhiteSpace(sessionId)) {
+            throw new ArgumentException("Session id is required.", nameof(sessionId));
+        }
+
+        string sessionDirectoryPath = GetSessionDirectoryPath(sessionId);
+        if (!Directory.Exists(sessionDirectoryPath)) {
+            return;
+        }
+
+        Directory.Delete(sessionDirectoryPath, recursive: true);
+    }
+
     public string GetSessionDirectoryPath(string sessionId) {
         if (string.IsNullOrWhiteSpace(sessionId)) {
             throw new ArgumentException("Session id is required.", nameof(sessionId));

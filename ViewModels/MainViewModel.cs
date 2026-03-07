@@ -84,6 +84,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         CancelCommand = new AsyncRelayCommand(CancelFileTranscriptionAsync, CanCancelFileTranscription);
         OpenAudioFileCommand = new AsyncRelayCommand(OpenAudioFileAsync, CanOpenAudioFile);
         OpenSelectedSessionCommand = new AsyncRelayCommand(OpenSelectedSessionAsync, CanOpenSelectedSession);
+        DeleteSelectedSessionCommand = new AsyncRelayCommand(DeleteSelectedSessionAsync, CanDeleteSelectedSession);
         RestoreSessionAudioCommand = new AsyncRelayCommand(RestoreSessionAudioAsync, CanRestoreSessionAudio);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
@@ -151,6 +152,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public AsyncRelayCommand CancelCommand { get; }
     public AsyncRelayCommand OpenAudioFileCommand { get; }
     public AsyncRelayCommand OpenSelectedSessionCommand { get; }
+    public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand RestoreSessionAudioCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
@@ -541,7 +543,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 RaiseToast(
                     "Large file detected",
                     "It will be transcribed in multiple parts automatically.",
-                    ToastNotificationType.Warning);
+                    ToastNotificationType.Info);
             }
         });
 
@@ -604,6 +606,66 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         return LoadSessionByIdAsync(SelectedRecentSession.SessionId);
+    }
+
+    private async Task DeleteSelectedSessionAsync() {
+        if (SelectedRecentSession is null) {
+            return;
+        }
+
+        TranscriptSessionSummary sessionToDelete = SelectedRecentSession;
+        if (!ConfirmSessionDeletion()) {
+            AppendLog("Session deletion canceled.");
+            return;
+        }
+
+        bool deletingCurrentSession =
+            _currentSessionDocument is not null
+            && string.Equals(_currentSessionDocument.SessionId, sessionToDelete.SessionId, StringComparison.OrdinalIgnoreCase);
+        string? currentAudioPath = deletingCurrentSession ? LoadedAudioFilePath : null;
+
+        IsBusy = true;
+        StatusMessage = "Deleting session...";
+
+        try {
+            _sessionAutosaveTimer.Stop();
+
+            if (deletingCurrentSession && IsAudioFileLoaded) {
+                _audioPlaybackService.UnloadFile();
+                LoadedAudioFilePath = string.Empty;
+                IsAudioPlaying = false;
+                ResetAudioTimeline();
+            }
+
+            await _sessionSaveSemaphore.WaitAsync();
+            try {
+                _sessionStore.DeleteSession(sessionToDelete.SessionId);
+            }
+            finally {
+                _sessionSaveSemaphore.Release();
+            }
+
+            if (deletingCurrentSession) {
+                ClearCurrentSessionAfterDeletion();
+            }
+
+            LoadRecentSessions(selectSessionId: null);
+            StatusMessage = "Session deleted.";
+            AppendLog($"Session deleted: {sessionToDelete.DisplayName}.");
+        }
+        catch (Exception ex) {
+            if (deletingCurrentSession
+                && !string.IsNullOrWhiteSpace(currentAudioPath)
+                && File.Exists(currentAudioPath)) {
+                TryLoadAudioPreview(currentAudioPath);
+            }
+
+            RaiseError($"Unable to delete session: {ex.Message}");
+            AppendLog($"Session deletion failed: {ex.Message}");
+        }
+        finally {
+            IsBusy = false;
+        }
     }
 
     private Task RestoreSessionAudioAsync() {
@@ -803,6 +865,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return SelectedRecentSession is not null && !IsBusy && !IsFileTranscribing;
     }
 
+    private bool CanDeleteSelectedSession() {
+        return SelectedRecentSession is not null && !IsBusy && !IsFileTranscribing;
+    }
+
     private bool CanRestoreSessionAudio() {
         return _currentSessionDocument is not null
             && IsCurrentSessionAudioMissing
@@ -832,6 +898,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         CancelCommand.RaiseCanExecuteChanged();
         OpenAudioFileCommand.RaiseCanExecuteChanged();
         OpenSelectedSessionCommand.RaiseCanExecuteChanged();
+        DeleteSelectedSessionCommand.RaiseCanExecuteChanged();
         RestoreSessionAudioCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
@@ -1338,6 +1405,37 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return saved;
     }
 
+    private bool ConfirmSessionDeletion() {
+        EventHandler<ConfirmationRequest>? handler = ConfirmationRequested;
+        if (handler is null) {
+            RaiseError("The confirmation dialog is unavailable. The session was left unchanged.");
+            AppendLog("Session deletion canceled: confirmation dialog unavailable.");
+            return false;
+        }
+
+        var request = new ConfirmationRequest(
+            title: "Delete this Session?",
+            message: "This will permanently remove the selected session and its stored files.",
+            confirmButtonText: "Yes",
+            cancelButtonText: "No");
+
+        try {
+            if (SynchronizationContext.Current == _uiContext) {
+                handler(this, request);
+            }
+            else {
+                _uiContext.Send(_ => handler(this, request), null);
+            }
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to confirm session deletion: {ex.Message}");
+            AppendLog($"Session deletion canceled: confirmation failed: {ex.Message}");
+            return false;
+        }
+
+        return request.IsConfirmed;
+    }
+
     private bool HasExistingTranscriptContent() {
         if (FinalizedTranscriptLines.Any(line => !string.IsNullOrWhiteSpace(line.Text))) {
             return true;
@@ -1399,6 +1497,30 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _currentSessionDocument.Transcript.LastTranscribedUtc = null;
         _currentSessionDocument.Transcript.Lines.Clear();
         _currentSessionDocument.Editing.SelectedRowIndex = null;
+    }
+
+    private void ClearCurrentSessionAfterDeletion() {
+        _suppressSessionAutosave = true;
+
+        try {
+            UnsubscribeFromFinalizedLineChanges();
+            FinalizedTranscriptLines.Clear();
+            FinalizedText = string.Empty;
+        }
+        finally {
+            _suppressSessionAutosave = false;
+        }
+
+        _currentSessionDocument = null;
+        CurrentSessionDisplayName = "No session loaded.";
+        CurrentSessionAudioIssue = string.Empty;
+        IsCurrentSessionAudioMissing = false;
+        LoadedAudioFilePath = string.Empty;
+        IsAudioPlaying = false;
+        ResetAudioTimeline();
+        NotifyPropertyChanged(nameof(HasCurrentSession));
+        NotifyPropertyChanged(nameof(LoadedAudioFileName));
+        RefreshCommandStates();
     }
 
     private void QueueSessionAutosaveSave() {
