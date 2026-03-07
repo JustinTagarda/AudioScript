@@ -12,7 +12,7 @@ namespace AudioTranscript.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private const int SeekStepSeconds = 5;
-    private const string TranscriptLineIndent = "    ";
+    private const string AudioFileDialogFilter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*";
 
     private readonly LiveTranscriptionCoordinator _liveCoordinator;
     private readonly ITranscriptionService _transcriptionService;
@@ -64,12 +64,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         Engines = new ObservableCollection<EngineOptionViewModel>(
             models.Select(model => new EngineOptionViewModel(model)));
         ProcessLogs = new ObservableCollection<ProcessLogEntryViewModel>();
+        FinalizedTranscriptLines = new ObservableCollection<FinalizedTranscriptLineViewModel>();
 
         TranscribeFileCommand = new AsyncRelayCommand(TranscribeFileAsync, CanTranscribeFile);
         StartLiveCommand = new AsyncRelayCommand(StartLiveAsync, CanStartLive);
         StopLiveCommand = new AsyncRelayCommand(StopLiveAsync, CanStopLive);
         ClearCommand = new AsyncRelayCommand(ClearAsync, CanClear);
         CancelCommand = new AsyncRelayCommand(CancelFileTranscriptionAsync, CanCancelFileTranscription);
+        OpenAudioFileCommand = new AsyncRelayCommand(OpenAudioFileAsync, CanOpenAudioFile);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
         StopAudioCommand = new AsyncRelayCommand(StopAudioAsync, CanStopAudio);
@@ -116,6 +118,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public ObservableCollection<EngineOptionViewModel> Engines { get; }
     public ObservableCollection<ProcessLogEntryViewModel> ProcessLogs { get; }
+    public ObservableCollection<FinalizedTranscriptLineViewModel> FinalizedTranscriptLines { get; }
 
     public AsyncRelayCommand TranscribeFileCommand { get; }
 
@@ -126,6 +129,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public AsyncRelayCommand ClearCommand { get; }
 
     public AsyncRelayCommand CancelCommand { get; }
+    public AsyncRelayCommand OpenAudioFileCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
     public AsyncRelayCommand StopAudioCommand { get; }
@@ -321,6 +325,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _liveCoordinator.StatusChanged -= OnStatusChanged;
         _processLogService.LogEmitted -= OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged -= OnAudioPlaybackStateChanged;
+        UnsubscribeFromFinalizedLineChanges();
         _audioTimelineTimer.Stop();
         _audioTimelineTimer.Tick -= OnAudioTimelineTick;
         _audioPlaybackService.Dispose();
@@ -356,36 +361,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             return;
         }
 
+        if (!IsAudioFileLoaded) {
+            AppendLog("Transcribe aborted: no audio file is loaded in preview.");
+            return;
+        }
+
         if (!EnsureSelectedModelConfigured()) {
             AppendLog("Transcribe aborted: selected model is not ready.");
             return;
         }
 
-        AppendLog("Opening file picker for transcription.");
-        var dialog = new Microsoft.Win32.OpenFileDialog {
-            Title = "Select Audio File",
-            Filter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*",
-            Multiselect = false,
-        };
-
-        bool? openResult = dialog.ShowDialog();
-
-        if (openResult != true) {
-            AppendLog("Transcribe canceled: user did not select a file.");
+        string selectedFilePath = LoadedAudioFilePath;
+        if (!System.IO.File.Exists(selectedFilePath)) {
+            RaiseError($"Loaded audio file does not exist: {selectedFilePath}");
+            AppendLog("Transcribe aborted: loaded audio file path is invalid.");
             return;
         }
 
         ClearOutputCore();
-        AppendLog($"Selected file: {dialog.FileName}");
+        AppendLog($"Using loaded audio file: {selectedFilePath}");
         try {
-            long fileSize = new System.IO.FileInfo(dialog.FileName).Length;
+            long fileSize = new System.IO.FileInfo(selectedFilePath).Length;
             AppendLog($"Selected file size: {fileSize:N0} bytes.");
         }
         catch {
             AppendLog("Unable to read selected file size.");
         }
-
-        TryLoadAudioPreview(dialog.FileName);
 
         _fileTranscriptionCts?.Dispose();
         _fileTranscriptionCts = new CancellationTokenSource();
@@ -397,7 +398,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         try {
             TranscriptionResult result = await _transcriptionService.TranscribeFileAsync(
-                dialog.FileName,
+                selectedFilePath,
                 SelectedEngine.Id,
                 transcriptionToken);
 
@@ -423,6 +424,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             IsBusy = false;
             AppendLog("Command finished: Transcribe File.");
         }
+    }
+
+    private Task OpenAudioFileAsync() {
+        AppendLog("Command requested: Open Audio Preview File.");
+        AppendLog("Opening file picker for audio preview.");
+
+        string? selectedFilePath = SelectAudioFilePath("Select Audio File for Preview");
+        if (string.IsNullOrWhiteSpace(selectedFilePath)) {
+            AppendLog("Open preview canceled: user did not select a file.");
+            return Task.CompletedTask;
+        }
+
+        TryLoadAudioPreview(selectedFilePath);
+        return Task.CompletedTask;
     }
 
     private async Task StartLiveAsync() {
@@ -493,6 +508,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private void ClearOutputCore() {
         InterimText = string.Empty;
+        UnsubscribeFromFinalizedLineChanges();
+        FinalizedTranscriptLines.Clear();
         FinalizedText = string.Empty;
         ProcessLogs.Clear();
         _statusMessage = "Transcript and logs cleared.";
@@ -526,7 +543,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         try {
             _audioPlaybackService.Play();
             IsAudioPlaying = _audioPlaybackService.IsPlaying;
-            AppendLog($"Audio preview playing: {LoadedAudioFileName}");
         }
         catch (Exception ex) {
             RaiseError($"Unable to play audio preview: {ex.Message}");
@@ -543,7 +559,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         try {
             _audioPlaybackService.Pause();
             IsAudioPlaying = _audioPlaybackService.IsPlaying;
-            AppendLog("Audio preview paused.");
         }
         catch (Exception ex) {
             RaiseError($"Unable to pause audio preview: {ex.Message}");
@@ -560,7 +575,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         try {
             _audioPlaybackService.Stop();
             IsAudioPlaying = _audioPlaybackService.IsPlaying;
-            AppendLog("Audio preview stopped.");
         }
         catch (Exception ex) {
             RaiseError($"Unable to stop audio preview: {ex.Message}");
@@ -577,7 +591,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         try {
             double targetSeconds = Math.Max(0, AudioSeekPositionSeconds - SeekStepSeconds);
             AudioSeekPositionSeconds = targetSeconds;
-            AppendLog($"Audio preview rewound {SeekStepSeconds} seconds.");
         }
         catch (Exception ex) {
             RaiseError($"Unable to rewind audio preview: {ex.Message}");
@@ -594,7 +607,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         try {
             double targetSeconds = Math.Min(AudioSeekMaximumSeconds, AudioSeekPositionSeconds + SeekStepSeconds);
             AudioSeekPositionSeconds = targetSeconds;
-            AppendLog($"Audio preview forwarded {SeekStepSeconds} seconds.");
         }
         catch (Exception ex) {
             RaiseError($"Unable to forward audio preview: {ex.Message}");
@@ -604,7 +616,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     private bool CanTranscribeFile() {
-        return SelectedEngine is not null && !IsBusy && !IsLiveRunning && !IsFileTranscribing;
+        return SelectedEngine is not null
+            && IsAudioFileLoaded
+            && !IsBusy
+            && !IsLiveRunning
+            && !IsFileTranscribing;
     }
 
     private bool CanStartLive() {
@@ -621,6 +637,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private bool CanCancelFileTranscription() {
         return IsFileTranscribing;
+    }
+
+    private bool CanOpenAudioFile() {
+        return !IsBusy && !IsLiveRunning && !IsFileTranscribing;
     }
 
     private bool CanPlayAudio() {
@@ -645,6 +665,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         StopLiveCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged();
+        OpenAudioFileCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
         StopAudioCommand.RaiseCanExecuteChanged();
@@ -673,6 +694,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return true;
     }
 
+    private static string? SelectAudioFilePath(string dialogTitle) {
+        var dialog = new Microsoft.Win32.OpenFileDialog {
+            Title = dialogTitle,
+            Filter = AudioFileDialogFilter,
+            Multiselect = false,
+        };
+
+        return dialog.ShowDialog() == true
+            ? dialog.FileName
+            : null;
+    }
+
     private void TryLoadAudioPreview(string filePath) {
         try {
             _audioPlaybackService.LoadFile(filePath);
@@ -698,11 +731,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 ? result.TimedLines
                 : BuildMediaTimelineLines(result.Text, timelineDuration);
 
-        IEnumerable<string> formatted = lines
+        IEnumerable<FinalizedTranscriptLineViewModel> formatted = lines
             .Where(line => !string.IsNullOrWhiteSpace(line.Text))
-            .Select(line => $"{TranscriptLineIndent}{FormatFileTimelineTimestamp(line.StartOffset)} {line.Text.Trim()}");
+            .Select(line => new FinalizedTranscriptLineViewModel(
+                timeline: FormatFileTimelineTimestamp(line.StartOffset),
+                text: line.Text.Trim()));
 
-        AppendFinalLines(formatted, result.Text);
+        AppendFinalEntries(formatted, result.Text);
     }
 
     private void AppendFinalWithWallClockTimestamp(string text) {
@@ -711,29 +746,60 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         string timestamp = DateTime.Now.ToString("HH:mm:ss");
-        IEnumerable<string> formatted = SplitTranscriptLines(text)
-            .Select(line => $"{TranscriptLineIndent}{timestamp} {line}");
+        IEnumerable<FinalizedTranscriptLineViewModel> formatted = SplitTranscriptLines(text)
+            .Select(line => new FinalizedTranscriptLineViewModel(timestamp, line));
 
-        AppendFinalLines(formatted, text);
+        AppendFinalEntries(formatted, text);
     }
 
-    private void AppendFinalLines(IEnumerable<string> lines, string rawTextForLog) {
-        string[] normalized = lines
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .Select(line => line.Trim())
+    private void AppendFinalEntries(IEnumerable<FinalizedTranscriptLineViewModel> lines, string rawTextForLog) {
+        FinalizedTranscriptLineViewModel[] normalized = lines
+            .Where(line => line is not null && !string.IsNullOrWhiteSpace(line.Text))
             .ToArray();
 
         if (normalized.Length == 0) {
             return;
         }
 
-        string block = string.Join(Environment.NewLine, normalized);
+        foreach (FinalizedTranscriptLineViewModel line in normalized) {
+            line.PropertyChanged += OnFinalizedLinePropertyChanged;
+            FinalizedTranscriptLines.Add(line);
+        }
 
-        FinalizedText = string.IsNullOrWhiteSpace(FinalizedText)
-            ? block
-            : $"{FinalizedText}{Environment.NewLine}{block}";
+        RebuildFinalizedTextFromLines();
 
         AppendLog($"Finalized text appended ({rawTextForLog.Trim().Length:N0} chars): {TrimForLog(rawTextForLog)}");
+    }
+
+    private void OnFinalizedLinePropertyChanged(object? sender, PropertyChangedEventArgs e) {
+        if (!string.Equals(e.PropertyName, nameof(FinalizedTranscriptLineViewModel.Text), StringComparison.Ordinal)) {
+            return;
+        }
+
+        RebuildFinalizedTextFromLines();
+    }
+
+    private void RebuildFinalizedTextFromLines() {
+        string merged = string.Join(
+            Environment.NewLine,
+            FinalizedTranscriptLines.Select(line => {
+                string timeline = line.Timeline?.Trim() ?? string.Empty;
+                string text = line.Text?.Trim() ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(timeline)) {
+                    return text;
+                }
+
+                return string.IsNullOrWhiteSpace(text) ? timeline : $"{timeline} {text}";
+            }));
+
+        FinalizedText = merged;
+    }
+
+    private void UnsubscribeFromFinalizedLineChanges() {
+        foreach (FinalizedTranscriptLineViewModel line in FinalizedTranscriptLines) {
+            line.PropertyChanged -= OnFinalizedLinePropertyChanged;
+        }
     }
 
     private TimeSpan ResolveFileTimelineDuration(TranscriptionResult result) {

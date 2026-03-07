@@ -49,6 +49,50 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        
+        <!-- DataGrid style with rounded corners to match parent card -->
+        <Style x:Key="RoundedDataGridStyle" TargetType="DataGrid">
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGrid">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="DG_ScrollViewer"
+                                          Focusable="false"
+                                          Padding="{TemplateBinding Padding}">
+                                <ItemsPresenter/>
+                            </ScrollViewer>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- ListView style with rounded corners for process logs panel -->
+        <Style x:Key="RoundedListViewStyle" TargetType="ListView">
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListView">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="LV_ScrollViewer"
+                                          Focusable="false"
+                                          Padding="{TemplateBinding Padding}">
+                                <ItemsPresenter/>
+                            </ScrollViewer>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <Style x:Key="CaptionTextStyle"
                 TargetType="TextBlock">
@@ -405,7 +449,7 @@
                 <StatusBarItem DockPanel.Dock="Left"
                                Padding="0"
                                BorderThickness="0">
-                    <TextBlock Text="© 2026 justintagarda@gmail.com. All rights reserved."
+                    <TextBlock Text="© 2026 Justin Tagarda · justintagarda@gmail.com"
                                Margin="0,0,14,0"
                                FontFamily="Bahnschrift"
                                FontSize="12"
@@ -447,35 +491,9 @@
                                       Style="{StaticResource ModernComboBoxStyle}"
                                       ItemContainerStyle="{StaticResource ModernComboBoxItemStyle}"/>
 
-                            <Separator Margin="0,12,0,10"/>
-
-                            <UniformGrid Columns="3"
-                                         Rows="2"
-                                         Margin="0,6,0,0">
-                                <Button Content="Transcribe File"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        Command="{Binding TranscribeFileCommand}"/>
-                                <Button Content="Live Transcription"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        Command="{Binding StartLiveCommand}"/>
-                                <Button Content="Clear Output"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        Command="{Binding ClearCommand}"/>
-                                <Button Content="Cancel"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        Command="{Binding CancelCommand}"/>
-                                <Button Content="Stop Live"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        Command="{Binding StopLiveCommand}"/>
-                                <Button Content="OpenAI settings"
-                                        Style="{StaticResource ActionButtonStyle}"
-                                        IsEnabled="{Binding IsOpenAiSettingsEnabled}"
-                                        Click="OpenOpenAiSettings_Click"/>
-                            </UniformGrid>
-
-                            <TextBlock Text="Audio Preview"
+                            <TextBlock Text="Audio File"
                                        Style="{StaticResource CaptionTextStyle}"
-                                       Margin="0,12,0,6"/>
+                                       Margin="0,14,0,6"/>
                             <Border Background="#FFFDFEFF"
                                     BorderBrush="#FFD2E2E7"
                                     BorderThickness="1"
@@ -492,22 +510,27 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <Button Grid.Column="0"
+                                                Content="Open"
+                                                Style="{StaticResource PlaybackSecondaryButtonStyle}"
+                                                Command="{Binding OpenAudioFileCommand}"/>
+                                        <Button Grid.Column="1"
                                                 Content="Play"
                                                 Style="{StaticResource PlaybackActionButtonStyle}"
                                                 Command="{Binding PlayAudioCommand}"/>
-                                        <Button Grid.Column="1"
+                                        <Button Grid.Column="2"
                                                 Content="Pause"
                                                 Style="{StaticResource PlaybackSecondaryButtonStyle}"
                                                 Command="{Binding PauseAudioCommand}"/>
-                                        <Button Grid.Column="2"
+                                        <Button Grid.Column="3"
                                                 Content="Stop"
                                                 Style="{StaticResource PlaybackSecondaryButtonStyle}"
                                                 Command="{Binding StopAudioCommand}"/>
-                                        <Button Grid.Column="3"
+                                        <Button Grid.Column="4"
                                                 ToolTip="Rewind 5 seconds"
                                                 AutomationProperties.Name="Rewind 5 seconds"
                                                 Style="{StaticResource PlaybackIconButtonStyle}"
@@ -521,7 +544,7 @@
                                                       Data="M14,4 L8,10 L14,16 Z M8.5,4 L2.5,10 L8.5,16 Z"/>
                                             </Viewbox>
                                         </Button>
-                                        <Button Grid.Column="4"
+                                        <Button Grid.Column="5"
                                                 ToolTip="Forward 5 seconds"
                                                 AutomationProperties.Name="Forward 5 seconds"
                                                 Style="{StaticResource PlaybackIconButtonStyle}"
@@ -565,8 +588,30 @@
                                     </Grid>
                                 </StackPanel>
                             </Border>
+                            <UniformGrid Columns="3"
+                                         Rows="2"
+                                         Margin="0,12,0,0">
+                                <Button Content="Transcribe File"
+                                        Style="{StaticResource PlaybackActionButtonStyle}"
+                                        Command="{Binding TranscribeFileCommand}"/>
+                                <Button Content="Live Transcription"
+                                        Style="{StaticResource PlaybackActionButtonStyle}"
+                                        Command="{Binding StartLiveCommand}"/>
+                                <Button Content="Clear Output"
+                                        Style="{StaticResource PlaybackActionButtonStyle}"
+                                        Command="{Binding ClearCommand}"/>
+                                <Button Content="Cancel"
+                                        Style="{StaticResource PlaybackActionButtonStyle}"
+                                        Command="{Binding CancelCommand}"/>
+                                <Button Content="Stop Live"
+                                        Style="{StaticResource PlaybackActionButtonStyle}"
+                                        Command="{Binding StopLiveCommand}"/>
+                                <Button Content="OpenAI settings"
+                                        Style="{StaticResource PlaybackActionButtonStyle}"
+                                        IsEnabled="{Binding IsOpenAiSettingsEnabled}"
+                                        Click="OpenOpenAiSettings_Click"/>
+                            </UniformGrid>
 
-                            <Separator Margin="0,12,0,8"/>
                         </StackPanel>
 
                         <TextBlock Grid.Row="1"
@@ -578,8 +623,10 @@
                                 Background="#FFFDFEFF"
                                 BorderBrush="#FFD2E2E7"
                                 BorderThickness="1"
-                                CornerRadius="10">
+                                CornerRadius="10"
+                                ClipToBounds="True">
                             <ListView x:Name="ProcessLogsListView"
+                                      Style="{StaticResource RoundedListViewStyle}"
                                       ItemsSource="{Binding ProcessLogs}"
                                       BorderThickness="0"
                                       Background="Transparent"
@@ -617,7 +664,7 @@
                                         <Setter Property="HorizontalContentAlignment"
                                                 Value="Stretch"/>
                                         <Setter Property="VerticalContentAlignment"
-                                                Value="Center"/>
+                                                Value="Top"/>
                                         <Setter Property="Background"
                                                 Value="Transparent"/>
                                         <Style.Triggers>
@@ -725,20 +772,134 @@
                                     BorderBrush="#FFD2E2E7"
                                     BorderThickness="1"
                                     CornerRadius="10"
-                                    Margin="0,10,0,0">
-                                <TextBox x:Name="FinalizedTranscriptTextBox"
-                                         Text="{Binding FinalizedText, Mode=OneWay}"
-                                         IsReadOnly="True"
-                                         BorderThickness="0"
-                                         Background="Transparent"
-                                         Padding="7"
-                                         FontFamily="Consolas"
-                                         FontSize="15"
-                                         Foreground="{StaticResource PrimaryTextBrush}"
-                                         TextWrapping="Wrap"
-                                         AcceptsReturn="True"
-                                         VerticalScrollBarVisibility="Auto"
-                                         HorizontalScrollBarVisibility="Disabled"/>
+                                    Margin="0,10,0,0"
+                                    ClipToBounds="True">
+                                <DataGrid x:Name="FinalizedTranscriptGrid"
+                                          Style="{StaticResource RoundedDataGridStyle}"
+                                          ItemsSource="{Binding FinalizedTranscriptLines}"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          CanUserDeleteRows="False"
+                                          CanUserResizeRows="False"
+                                          HeadersVisibility="Column"
+                                          RowHeaderWidth="0"
+                                          GridLinesVisibility="None"
+                                          SelectionMode="Single"
+                                          SelectionUnit="Cell"
+                                          CurrentCellChanged="FinalizedTranscriptGrid_CurrentCellChanged"
+                                          PreviewKeyDown="FinalizedTranscriptGrid_PreviewKeyDown"
+                                          BorderThickness="0"
+                                          Background="Transparent"
+                                          RowBackground="#00FFFFFF"
+                                          AlternatingRowBackground="#05EAF4F8"
+                                          FontFamily="Consolas"
+                                          FontSize="15"
+                                          Foreground="{StaticResource PrimaryTextBrush}"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                                    <DataGrid.Resources>
+                                        <Style TargetType="{x:Type DataGridColumnHeader}">
+                                            <Setter Property="FontFamily"
+                                                    Value="Segoe UI Variable Text"/>
+                                            <Setter Property="FontSize"
+                                                    Value="12"/>
+                                            <Setter Property="FontWeight"
+                                                    Value="SemiBold"/>
+                                            <Setter Property="Foreground"
+                                                    Value="{StaticResource SecondaryTextBrush}"/>
+                                            <Setter Property="Background"
+                                                    Value="#FFF6FAFC"/>
+                                            <Setter Property="BorderBrush"
+                                                    Value="#FFD2E2E7"/>
+                                            <Setter Property="BorderThickness"
+                                                    Value="0,0,0,1"/>
+                                            <Setter Property="Padding"
+                                                    Value="6,5"/>
+                                        </Style>
+                                        <Style TargetType="{x:Type DataGridCell}">
+                                            <Setter Property="Padding"
+                                                    Value="6,3"/>
+                                            <Setter Property="VerticalContentAlignment"
+                                                    Value="Top"/>
+                                            <Setter Property="BorderThickness"
+                                                    Value="1"/>
+                                            <Setter Property="BorderBrush"
+                                                    Value="Transparent"/>
+                                            <Setter Property="Background"
+                                                    Value="Transparent"/>
+                                            <Setter Property="Foreground"
+                                                    Value="{StaticResource PrimaryTextBrush}"/>
+                                            <Setter Property="FocusVisualStyle"
+                                                    Value="{x:Null}"/>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsSelected"
+                                                         Value="True">
+                                                    <Setter Property="Background"
+                                                            Value="#14D7E7EF"/>
+                                                    <Setter Property="Foreground"
+                                                            Value="{StaticResource PrimaryTextBrush}"/>
+                                                </Trigger>
+                                                <Trigger Property="IsEditing"
+                                                         Value="True">
+                                                    <Setter Property="BorderBrush"
+                                                            Value="#6495ED"/>
+                                                    <Setter Property="BorderThickness"
+                                                            Value="1"/>
+                                                </Trigger>
+                                                <MultiTrigger>
+                                                    <MultiTrigger.Conditions>
+                                                        <Condition Property="IsKeyboardFocusWithin"
+                                                                   Value="True"/>
+                                                        <Condition Property="IsEditing"
+                                                                   Value="False"/>
+                                                    </MultiTrigger.Conditions>
+                                                    <Setter Property="BorderBrush"
+                                                            Value="#C0C0C0"/>
+                                                    <Setter Property="BorderThickness"
+                                                            Value="1"/>
+                                                </MultiTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                        <Style TargetType="{x:Type DataGridRow}">
+                                            <Setter Property="Foreground"
+                                                    Value="{StaticResource PrimaryTextBrush}"/>
+                                            <Setter Property="VerticalAlignment"
+                                                    Value="Top"/>
+                                            <Setter Property="VerticalContentAlignment"
+                                                    Value="Top"/>
+                                            <Setter Property="BorderThickness"
+                                                    Value="0"/>
+                                            <Style.Triggers>
+                                                <Trigger Property="IsSelected"
+                                                         Value="True">
+                                                    <Setter Property="Foreground"
+                                                            Value="{StaticResource PrimaryTextBrush}"/>
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                        <Style TargetType="{x:Type TextBox}">
+                                            <Setter Property="Foreground"
+                                                    Value="{StaticResource PrimaryTextBrush}"/>
+                                            <Setter Property="BorderThickness"
+                                                    Value="0"/>
+                                            <Setter Property="Background"
+                                                    Value="Transparent"/>
+                                            <Setter Property="FocusVisualStyle"
+                                                    Value="{x:Null}"/>
+                                        </Style>
+                                    </DataGrid.Resources>
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Timeline"
+                                                            Binding="{Binding Timeline}"
+                                                            IsReadOnly="True"
+                                                            CanUserSort="False"
+                                                            Width="86"/>
+                                        <DataGridTextColumn Header="Transcription"
+                                                            Binding="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                            CanUserSort="False"
+                                                            Width="*"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
                             </Border>
                         </Grid>
                     </Grid>
