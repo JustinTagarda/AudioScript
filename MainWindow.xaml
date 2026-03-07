@@ -702,28 +702,66 @@
                                     BorderThickness="1"
                                     CornerRadius="10"
                                     Padding="10">
-                                <UniformGrid Columns="3"
-                                             Rows="2">
-                                    <Button Content="Open File..."
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Button Grid.Row="0"
+                                            Grid.Column="0"
+                                            Content="Open File..."
                                             Style="{StaticResource PlaybackSecondaryButtonStyle}"
+                                            Height="33"
+                                            MinHeight="33"
                                             Command="{Binding OpenAudioFileCommand}"/>
-                                    <Button Content="Transcribe"
+                                    <Button x:Name="TranscribeButton"
+                                            Grid.Row="0"
+                                            Grid.Column="1"
+                                            Content="Transcribe"
                                             Style="{StaticResource PlaybackActionButtonStyle}"
+                                            Height="33"
+                                            MinHeight="33"
                                             Command="{Binding TranscribeFileCommand}"/>
-                                    <Button Content="Clear"
+                                    <Button Grid.Row="0"
+                                            Grid.Column="2"
+                                            Content="Clear"
                                             Style="{StaticResource PlaybackActionButtonStyle}"
+                                            Height="33"
+                                            MinHeight="33"
                                             Command="{Binding ClearCommand}"/>
-                                    <Button Content="Cancel"
+                                    <Button Grid.Row="1"
+                                            Grid.Column="0"
+                                            Content="Cancel"
                                             Style="{StaticResource PlaybackActionButtonStyle}"
+                                            Height="33"
+                                            MinHeight="33"
                                             Command="{Binding CancelCommand}"/>
-                                    <Button Content="API Key"
+                                    <Button Grid.Row="1"
+                                            Grid.Column="1"
                                             Style="{StaticResource PlaybackActionButtonStyle}"
+                                            FontSize="12"
+                                            Height="33"
+                                            MinHeight="33"
+                                            Command="{Binding CreatePlaceholdersCommand}">
+                                        <TextBlock Text="Create&#x0A;Placeholders"
+                                                   LineStackingStrategy="BlockLineHeight"
+                                                   LineHeight="12"
+                                                   TextAlignment="Center"/>
+                                    </Button>
+                                    <Button Grid.Row="1"
+                                            Grid.Column="2"
+                                            Content="API Key"
+                                            Style="{StaticResource PlaybackActionButtonStyle}"
+                                            Height="33"
+                                            MinHeight="33"
                                             IsEnabled="{Binding IsOpenAiSettingsEnabled}"
                                             Click="OpenOpenAiSettings_Click"/>
-                                    <Button Content="Restore Audio"
-                                            Style="{StaticResource PlaybackSecondaryButtonStyle}"
-                                            Command="{Binding RestoreSessionAudioCommand}"/>
-                                </UniformGrid>
+                                </Grid>
                             </Border>
 
                             <TextBlock Text="Audio File"

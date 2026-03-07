@@ -69,6 +69,12 @@ public partial class App : System.Windows.Application {
             openAiOptions,
             processLogService,
             responseParser);
+        var playbackTranscriptionService = new PlaybackAudioTranscriptionService(
+            audioStandardizer,
+            _httpClient,
+            openAiOptions,
+            processLogService,
+            responseParser);
 
         _windowPlacementService = new WindowPlacementService();
 
@@ -84,7 +90,12 @@ public partial class App : System.Windows.Application {
             _appPreferencesStore,
             appPreferencesSnapshot);
 
-        var mainWindow = new MainWindow {
+        var mainWindow = new MainWindow(
+            playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
+                new WasapiLoopbackCaptureService(),
+                playbackTranscriptionService,
+                processLogService),
+            processLogService: processLogService) {
             DataContext = _mainViewModel,
         };
         _windowPlacementService.Apply(mainWindow);

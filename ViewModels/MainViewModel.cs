@@ -12,6 +12,7 @@ namespace AudioTranscript.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private const int SeekStepSeconds = 5;
+    private static readonly TimeSpan PlaceholderSegmentDuration = TimeSpan.FromSeconds(10);
     private const string AudioFileDialogFilter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*";
 
     private readonly ITranscriptionService _transcriptionService;
@@ -80,12 +81,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         RecentSessions = new ObservableCollection<TranscriptSessionSummary>();
 
         TranscribeFileCommand = new AsyncRelayCommand(TranscribeFileAsync, CanTranscribeFile);
+        CreatePlaceholdersCommand = new AsyncRelayCommand(CreatePlaceholdersAsync, CanCreatePlaceholders);
         ClearCommand = new AsyncRelayCommand(ClearAsync, CanClear);
         CancelCommand = new AsyncRelayCommand(CancelFileTranscriptionAsync, CanCancelFileTranscription);
         OpenAudioFileCommand = new AsyncRelayCommand(OpenAudioFileAsync, CanOpenAudioFile);
         OpenSelectedSessionCommand = new AsyncRelayCommand(OpenSelectedSessionAsync, CanOpenSelectedSession);
         DeleteSelectedSessionCommand = new AsyncRelayCommand(DeleteSelectedSessionAsync, CanDeleteSelectedSession);
-        RestoreSessionAudioCommand = new AsyncRelayCommand(RestoreSessionAudioAsync, CanRestoreSessionAudio);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
         StopAudioCommand = new AsyncRelayCommand(StopAudioAsync, CanStopAudio);
@@ -148,12 +149,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public ObservableCollection<TranscriptSessionSummary> RecentSessions { get; }
 
     public AsyncRelayCommand TranscribeFileCommand { get; }
+    public AsyncRelayCommand CreatePlaceholdersCommand { get; }
     public AsyncRelayCommand ClearCommand { get; }
     public AsyncRelayCommand CancelCommand { get; }
     public AsyncRelayCommand OpenAudioFileCommand { get; }
     public AsyncRelayCommand OpenSelectedSessionCommand { get; }
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
-    public AsyncRelayCommand RestoreSessionAudioCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
     public AsyncRelayCommand StopAudioCommand { get; }
@@ -499,7 +500,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         bool hasExistingTranscript = HasExistingTranscriptContent();
-        if (hasExistingTranscript && !ConfirmTranscriptReplacement()) {
+        if (hasExistingTranscript && !ConfirmTranscriptReplacement(
+                operationName: "Transcribe",
+                canceledStatusMessage: "Transcription canceled. Existing transcript was kept.")) {
             return;
         }
 
@@ -586,6 +589,76 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
     }
 
+    private Task CreatePlaceholdersAsync() {
+        AppendLog("Command requested: Create Placeholders.");
+
+        if (!IsAudioFileLoaded) {
+            AppendLog("Create placeholders aborted: no audio file is loaded in preview.");
+            return Task.CompletedTask;
+        }
+
+        if (!EnsureCurrentSessionForLoadedAudio()) {
+            AppendLog("Create placeholders aborted: current audio is not associated with a session.");
+            return Task.CompletedTask;
+        }
+
+        if (!TryResolveLoadedAudioDuration(out TimeSpan duration) || duration <= TimeSpan.Zero) {
+            RaiseError("Unable to determine the loaded audio duration for placeholder creation.");
+            AppendLog("Create placeholders aborted: audio duration is unavailable.");
+            return Task.CompletedTask;
+        }
+
+        bool hasExistingTranscript = HasExistingTranscriptContent();
+        if (hasExistingTranscript && !ConfirmTranscriptReplacement(
+                operationName: "Create placeholders",
+                canceledStatusMessage: "Placeholder creation canceled. Existing transcript was kept.")) {
+            return Task.CompletedTask;
+        }
+
+        if (hasExistingTranscript) {
+            ResetCurrentSessionTranscriptState();
+        }
+
+        ClearTranscriptAndLogs(unloadAudioPreview: false);
+
+        if (hasExistingTranscript
+            && !TrySaveCurrentSession(
+                updateTranscriptionMetadata: false,
+                showErrorDialog: true,
+                successLogMessage: "Existing transcript cleared before placeholder creation.")) {
+            AppendLog("Create placeholders aborted: existing transcript could not be cleared safely.");
+            return Task.CompletedTask;
+        }
+
+        IsBusy = true;
+        StatusMessage = "Creating placeholder transcript...";
+
+        try {
+            CreatePlaceholderTranscript(duration);
+
+            if (!TrySaveCurrentSession(
+                    updateTranscriptionMetadata: false,
+                    showErrorDialog: true,
+                    successLogMessage: "Session saved after placeholder creation.")) {
+                AppendLog("Create placeholders aborted: generated placeholders could not be saved.");
+                return Task.CompletedTask;
+            }
+
+            if (_currentSessionDocument is not null) {
+                LoadRecentSessions(_currentSessionDocument.SessionId);
+            }
+
+            StatusMessage = "Placeholder transcript created.";
+            AppendLog($"Placeholder transcript created with {FinalizedTranscriptLines.Count:N0} segment(s).");
+        }
+        finally {
+            IsBusy = false;
+            AppendLog("Command finished: Create Placeholders.");
+        }
+
+        return Task.CompletedTask;
+    }
+
     private Task OpenAudioFileAsync() {
         AppendLog("Command requested: Open Audio Preview File.");
         AppendLog("Opening file picker for audio preview.");
@@ -666,33 +739,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         finally {
             IsBusy = false;
         }
-    }
-
-    private Task RestoreSessionAudioAsync() {
-        if (_currentSessionDocument is null || !IsCurrentSessionAudioMissing) {
-            return Task.CompletedTask;
-        }
-
-        string? selectedFilePath = SelectAudioFilePath("Restore Session Audio");
-        if (string.IsNullOrWhiteSpace(selectedFilePath)) {
-            AppendLog("Restore audio canceled: user did not select a file.");
-            return Task.CompletedTask;
-        }
-
-        try {
-            TranscriptSessionLoadResult loadResult = _sessionStore.RestoreAudioFile(_currentSessionDocument.SessionId, selectedFilePath);
-            LoadSessionResult(loadResult, showAudioIssueDialog: true);
-            StatusMessage = "Session audio restored.";
-            RaiseToast(
-                "Session audio restored",
-                "The session copy is available again and ready for playback.",
-                ToastNotificationType.Success);
-        }
-        catch (Exception ex) {
-            RaiseError($"Unable to restore session audio: {ex.Message}");
-        }
-
-        return Task.CompletedTask;
     }
 
     private Task ClearAsync() {
@@ -849,6 +895,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             && !IsFileTranscribing;
     }
 
+    private bool CanCreatePlaceholders() {
+        return CanTranscribeFile();
+    }
+
     private bool CanClear() {
         return !IsBusy && !IsFileTranscribing;
     }
@@ -869,13 +919,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return SelectedRecentSession is not null && !IsBusy && !IsFileTranscribing;
     }
 
-    private bool CanRestoreSessionAudio() {
-        return _currentSessionDocument is not null
-            && IsCurrentSessionAudioMissing
-            && !IsBusy
-            && !IsFileTranscribing;
-    }
-
     private bool CanPlayAudio() {
         return IsAudioFileLoaded && !IsAudioPlaying;
     }
@@ -894,12 +937,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private void RefreshCommandStates() {
         TranscribeFileCommand.RaiseCanExecuteChanged();
+        CreatePlaceholdersCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged();
         OpenAudioFileCommand.RaiseCanExecuteChanged();
         OpenSelectedSessionCommand.RaiseCanExecuteChanged();
         DeleteSelectedSessionCommand.RaiseCanExecuteChanged();
-        RestoreSessionAudioCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
         StopAudioCommand.RaiseCanExecuteChanged();
@@ -958,6 +1001,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
     }
 
+    private bool EnsureCurrentSessionForLoadedAudio() {
+        if (_currentSessionDocument is not null) {
+            return true;
+        }
+
+        if (!IsAudioFileLoaded || string.IsNullOrWhiteSpace(LoadedAudioFilePath)) {
+            return false;
+        }
+
+        try {
+            TranscriptSessionLoadResult loadResult = _sessionStore.ImportAudioFile(LoadedAudioFilePath);
+            LoadSessionResult(loadResult, showAudioIssueDialog: true);
+            LoadRecentSessions(loadResult.Document.SessionId);
+            return true;
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to create a session for the loaded audio file: {ex.Message}");
+            AppendLog($"Create placeholders canceled: session creation failed: {ex.Message}");
+            return false;
+        }
+    }
+
     private Task LoadSessionByIdAsync(string sessionId) {
         try {
             _sessionAutosaveTimer.Stop();
@@ -967,9 +1032,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 successLogMessage: string.Empty);
 
             TranscriptSessionLoadResult loadResult = _sessionStore.LoadSession(sessionId);
-            LoadSessionResult(loadResult, showAudioIssueDialog: true);
+            LoadSessionResult(loadResult, showAudioIssueDialog: false);
+            TryRestoreCurrentSessionAudioAfterOpen();
             LoadRecentSessions(sessionId);
-            StatusMessage = $"Session loaded: {CurrentSessionDisplayName}.";
+            StatusMessage = IsCurrentSessionAudioMissing
+                ? $"Session loaded: {CurrentSessionDisplayName}. Audio restore is still required."
+                : $"Session loaded: {CurrentSessionDisplayName}.";
         }
         catch (Exception ex) {
             RaiseError($"Unable to load session: {ex.Message}");
@@ -999,7 +1067,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             if (loadResult.AudioAvailable && !string.IsNullOrWhiteSpace(loadResult.AudioFilePath)) {
                 bool loaded = TryLoadAudioPreview(loadResult.AudioFilePath);
                 if (!loaded) {
-                    CurrentSessionAudioIssue = "The stored session audio file could not be loaded. Restore the session audio to continue playback.";
+                    CurrentSessionAudioIssue = "The stored session audio file could not be loaded. Reopen the session and select the original audio file to restore playback.";
                     IsCurrentSessionAudioMissing = true;
                 }
             }
@@ -1017,7 +1085,34 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         if (IsCurrentSessionAudioMissing && showAudioIssueDialog && !string.IsNullOrWhiteSpace(CurrentSessionAudioIssue)) {
-            RaiseError($"{CurrentSessionAudioIssue} Restore the session audio to continue playback or retranscription.");
+            RaiseError($"{CurrentSessionAudioIssue} Reopen the session and select the original audio file to continue playback or retranscription.");
+        }
+    }
+
+    private void TryRestoreCurrentSessionAudioAfterOpen() {
+        if (_currentSessionDocument is null || !IsCurrentSessionAudioMissing) {
+            return;
+        }
+
+        AppendLog("Session audio is unavailable. Prompting for the original audio file.");
+
+        string? selectedFilePath = SelectAudioFilePath("Restore Session Audio");
+        if (string.IsNullOrWhiteSpace(selectedFilePath)) {
+            AppendLog("Restore audio canceled: user did not select a file.");
+            return;
+        }
+
+        try {
+            TranscriptSessionLoadResult loadResult = _sessionStore.RestoreAudioFile(_currentSessionDocument.SessionId, selectedFilePath);
+            LoadSessionResult(loadResult, showAudioIssueDialog: true);
+            StatusMessage = "Session audio restored.";
+            RaiseToast(
+                "Session audio restored",
+                "The session copy is available again and ready for playback.",
+                ToastNotificationType.Success);
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to restore session audio: {ex.Message}");
         }
     }
 
@@ -1092,6 +1187,35 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         RebuildFinalizedTextFromLines();
         AppendLog($"Finalized text appended ({rawTextForLog.Trim().Length:N0} chars): {TrimForLog(rawTextForLog)}");
+    }
+
+    private void CreatePlaceholderTranscript(TimeSpan duration) {
+        _suppressSessionAutosave = true;
+
+        try {
+            UnsubscribeFromFinalizedLineChanges();
+            FinalizedTranscriptLines.Clear();
+
+            for (TimeSpan start = TimeSpan.Zero; start < duration; start += PlaceholderSegmentDuration) {
+                TimeSpan end = start + PlaceholderSegmentDuration;
+                if (end > duration) {
+                    end = duration;
+                }
+
+                var line = new FinalizedTranscriptLineViewModel(
+                    startOffset: start,
+                    endOffset: end,
+                    isTimestampEstimated: true,
+                    text: string.Empty);
+                line.PropertyChanged += OnFinalizedLinePropertyChanged;
+                FinalizedTranscriptLines.Add(line);
+            }
+
+            RebuildFinalizedTextFromLines();
+        }
+        finally {
+            _suppressSessionAutosave = false;
+        }
     }
 
     public bool InsertFinalizedTranscriptLine(int index, FinalizedTranscriptLineViewModel line) {
@@ -1437,7 +1561,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     private bool HasExistingTranscriptContent() {
-        if (FinalizedTranscriptLines.Any(line => !string.IsNullOrWhiteSpace(line.Text))) {
+        if (FinalizedTranscriptLines.Count > 0) {
             return true;
         }
 
@@ -1446,14 +1570,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         return !string.IsNullOrWhiteSpace(_currentSessionDocument.Transcript.FinalText)
-            || _currentSessionDocument.Transcript.Lines.Any(line => !string.IsNullOrWhiteSpace(line.Text));
+            || _currentSessionDocument.Transcript.Lines.Count > 0;
     }
 
-    private bool ConfirmTranscriptReplacement() {
+    private bool ConfirmTranscriptReplacement(string operationName, string canceledStatusMessage) {
         EventHandler<ConfirmationRequest>? handler = ConfirmationRequested;
         if (handler is null) {
             RaiseError("The confirmation dialog is unavailable. The existing transcript was left unchanged.");
-            AppendLog("Transcribe canceled: transcript replacement confirmation is unavailable.");
+            AppendLog($"{operationName} canceled: transcript replacement confirmation is unavailable.");
             return false;
         }
 
@@ -1473,17 +1597,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
         catch (Exception ex) {
             RaiseError($"Unable to confirm transcript replacement: {ex.Message}");
-            AppendLog($"Transcribe canceled: transcript replacement confirmation failed: {ex.Message}");
+            AppendLog($"{operationName} canceled: transcript replacement confirmation failed: {ex.Message}");
             return false;
         }
 
         if (request.IsConfirmed) {
-            AppendLog("Transcript replacement confirmed by user.");
+            AppendLog($"Transcript replacement confirmed by user for {operationName.ToLowerInvariant()}.");
             return true;
         }
 
-        StatusMessage = "Transcription canceled. Existing transcript was kept.";
-        AppendLog("Transcribe canceled: existing transcript was preserved.");
+        StatusMessage = canceledStatusMessage;
+        AppendLog($"{operationName} canceled: existing transcript was preserved.");
         return false;
     }
 
@@ -1675,6 +1799,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             FinalizedTranscriptLines
                 .Select(line => line.Text?.Trim() ?? string.Empty)
                 .Where(text => !string.IsNullOrWhiteSpace(text)));
+    }
+
+    private bool TryResolveLoadedAudioDuration(out TimeSpan duration) {
+        duration = _audioPlaybackService.Duration;
+        if (duration > TimeSpan.Zero) {
+            return true;
+        }
+
+        if (_currentSessionDocument?.Audio.DurationSeconds is double sessionDurationSeconds && sessionDurationSeconds > 0) {
+            duration = TimeSpan.FromSeconds(sessionDurationSeconds);
+            return true;
+        }
+
+        duration = TimeSpan.Zero;
+        return false;
     }
 
     private static string FormatPlaybackTime(TimeSpan value) {
