@@ -75,6 +75,12 @@ public partial class App : System.Windows.Application {
             openAiOptions,
             processLogService,
             responseParser);
+        var playbackEditTranscriptionOptions = new PlaybackTranscriptionSessionOptions(
+            MinimumSegmentDuration: TimeSpan.FromSeconds(1.5),
+            InterimWindowDuration: TimeSpan.FromSeconds(10),
+            InterimCadence: TimeSpan.FromSeconds(10),
+            FinalWindowDuration: TimeSpan.FromSeconds(10),
+            PollInterval: TimeSpan.FromMilliseconds(100));
 
         _windowPlacementService = new WindowPlacementService();
 
@@ -94,7 +100,8 @@ public partial class App : System.Windows.Application {
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
                 new WasapiLoopbackCaptureService(),
                 playbackTranscriptionService,
-                processLogService),
+                processLogService,
+                playbackEditTranscriptionOptions),
             processLogService: processLogService) {
             DataContext = _mainViewModel,
         };

@@ -71,6 +71,41 @@ public sealed class TranscriptSessionStoreTests {
     }
 
     [Fact]
+    public void SaveLoadRoundTrip_PreservesEmptyTranscriptLines() {
+        string rootPath = CreateTempDirectory();
+        string audioPath = CreateSilentWaveFile(16000);
+
+        try {
+            var store = new TranscriptSessionStore(rootPath);
+            TranscriptSessionLoadResult imported = store.ImportAudioFile(audioPath);
+
+            imported.Document.Transcript.FinalText = string.Empty;
+            imported.Document.Transcript.Lines = new List<TranscriptSessionLineDocument> {
+                new() {
+                    Text = string.Empty,
+                    StartSeconds = 0,
+                    EndSeconds = 10,
+                    IsTimestampEstimated = true,
+                },
+            };
+
+            store.Save(imported.Document);
+
+            TranscriptSessionLoadResult reloaded = store.LoadSession(imported.Document.SessionId);
+
+            Assert.Single(reloaded.Document.Transcript.Lines);
+            Assert.Equal(string.Empty, reloaded.Document.Transcript.Lines[0].Text);
+            Assert.Equal(0, reloaded.Document.Transcript.Lines[0].StartSeconds);
+            Assert.Equal(10, reloaded.Document.Transcript.Lines[0].EndSeconds);
+            Assert.True(reloaded.Document.Transcript.Lines[0].IsTimestampEstimated);
+        }
+        finally {
+            DeleteDirectory(rootPath);
+            File.Delete(audioPath);
+        }
+    }
+
+    [Fact]
     public void ImportAudioFile_ReusesExistingSessionForSameAudio() {
         string rootPath = CreateTempDirectory();
         string audioPath = CreateSilentWaveFile(16000);

@@ -55,40 +55,32 @@ public sealed class PlaybackAudioTranscriptionService : IPlaybackAudioTranscript
             : pcmAudio.Length / (double)sourceFormat.AverageBytesPerSecond;
         byte[] standardizedWaveBytes = _audioStandardizer.ConvertPcmBytesToEngineWav(pcmAudio, sourceFormat);
         string fileName = $"playback-{Guid.NewGuid():N}.wav";
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, _options.Endpoint);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey.Trim());
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-        using var multipart = new MultipartFormDataContent();
-        multipart.Add(new StringContent(validatedModel), "model");
-        multipart.Add(new StringContent(ResponseFormat), "response_format");
-        multipart.Add(new StringContent(Temperature), "temperature");
-        multipart.Add(new StringContent(StreamDisabled), "stream");
-        multipart.Add(new StringContent(_options.Prompt.Trim()), "prompt");
-
-        using var audioStream = new MemoryStream(standardizedWaveBytes, writable: false);
-        var audioContent = new StreamContent(audioStream);
-        audioContent.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
-        multipart.Add(audioContent, "file", fileName);
-        request.Content = multipart;
+        string languageHint = _options.PlaybackLanguageHint.Trim();
 
         Log(
             $"Submitting playback transcription chunk '{fileName}' " +
             $"(pcm={pcmAudio.Length:N0} bytes, wav={standardizedWaveBytes.Length:N0} bytes, " +
-            $"duration~={approximateDurationSeconds:F2}s) using model '{validatedModel}'.");
+            $"duration~={approximateDurationSeconds:F2}s) using model '{validatedModel}'" +
+            (string.IsNullOrWhiteSpace(languageHint) ? "." : $" with language hint '{languageHint}'."));
 
         var stopwatch = Stopwatch.StartNew();
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(_options.TimeoutSeconds, 30)));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
-        HttpResponseMessage response;
-
         try {
-            response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
+            TranscriptionResult result = await SendRequestAsync(
+                standardizedWaveBytes,
+                fileName,
+                validatedModel,
+                languageHint,
                 linkedCts.Token);
+
+            stopwatch.Stop();
+            Log(
+                $"Playback transcription chunk '{fileName}' completed in {stopwatch.Elapsed.TotalSeconds:F2}s " +
+                $"with {result.Text.Length:N0} characters.");
+
+            return result.Text.Trim();
         }
         catch (TaskCanceledException ex) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested) {
             throw new TimeoutException("OpenAI playback transcription request timed out.", ex);
@@ -98,47 +90,6 @@ public sealed class PlaybackAudioTranscriptionService : IPlaybackAudioTranscript
         }
         catch (HttpRequestException ex) {
             throw new InvalidOperationException(BuildConnectivityMessage(ex), ex);
-        }
-
-        using (response) {
-            string responseBody = await response.Content.ReadAsStringAsync(linkedCts.Token);
-
-            if (!response.IsSuccessStatusCode) {
-                string apiErrorMessage = ExtractApiErrorMessage(responseBody);
-                string message = string.IsNullOrWhiteSpace(apiErrorMessage)
-                    ? $"OpenAI playback transcription request failed ({(int)response.StatusCode} {response.ReasonPhrase})."
-                    : $"OpenAI playback transcription request failed ({(int)response.StatusCode} {response.ReasonPhrase}): {apiErrorMessage}";
-
-                Log(
-                    $"Playback transcription request failed with status {(int)response.StatusCode} " +
-                    $"({response.ReasonPhrase}) for '{fileName}'.");
-
-                if (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden) {
-                    throw new UnauthorizedAccessException(message);
-                }
-
-                throw new InvalidOperationException(message);
-            }
-
-            TranscriptionResult result;
-
-            try {
-                result = _responseParser.Parse(
-                    responseBody,
-                    validatedModel,
-                    _options.LowConfidenceLogprobThreshold);
-            }
-            catch (Exception ex) {
-                Log($"Playback transcription response parsing failed for '{fileName}': {ex.Message}");
-                throw;
-            }
-
-            stopwatch.Stop();
-            Log(
-                $"Playback transcription chunk '{fileName}' completed in {stopwatch.Elapsed.TotalSeconds:F2}s " +
-                $"with {result.Text.Length:N0} characters.");
-
-            return result.Text.Trim();
         }
     }
 
@@ -201,4 +152,135 @@ public sealed class PlaybackAudioTranscriptionService : IPlaybackAudioTranscript
     private void Log(string message) {
         _processLogService.Log("PlaybackOpenAI", message);
     }
+
+    private async Task<TranscriptionResult> SendRequestAsync(
+        byte[] standardizedWaveBytes,
+        string fileName,
+        string model,
+        string languageHint,
+        CancellationToken cancellationToken) {
+        PlaybackTranscriptionAttemptResult attempt = await SendRequestAttemptAsync(
+            standardizedWaveBytes,
+            fileName,
+            model,
+            languageHint,
+            cancellationToken);
+
+        if (attempt.Result is not null) {
+            return attempt.Result;
+        }
+
+        if (!string.IsNullOrWhiteSpace(languageHint)
+            && LooksLikeInvalidLanguageError(attempt.StatusCode, attempt.ApiErrorMessage)) {
+            Log(
+                $"Playback transcription language hint '{languageHint}' was rejected for '{fileName}'. " +
+                "Retrying without a language hint.");
+
+            PlaybackTranscriptionAttemptResult fallbackAttempt = await SendRequestAttemptAsync(
+                standardizedWaveBytes,
+                fileName,
+                model,
+                languageHint: string.Empty,
+                cancellationToken);
+
+            if (fallbackAttempt.Result is not null) {
+                return fallbackAttempt.Result;
+            }
+
+            throw CreateFailure(fallbackAttempt, fileName);
+        }
+
+        throw CreateFailure(attempt, fileName);
+    }
+
+    private async Task<PlaybackTranscriptionAttemptResult> SendRequestAttemptAsync(
+        byte[] standardizedWaveBytes,
+        string fileName,
+        string model,
+        string languageHint,
+        CancellationToken cancellationToken) {
+        using var request = new HttpRequestMessage(HttpMethod.Post, _options.Endpoint);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey.Trim());
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        using var multipart = new MultipartFormDataContent();
+        multipart.Add(new StringContent(model), "model");
+        multipart.Add(new StringContent(ResponseFormat), "response_format");
+        multipart.Add(new StringContent(Temperature), "temperature");
+        multipart.Add(new StringContent(StreamDisabled), "stream");
+        multipart.Add(new StringContent(_options.Prompt.Trim()), "prompt");
+
+        if (!string.IsNullOrWhiteSpace(languageHint)) {
+            multipart.Add(new StringContent(languageHint), "language");
+        }
+
+        using var audioStream = new MemoryStream(standardizedWaveBytes, writable: false);
+        var audioContent = new StreamContent(audioStream);
+        audioContent.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
+        multipart.Add(audioContent, "file", fileName);
+        request.Content = multipart;
+
+        using HttpResponseMessage response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+
+        string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode) {
+            string apiErrorMessage = ExtractApiErrorMessage(responseBody);
+
+            Log(
+                $"Playback transcription request failed with status {(int)response.StatusCode} " +
+                $"({response.ReasonPhrase}) for '{fileName}'.");
+
+            return new PlaybackTranscriptionAttemptResult(
+                StatusCode: response.StatusCode,
+                ReasonPhrase: response.ReasonPhrase,
+                ApiErrorMessage: apiErrorMessage,
+                Result: null);
+        }
+
+        try {
+            TranscriptionResult result = _responseParser.Parse(
+                responseBody,
+                model,
+                _options.LowConfidenceLogprobThreshold);
+
+            return new PlaybackTranscriptionAttemptResult(
+                StatusCode: response.StatusCode,
+                ReasonPhrase: response.ReasonPhrase,
+                ApiErrorMessage: string.Empty,
+                Result: result);
+        }
+        catch (Exception ex) {
+            Log($"Playback transcription response parsing failed for '{fileName}': {ex.Message}");
+            throw;
+        }
+    }
+
+    private static bool LooksLikeInvalidLanguageError(HttpStatusCode statusCode, string apiErrorMessage) {
+        return statusCode == HttpStatusCode.BadRequest
+            && !string.IsNullOrWhiteSpace(apiErrorMessage)
+            && apiErrorMessage.Contains("language", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Exception CreateFailure(PlaybackTranscriptionAttemptResult attempt, string fileName) {
+        string message = string.IsNullOrWhiteSpace(attempt.ApiErrorMessage)
+            ? $"OpenAI playback transcription request failed ({(int)attempt.StatusCode} {attempt.ReasonPhrase})."
+            : $"OpenAI playback transcription request failed ({(int)attempt.StatusCode} {attempt.ReasonPhrase}): {attempt.ApiErrorMessage}";
+
+        if (attempt.StatusCode == HttpStatusCode.Unauthorized || attempt.StatusCode == HttpStatusCode.Forbidden) {
+            return new UnauthorizedAccessException(message);
+        }
+
+        return new InvalidOperationException(message);
+    }
+
+    private sealed record PlaybackTranscriptionAttemptResult(
+        HttpStatusCode StatusCode,
+        string? ReasonPhrase,
+        string ApiErrorMessage,
+        TranscriptionResult? Result
+    );
 }

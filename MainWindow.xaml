@@ -181,6 +181,28 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="TranscriptCellProgressBarStyle"
+               TargetType="ProgressBar">
+            <Setter Property="Height"
+                    Value="4"/>
+            <Setter Property="Minimum"
+                    Value="0"/>
+            <Setter Property="Maximum"
+                    Value="100"/>
+            <Setter Property="Background"
+                    Value="#FFD9E8EE"/>
+            <Setter Property="Foreground"
+                    Value="#FF1B86AA"/>
+            <Setter Property="BorderBrush"
+                    Value="#FFBBD1DB"/>
+            <Setter Property="BorderThickness"
+                    Value="0"/>
+            <Setter Property="VerticalAlignment"
+                    Value="Center"/>
+            <Setter Property="Margin"
+                    Value="0"/>
+        </Style>
+
         <Style x:Key="ModernComboBoxItemStyle"
                TargetType="ComboBoxItem">
             <Setter Property="Padding"
@@ -561,7 +583,8 @@
 
     <Grid x:Name="MainRootGrid"
           Background="#FFF4F7F8">
-        <DockPanel LastChildFill="True">
+        <DockPanel x:Name="MainContentHost"
+                   LastChildFill="True">
             <StatusBar DockPanel.Dock="Bottom"
                        Margin="0"
                        MinHeight="32"
@@ -688,7 +711,9 @@
                                                 Style="{StaticResource DangerButtonStyle}"
                                                 MinWidth="0"
                                                 Width="80"
-                                                Height="32"
+                                                Height="29"
+                                                MinHeight="29"
+                                                Padding="12,4"
                                                 Command="{Binding DeleteSelectedSessionCommand}"/>
                                     </StackPanel>
                                 </StackPanel>
@@ -722,11 +747,16 @@
                                     <Button x:Name="TranscribeButton"
                                             Grid.Row="0"
                                             Grid.Column="1"
-                                            Content="Transcribe"
                                             Style="{StaticResource PlaybackActionButtonStyle}"
+                                            FontSize="12"
                                             Height="33"
                                             MinHeight="33"
-                                            Command="{Binding TranscribeFileCommand}"/>
+                                            Command="{Binding TranscribeFileCommand}">
+                                        <TextBlock Text="Transcribe&#x0A;File"
+                                                   LineStackingStrategy="BlockLineHeight"
+                                                   LineHeight="12"
+                                                   TextAlignment="Center"/>
+                                    </Button>
                                     <Button Grid.Row="0"
                                             Grid.Column="2"
                                             Content="Clear"
@@ -736,19 +766,58 @@
                                             Command="{Binding ClearCommand}"/>
                                     <Button Grid.Row="1"
                                             Grid.Column="0"
-                                            Content="Cancel"
-                                            Style="{StaticResource PlaybackActionButtonStyle}"
                                             Height="33"
                                             MinHeight="33"
-                                            Command="{Binding CancelCommand}"/>
-                                    <Button Grid.Row="1"
+                                            Click="CancelProcessing_Click">
+                                        <Button.Style>
+                                            <Style TargetType="{x:Type Button}"
+                                                   BasedOn="{StaticResource PlaybackActionButtonStyle}">
+                                                <Setter Property="IsEnabled"
+                                                        Value="False"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFileTranscribing}"
+                                                                 Value="True">
+                                                        <Setter Property="IsEnabled"
+                                                                Value="True"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                 Value="True">
+                                                        <Setter Property="IsEnabled"
+                                                                Value="True"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <TextBlock Text="Cancel"
+                                                   TextAlignment="Center"/>
+                                    </Button>
+                                    <Button x:Name="TranscribeBySegmentsButton"
+                                            Grid.Row="1"
                                             Grid.Column="1"
-                                            Style="{StaticResource PlaybackActionButtonStyle}"
                                             FontSize="12"
                                             Height="33"
                                             MinHeight="33"
-                                            Command="{Binding CreatePlaceholdersCommand}">
-                                        <TextBlock Text="Create&#x0A;Placeholders"
+                                            Click="TranscribeBySegments_Click">
+                                        <Button.Style>
+                                            <Style TargetType="{x:Type Button}"
+                                                   BasedOn="{StaticResource PlaybackActionButtonStyle}">
+                                                <Setter Property="IsEnabled"
+                                                        Value="False"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsEnabled, ElementName=TranscribeButton}"
+                                                                 Value="True">
+                                                        <Setter Property="IsEnabled"
+                                                                Value="True"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                 Value="True">
+                                                        <Setter Property="IsEnabled"
+                                                                Value="False"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <TextBlock Text="Transcribe&#x0A;By Segments"
                                                    LineStackingStrategy="BlockLineHeight"
                                                    LineHeight="12"
                                                    TextAlignment="Center"/>
@@ -1218,14 +1287,52 @@
                                                             Width="*">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
-                                                <TextBlock Text="{Binding Text}"
-                                                           Style="{StaticResource TranscriptCellTextStyle}"/>
+                                                <Grid>
+                                                    <TextBlock Text="{Binding Text}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="{x:Type TextBlock}"
+                                                                   BasedOn="{StaticResource TranscriptCellTextStyle}">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Visible"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsPlaybackEditTranscribing}"
+                                                                                 Value="True">
+                                                                        <Setter Property="Visibility"
+                                                                                Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <Border HorizontalAlignment="Stretch"
+                                                            VerticalAlignment="Center"
+                                                            Margin="20,0"
+                                                            Padding="0">
+                                                        <Border.Style>
+                                                            <Style TargetType="{x:Type Border}">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsPlaybackEditTranscribing}"
+                                                                                 Value="True">
+                                                                        <Setter Property="Visibility"
+                                                                                Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <ProgressBar Style="{StaticResource TranscriptCellProgressBarStyle}"
+                                                                     Value="{Binding PlaybackEditProgressPercent}"
+                                                                     IsIndeterminate="{Binding IsPlaybackEditProgressIndeterminate}"/>
+                                                    </Border>
+                                                </Grid>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                         <DataGridTemplateColumn.CellEditingTemplate>
                                             <DataTemplate>
                                                 <TextBox Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                         Style="{StaticResource TranscriptEditingTextStyle}"/>
+                                                         Style="{StaticResource TranscriptEditingTextStyle}"
+                                                         IsReadOnly="{Binding IsPlaybackEditTranscribing}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellEditingTemplate>
                                     </DataGridTemplateColumn>
@@ -1294,6 +1401,57 @@
                 </Border>
             </Grid>
         </DockPanel>
+
+        <Border x:Name="SegmentBatchOverlay"
+                Panel.ZIndex="100"
+                Background="Transparent"
+                Visibility="Collapsed"
+                IsHitTestVisible="False">
+            <Grid>
+                <Border HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Width="320"
+                        Background="#FFFDFEFF"
+                        BorderBrush="#FFD2E2E7"
+                        BorderThickness="1"
+                        CornerRadius="14"
+                        Padding="18,16">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="28"
+                                          ShadowDepth="0"
+                                          Opacity="0.18"
+                                          Color="#FF7F97A6"/>
+                    </Border.Effect>
+                    <StackPanel>
+                        <TextBlock Text="Transcribing By Segments"
+                                   FontFamily="Bahnschrift"
+                                   FontSize="18"
+                                   Foreground="{StaticResource PrimaryTextBrush}"
+                                   HorizontalAlignment="Center"/>
+                        <ProgressBar Width="180"
+                                     Height="8"
+                                     Margin="0,14,0,0"
+                                     IsIndeterminate="True"
+                                     Style="{StaticResource TranscriptCellProgressBarStyle}"/>
+                        <TextBlock Text="{Binding StatusMessage}"
+                                   Margin="0,12,0,0"
+                                   FontFamily="Segoe UI Variable Text"
+                                   FontSize="12"
+                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"/>
+                        <Button x:Name="SegmentBatchCancelButton"
+                                Content="Cancel"
+                                Width="110"
+                                HorizontalAlignment="Center"
+                                Margin="0,16,0,0"
+                                Style="{StaticResource PlaybackActionButtonStyle}"
+                                IsEnabled="True"
+                                Click="CancelProcessing_Click"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
 
         <Border x:Name="CopyToastHost"
                 Panel.ZIndex="20"

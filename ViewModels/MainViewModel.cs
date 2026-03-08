@@ -591,28 +591,42 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private Task CreatePlaceholdersAsync() {
         AppendLog("Command requested: Create Placeholders.");
+        try {
+            CreatePlaceholdersCore();
+        }
+        finally {
+            AppendLog("Command finished: Create Placeholders.");
+        }
 
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> CreatePlaceholdersForSegmentTranscriptionAsync() {
+        return Task.FromResult(CreatePlaceholdersCore());
+    }
+
+    private bool CreatePlaceholdersCore() {
         if (!IsAudioFileLoaded) {
             AppendLog("Create placeholders aborted: no audio file is loaded in preview.");
-            return Task.CompletedTask;
+            return false;
         }
 
         if (!EnsureCurrentSessionForLoadedAudio()) {
             AppendLog("Create placeholders aborted: current audio is not associated with a session.");
-            return Task.CompletedTask;
+            return false;
         }
 
         if (!TryResolveLoadedAudioDuration(out TimeSpan duration) || duration <= TimeSpan.Zero) {
             RaiseError("Unable to determine the loaded audio duration for placeholder creation.");
             AppendLog("Create placeholders aborted: audio duration is unavailable.");
-            return Task.CompletedTask;
+            return false;
         }
 
         bool hasExistingTranscript = HasExistingTranscriptContent();
         if (hasExistingTranscript && !ConfirmTranscriptReplacement(
                 operationName: "Create placeholders",
                 canceledStatusMessage: "Placeholder creation canceled. Existing transcript was kept.")) {
-            return Task.CompletedTask;
+            return false;
         }
 
         if (hasExistingTranscript) {
@@ -627,7 +641,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 showErrorDialog: true,
                 successLogMessage: "Existing transcript cleared before placeholder creation.")) {
             AppendLog("Create placeholders aborted: existing transcript could not be cleared safely.");
-            return Task.CompletedTask;
+            return false;
         }
 
         IsBusy = true;
@@ -641,7 +655,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                     showErrorDialog: true,
                     successLogMessage: "Session saved after placeholder creation.")) {
                 AppendLog("Create placeholders aborted: generated placeholders could not be saved.");
-                return Task.CompletedTask;
+                return false;
             }
 
             if (_currentSessionDocument is not null) {
@@ -650,13 +664,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
             StatusMessage = "Placeholder transcript created.";
             AppendLog($"Placeholder transcript created with {FinalizedTranscriptLines.Count:N0} segment(s).");
+            return true;
         }
         finally {
             IsBusy = false;
-            AppendLog("Command finished: Create Placeholders.");
         }
-
-        return Task.CompletedTask;
     }
 
     private Task OpenAudioFileAsync() {
@@ -1138,7 +1150,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         UnsubscribeFromFinalizedLineChanges();
         FinalizedTranscriptLines.Clear();
 
-        foreach (TranscriptSessionLineDocument line in transcript.Lines.Where(line => !string.IsNullOrWhiteSpace(line.Text))) {
+        foreach (TranscriptSessionLineDocument line in transcript.Lines) {
+            bool hasTimeline = line.StartSeconds is not null || line.EndSeconds is not null;
+            if (!hasTimeline && string.IsNullOrWhiteSpace(line.Text)) {
+                continue;
+            }
+
             var item = new FinalizedTranscriptLineViewModel(
                 startOffset: line.StartSeconds is null ? null : TimeSpan.FromSeconds(Math.Max(line.StartSeconds.Value, 0)),
                 endOffset: line.EndSeconds is null ? null : TimeSpan.FromSeconds(Math.Max(line.EndSeconds.Value, 0)),

@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -20,20 +21,24 @@ using DataGridCellsPresenter = System.Windows.Controls.Primitives.DataGridCellsP
 
 namespace AudioTranscript;
 
-public partial class MainWindow : Window {
+public partial class MainWindow : Window, INotifyPropertyChanged {
     private const int TimelineColumnIndex = 0;
     private const int TranscriptTextColumnIndex = 1;
     private const double ToastBottomMargin = 48;
     private const double ToastHiddenOffsetY = -14;
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan PlaybackEditSegmentDuration = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.FromMilliseconds(750);
 
     private bool _isOpenAiDialogOpen;
     private bool _isApplyingTranscriptEditLoopSeek;
     private bool _isTranscriptEditLoopRestartPending;
     private MainViewModel? _boundViewModel;
     private CancellationTokenSource? _copyToastCts;
+    private CancellationTokenSource? _segmentBatchTranscriptionCts;
     private readonly Func<PlaybackTranscriptionSession>? _playbackTranscriptionSessionFactory;
     private readonly ProcessLogService? _processLogService;
+    private bool _isSegmentBatchTranscribing;
     private FinalizedTranscriptLineViewModel? _playbackMatchedLine;
     private FinalizedTranscriptLineViewModel? _rowActionsLine;
     private FinalizedTranscriptLineViewModel? _editLoopLine;
@@ -56,6 +61,20 @@ public partial class MainWindow : Window {
         PreviewMouseWheel += OnWindowMouseWheelDismissToast;
     }
 
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public bool IsSegmentBatchTranscribing {
+        get => _isSegmentBatchTranscribing;
+        private set {
+            if (_isSegmentBatchTranscribing == value) {
+                return;
+            }
+
+            _isSegmentBatchTranscribing = value;
+            OnPropertyChanged();
+        }
+    }
+
     private void EngineComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) {
         if (!IsLoaded || DataContext is not MainViewModel vm) {
             return;
@@ -74,6 +93,199 @@ public partial class MainWindow : Window {
 
     private void OpenOpenAiSettings_Click(object sender, RoutedEventArgs e) {
         ShowOpenAiSettingsDialog();
+    }
+
+    private async void TranscribeBySegments_Click(object sender, RoutedEventArgs e) {
+        if (DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        if (IsSegmentBatchTranscribing) {
+            return;
+        }
+
+        if (_playbackTranscriptionSessionFactory is null) {
+            LogSegmentBatch("Segment transcription is unavailable because playback transcription is not configured.");
+            ShowCopyToast(
+                "Segment transcription unavailable",
+                "Playback transcription is not configured.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        string selectedModel = vm.SelectedEngine?.Id?.Trim() ?? string.Empty;
+        if (!OpenAiTranscriptionModelCatalog.IsSupported(selectedModel)) {
+            LogSegmentBatch("Segment transcription aborted: no supported OpenAI transcription model is selected.");
+            ShowCopyToast(
+                "Segment transcription unavailable",
+                "Select a supported OpenAI transcription model first.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(vm.OpenAiApiKey)) {
+            LogSegmentBatch("Segment transcription aborted: OpenAI API key is not configured.");
+            ShowCopyToast(
+                "API key required",
+                "Configure the OpenAI API key before transcribing by segments.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        IsSegmentBatchTranscribing = true;
+        _segmentBatchTranscriptionCts = new CancellationTokenSource();
+        CancellationToken batchCancellationToken = _segmentBatchTranscriptionCts.Token;
+        ApplySegmentBatchInteractionLock();
+        _ = Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+        await Dispatcher.Yield(DispatcherPriority.Background);
+
+        try {
+            LogSegmentBatch("Transcribe by segments requested.");
+
+            bool placeholdersCreated = await vm.CreatePlaceholdersForSegmentTranscriptionAsync();
+            if (batchCancellationToken.IsCancellationRequested) {
+                vm.StatusMessage = "Segment transcription canceled.";
+                LogSegmentBatch("Segment transcription canceled before row processing started.");
+                ShowCopyToast(
+                    "Segment transcription canceled",
+                    "The automated segment transcription was canceled.",
+                    ToastNotificationType.Info);
+                return;
+            }
+
+            if (!placeholdersCreated) {
+                LogSegmentBatch("Transcribe by segments stopped before placeholder generation completed.");
+                return;
+            }
+
+            List<FinalizedTranscriptLineViewModel> pendingLines = vm.FinalizedTranscriptLines
+                .Where(line => line.StartOffset is not null)
+                .ToList();
+
+            if (pendingLines.Count == 0) {
+                vm.StatusMessage = "No transcript rows are available for segment transcription.";
+                LogSegmentBatch("No transcript rows were generated for segment transcription.");
+                return;
+            }
+
+            LogSegmentBatch($"Segment transcription automation started for {pendingLines.Count:N0} row(s).");
+            int completedRows = 0;
+
+            for (int index = 0; index < pendingLines.Count; index++) {
+                if (batchCancellationToken.IsCancellationRequested) {
+                    break;
+                }
+
+                if (!IsLoaded || !ReferenceEquals(DataContext, vm)) {
+                    LogSegmentBatch("Segment transcription stopped because the active view context changed.");
+                    break;
+                }
+
+                if (!vm.IsAudioFileLoaded) {
+                    LogSegmentBatch("Segment transcription stopped because the audio preview is no longer loaded.");
+                    break;
+                }
+
+                FinalizedTranscriptLineViewModel line = pendingLines[index];
+                if (!vm.FinalizedTranscriptLines.Contains(line)) {
+                    continue;
+                }
+
+                vm.StatusMessage = $"Transcribing segment {index + 1} of {pendingLines.Count}...";
+                ScrollTranscriptRowIntoView(line, TranscriptTextColumnIndex);
+
+                var completionSource = new TaskCompletionSource<PlaybackEditAutomationResult>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+
+                if (!TryStartPlaybackEditTranscription(vm, line, completionSource)) {
+                    LogSegmentBatch($"Unable to start segment transcription for row '{line.Timeline}'.");
+                    break;
+                }
+
+                PlaybackEditAutomationResult result = await completionSource.Task;
+
+                if (batchCancellationToken.IsCancellationRequested) {
+                    LogSegmentBatch("Segment transcription canceled while waiting for the current row to stop.");
+                    break;
+                }
+
+                if (result.Failure is not null) {
+                    LogSegmentBatch(
+                        $"Segment transcription stopped after row '{line.Timeline}' failed: {result.Failure.Message}");
+                    break;
+                }
+
+                if (result.WasDiscarded) {
+                    LogSegmentBatch(
+                        $"Segment transcription stopped after row '{line.Timeline}' was interrupted.");
+                    break;
+                }
+
+                completedRows++;
+                LogSegmentBatch(
+                    $"Segment row {index + 1}/{pendingLines.Count} completed for '{line.Timeline}'" +
+                    (result.HadFinalText ? "." : " with no finalized text."));
+            }
+
+            if (batchCancellationToken.IsCancellationRequested) {
+                vm.StatusMessage = "Segment transcription canceled.";
+                LogSegmentBatch("Segment transcription automation canceled by user.");
+                ShowCopyToast(
+                    "Segment transcription canceled",
+                    "The automated segment transcription was canceled.",
+                    ToastNotificationType.Info);
+                return;
+            }
+
+            int remainingRows = Math.Max(pendingLines.Count - completedRows, 0);
+            if (remainingRows == 0) {
+                vm.StatusMessage = "Segment transcription completed.";
+                LogSegmentBatch("Segment transcription automation completed for all rows.");
+                ShowCopyToast(
+                    "Segment transcription completed",
+                    "All transcript rows were processed.",
+                    ToastNotificationType.Success);
+                return;
+            }
+
+            vm.StatusMessage = $"Segment transcription stopped with {remainingRows:N0} remaining row(s).";
+            LogSegmentBatch(
+                $"Segment transcription automation stopped with {remainingRows:N0} remaining row(s).");
+            ShowCopyToast(
+                "Segment transcription stopped",
+                $"{remainingRows:N0} row(s) still need transcription.",
+                ToastNotificationType.Warning);
+        }
+        catch (Exception ex) {
+            vm.LogHandledException("transcribe by segments", ex);
+            LogSegmentBatch($"Segment transcription automation failed: {ex.Message}");
+            ShowCopyToast(
+                "Segment transcription failed",
+                ex.Message,
+                ToastNotificationType.Error);
+        }
+        finally {
+            _segmentBatchTranscriptionCts?.Dispose();
+            _segmentBatchTranscriptionCts = null;
+            IsSegmentBatchTranscribing = false;
+            RestoreSegmentBatchInteractionLock();
+            _ = Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+        }
+    }
+
+    private void CancelProcessing_Click(object sender, RoutedEventArgs e) {
+        if (DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        if (IsSegmentBatchTranscribing) {
+            CancelSegmentBatchTranscription(vm);
+            return;
+        }
+
+        if (vm.CancelCommand.CanExecute(null)) {
+            vm.CancelCommand.Execute(null);
+        }
     }
 
     private void CopyFinalizedToClipboard_Click(object sender, RoutedEventArgs e) {
@@ -389,6 +601,7 @@ public partial class MainWindow : Window {
                 ClearTranscriptEditPlaybackLoop();
             }
 
+            UpdatePlaybackEditTranscriptionProgress();
             EnforceTranscriptEditPlaybackLoop();
             EnforcePlaybackEditTranscriptionStop();
             UpdatePlaybackTimelineHighlight();
@@ -443,7 +656,77 @@ public partial class MainWindow : Window {
         }), DispatcherPriority.Background);
     }
 
+    private void ApplySegmentBatchInteractionLock() {
+        SegmentBatchOverlay.Visibility = Visibility.Visible;
+        SegmentBatchOverlay.IsHitTestVisible = true;
+        SegmentBatchCancelButton.IsEnabled = true;
+        SegmentBatchOverlay.UpdateLayout();
+
+        MainContentHost.IsEnabled = false;
+        MainContentHost.IsHitTestVisible = false;
+
+        try {
+            FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+            FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        }
+        catch {
+            // Best-effort edit shutdown.
+        }
+
+        ClearTimelineEditState();
+        ClearTranscriptEditPlaybackLoop();
+        FinalizedTranscriptGrid.SelectedCells.Clear();
+        FinalizedTranscriptGrid.UnselectAllCells();
+        FinalizedTranscriptGrid.CurrentCell = default;
+        Keyboard.ClearFocus();
+
+        _ = Dispatcher.BeginInvoke(new Action(() => {
+            SegmentBatchCancelButton.Focus();
+            SegmentBatchCancelButton.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            SegmentBatchCancelButton.Focus();
+        }), DispatcherPriority.Input);
+    }
+
+    private void RestoreSegmentBatchInteractionLock() {
+        SegmentBatchOverlay.IsHitTestVisible = false;
+        SegmentBatchOverlay.Visibility = Visibility.Collapsed;
+
+        MainContentHost.IsEnabled = true;
+        MainContentHost.IsHitTestVisible = true;
+
+        _ = Dispatcher.BeginInvoke(new Action(() => {
+            FinalizedTranscriptGrid.SelectedCells.Clear();
+            FinalizedTranscriptGrid.UnselectAllCells();
+            FinalizedTranscriptGrid.CurrentCell = default;
+        }), DispatcherPriority.Background);
+    }
+
+    private void CancelSegmentBatchTranscription(MainViewModel vm) {
+        if (!IsSegmentBatchTranscribing) {
+            return;
+        }
+
+        if (_segmentBatchTranscriptionCts is not null && !_segmentBatchTranscriptionCts.IsCancellationRequested) {
+            _segmentBatchTranscriptionCts.Cancel();
+            LogSegmentBatch("Segment transcription cancellation requested.");
+        }
+
+        StopActivePlaybackEditTranscription(
+            vm,
+            pausePlayback: true,
+            reason: "segment batch canceled",
+            discardResults: true);
+    }
+
     private void InsertTranscriptRowBelow_Click(object sender, RoutedEventArgs e) {
+        if (IsSegmentBatchTranscribing) {
+            ShowCopyToast(
+                "Segment transcription in progress",
+                "Wait for the automated row transcription to finish.",
+                ToastNotificationType.Info);
+            return;
+        }
+
         if (sender is not System.Windows.Controls.Button button
             || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
             || DataContext is not MainViewModel vm) {
@@ -504,6 +787,14 @@ public partial class MainWindow : Window {
     }
 
     private void DeleteTranscriptRow_Click(object sender, RoutedEventArgs e) {
+        if (IsSegmentBatchTranscribing) {
+            ShowCopyToast(
+                "Segment transcription in progress",
+                "Wait for the automated row transcription to finish.",
+                ToastNotificationType.Info);
+            return;
+        }
+
         if (sender is not System.Windows.Controls.Button button
             || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
             || DataContext is not MainViewModel vm) {
@@ -565,6 +856,11 @@ public partial class MainWindow : Window {
     }
 
     private void FinalizedTranscriptGrid_BeginningEdit(object sender, DataGridBeginningEditEventArgs e) {
+        if (IsSegmentBatchTranscribing) {
+            e.Cancel = true;
+            return;
+        }
+
         if (DataContext is not MainViewModel vm
             || e.Row?.Item is not FinalizedTranscriptLineViewModel line) {
             StopActivePlaybackEditTranscription(
@@ -574,6 +870,12 @@ public partial class MainWindow : Window {
                 discardResults: true);
             ClearTimelineEditState();
             ClearTranscriptEditPlaybackLoop();
+            return;
+        }
+
+        if (line.IsPlaybackEditTranscribing) {
+            e.Cancel = true;
+            Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
             return;
         }
 
@@ -591,6 +893,8 @@ public partial class MainWindow : Window {
 
         if (string.IsNullOrWhiteSpace(line.Text)
             && TryStartPlaybackEditTranscription(vm, line)) {
+            e.Cancel = true;
+            Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
             return;
         }
 
@@ -626,7 +930,8 @@ public partial class MainWindow : Window {
                 pausePlayback: true,
                 reason: e.EditAction == DataGridEditAction.Cancel
                     ? "transcript edit canceled"
-                    : "transcript edit completed");
+                    : "transcript edit completed",
+                discardResults: e.EditAction == DataGridEditAction.Cancel);
             Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
             return;
         }
@@ -761,6 +1066,21 @@ public partial class MainWindow : Window {
         }
     }
 
+    private void ScrollTranscriptRowIntoView(object targetItem, int columnIndex) {
+        if (columnIndex < 0 || columnIndex >= FinalizedTranscriptGrid.Columns.Count) {
+            return;
+        }
+
+        try {
+            DataGridColumn targetColumn = FinalizedTranscriptGrid.Columns[columnIndex];
+            FinalizedTranscriptGrid.ScrollIntoView(targetItem, targetColumn);
+            FinalizedTranscriptGrid.UpdateLayout();
+        }
+        catch (Exception ex) {
+            _boundViewModel?.LogHandledException("segment transcription row scroll", ex);
+        }
+    }
+
     private bool IsCurrentGridCellEditing() {
         DataGridCellInfo current = FinalizedTranscriptGrid.CurrentCell;
 
@@ -850,6 +1170,10 @@ public partial class MainWindow : Window {
     }
 
     private void SetTranscriptRowActionsLine(FinalizedTranscriptLineViewModel? targetLine) {
+        if (IsSegmentBatchTranscribing || targetLine?.IsPlaybackEditTranscribing == true) {
+            targetLine = null;
+        }
+
         if (ReferenceEquals(_rowActionsLine, targetLine)) {
             return;
         }
@@ -959,7 +1283,10 @@ public partial class MainWindow : Window {
         _timelineEditShouldResumePlayback = false;
     }
 
-    private bool TryStartPlaybackEditTranscription(MainViewModel vm, FinalizedTranscriptLineViewModel line) {
+    private bool TryStartPlaybackEditTranscription(
+        MainViewModel vm,
+        FinalizedTranscriptLineViewModel line,
+        TaskCompletionSource<PlaybackEditAutomationResult>? completionSource = null) {
         if (_playbackTranscriptionSessionFactory is null) {
             LogPlaybackEdit("Playback transcription is unavailable for transcript editing.");
             return false;
@@ -982,7 +1309,7 @@ public partial class MainWindow : Window {
 
         if (!TryResolvePlaybackEditStopOffset(vm, line, out TimeSpan stopOffset)) {
             LogPlaybackEdit(
-                $"Playback transcription for row '{line.Timeline}' was skipped because no playback stop boundary could be resolved.");
+                $"Playback transcription for row '{line.Timeline}' was skipped because the 10-second capture window could not be resolved.");
             return false;
         }
 
@@ -991,11 +1318,11 @@ public partial class MainWindow : Window {
             session,
             line,
             line.StartOffset.Value,
-            stopOffset);
+            stopOffset,
+            completionSource);
 
-        state.FinalHandler = (_, update) => Dispatcher.BeginInvoke(
-            new Action(() => ApplyPlaybackEditTranscriptionFinal(state, update)),
-            DispatcherPriority.Background);
+        SetPlaybackEditTranscriptionVisualState(line, isActive: true, progressPercent: 0, isIndeterminate: false);
+        state.FinalHandler = (_, update) => BufferPlaybackEditTranscriptionFinal(state, update);
         state.FaultHandler = (_, ex) => Dispatcher.BeginInvoke(
             new Action(() => HandlePlaybackEditTranscriptionFault(state, ex)),
             DispatcherPriority.Background);
@@ -1008,6 +1335,7 @@ public partial class MainWindow : Window {
 
         try {
             vm.SeekAudioPreview(state.StartOffset);
+            UpdatePlaybackEditTranscriptionProgress();
             session.StartPlaybackTranscription(selectedModel);
 
             if (!vm.IsAudioPlaying && vm.PlayAudioCommand.CanExecute(null)) {
@@ -1016,10 +1344,12 @@ public partial class MainWindow : Window {
 
             LogPlaybackEdit(
                 $"Started playback transcription for empty row '{line.Timeline}' " +
-                $"until {FormatPlaybackEditOffset(stopOffset)} using model '{selectedModel}'.");
+                $"for exactly {PlaybackEditSegmentDuration.TotalSeconds:F0} seconds " +
+                $"(stop at {FormatPlaybackEditOffset(stopOffset)}) using model '{selectedModel}'.");
             return true;
         }
         catch (Exception ex) {
+            SetPlaybackEditTranscriptionVisualState(line, isActive: false, progressPercent: 0, isIndeterminate: false);
             _activePlaybackEditTranscription = null;
             DetachPlaybackEditTranscriptionState(state);
             _ = DisposePlaybackEditTranscriptionSessionAsync(session);
@@ -1040,29 +1370,48 @@ public partial class MainWindow : Window {
             return false;
         }
 
-        List<FinalizedTranscriptLineViewModel> displayedLines = GetDisplayedTranscriptLines();
-        int currentIndex = displayedLines.IndexOf(line);
-
-        if (currentIndex >= 0) {
-            FinalizedTranscriptLineViewModel? nextLine = FindNeighborTimelineLine(displayedLines, currentIndex, searchBackward: false);
-            if (TryGetLineTimelineOffset(nextLine, out TimeSpan nextOffset) && nextOffset > startOffset) {
-                stopOffset = nextOffset;
-                return true;
-            }
-        }
-
-        if (line.EndOffset is TimeSpan endOffset && endOffset > startOffset) {
-            stopOffset = endOffset;
-            return true;
-        }
+        stopOffset = startOffset + PlaybackEditSegmentDuration;
 
         double audioDurationSeconds = Math.Max(vm.AudioSeekMaximumSeconds, 0);
-        if (audioDurationSeconds > startOffset.TotalSeconds) {
-            stopOffset = TimeSpan.FromSeconds(audioDurationSeconds);
+        if (audioDurationSeconds > 0) {
+            TimeSpan audioDuration = TimeSpan.FromSeconds(audioDurationSeconds);
+            if (audioDuration <= startOffset) {
+                return false;
+            }
+
+            if (stopOffset > audioDuration) {
+                stopOffset = audioDuration;
+            }
+
             return true;
         }
 
-        return false;
+        return stopOffset > startOffset;
+    }
+
+    private void UpdatePlaybackEditTranscriptionProgress() {
+        if (_boundViewModel is null || _activePlaybackEditTranscription is null) {
+            return;
+        }
+
+        PlaybackEditTranscriptionState state = _activePlaybackEditTranscription;
+        if (Volatile.Read(ref state.StopRequestedFlag) != 0) {
+            return;
+        }
+
+        double totalSeconds = Math.Max((state.StopOffset - state.StartOffset).TotalSeconds, 0.001d);
+        double currentSeconds = Math.Max(_boundViewModel.AudioSeekPositionSeconds, 0);
+        double elapsedSeconds = Math.Clamp(
+            currentSeconds - state.StartOffset.TotalSeconds,
+            0,
+            totalSeconds);
+        double progressPercent = (elapsedSeconds / totalSeconds) * 100d;
+
+        SetPlaybackEditTranscriptionVisualState(
+            state.Line,
+            isActive: true,
+            progressPercent: progressPercent,
+            isIndeterminate: false);
     }
 
     private void EnforcePlaybackEditTranscriptionStop() {
@@ -1087,7 +1436,7 @@ public partial class MainWindow : Window {
         StopActivePlaybackEditTranscription(
             _boundViewModel,
             pausePlayback: true,
-            reason: "playback reached row boundary");
+            reason: "playback reached 10-second capture boundary");
     }
 
     private void StopActivePlaybackEditTranscription(
@@ -1123,6 +1472,18 @@ public partial class MainWindow : Window {
             $"Stopping playback transcription for row '{state.Line.Timeline}' ({reason}).");
 
         try {
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+                SetPlaybackEditTranscriptionVisualState(
+                    state.Line,
+                    isActive: true,
+                    progressPercent: 100,
+                    isIndeterminate: true)));
+
+            if (pausePlayback && vm is not null) {
+                PausePlaybackForPlaybackEditStop(vm);
+                await Task.Delay(PlaybackEditStopDrainDelay).ConfigureAwait(false);
+            }
+
             await state.Session.StopPlaybackTranscriptionAsync().ConfigureAwait(false);
         }
         catch (Exception ex) {
@@ -1140,24 +1501,51 @@ public partial class MainWindow : Window {
         }
     }
 
-    private void ApplyPlaybackEditTranscriptionFinal(
+    private void BufferPlaybackEditTranscriptionFinal(
         PlaybackEditTranscriptionState state,
         PlaybackTranscriptionUpdate update) {
-        if (!ReferenceEquals(_activePlaybackEditTranscription, state) || state.IgnoreResults) {
-            return;
-        }
-
         string text = update.Text?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(text)) {
             return;
         }
 
-        state.FinalSegments.Add(text);
-        state.Line.Text = string.Join(Environment.NewLine, state.FinalSegments);
+        lock (state.SyncRoot) {
+            if (state.IgnoreResults) {
+                return;
+            }
+
+            state.FinalSegments.Add(text);
+        }
 
         LogPlaybackEdit(
-            $"Applied playback transcription final chunk {update.SequenceIndex ?? state.FinalSegments.Count - 1} " +
-            $"to row '{state.Line.Timeline}'.");
+            $"Buffered playback transcription final chunk {update.SequenceIndex ?? state.FinalSegments.Count - 1} " +
+            $"for row '{state.Line.Timeline}'.");
+
+        _ = Dispatcher.BeginInvoke(
+            new Action(() => ApplyBufferedPlaybackEditTranscription(state)),
+            DispatcherPriority.Background);
+    }
+
+    private void ApplyBufferedPlaybackEditTranscription(PlaybackEditTranscriptionState state) {
+        if (state.IgnoreResults) {
+            return;
+        }
+
+        string mergedText;
+
+        lock (state.SyncRoot) {
+            if (state.FinalSegments.Count == 0) {
+                return;
+            }
+
+            mergedText = string.Join(Environment.NewLine, state.FinalSegments);
+        }
+
+        state.Line.Text = mergedText;
+
+        LogPlaybackEdit(
+            $"Applied buffered playback transcription text to row '{state.Line.Timeline}' " +
+            $"({mergedText.Length:N0} chars).");
     }
 
     private void HandlePlaybackEditTranscriptionFault(
@@ -1167,6 +1555,7 @@ public partial class MainWindow : Window {
             return;
         }
 
+        state.Failure = ex;
         _boundViewModel?.LogHandledException("playback edit transcription", ex);
         LogPlaybackEdit(
             $"Playback transcription failed for row '{state.Line.Timeline}': {ex.Message}");
@@ -1182,11 +1571,28 @@ public partial class MainWindow : Window {
         MainViewModel? vm,
         bool pausePlayback,
         bool discardResults) {
+        if (!discardResults) {
+            ApplyBufferedPlaybackEditTranscription(state);
+        }
+
         DetachPlaybackEditTranscriptionState(state);
 
         if (ReferenceEquals(_activePlaybackEditTranscription, state)) {
             _activePlaybackEditTranscription = null;
         }
+
+        SetPlaybackEditTranscriptionVisualState(
+            state.Line,
+            isActive: false,
+            progressPercent: 0,
+            isIndeterminate: false);
+        Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+
+        state.CompletionSource?.TrySetResult(new PlaybackEditAutomationResult(
+            state.Line,
+            WasDiscarded: discardResults,
+            HadFinalText: state.FinalSegments.Count > 0,
+            Failure: state.Failure));
 
         if (pausePlayback && vm is not null) {
             try {
@@ -1237,8 +1643,37 @@ public partial class MainWindow : Window {
         }
     }
 
+    private static void SetPlaybackEditTranscriptionVisualState(
+        FinalizedTranscriptLineViewModel line,
+        bool isActive,
+        double progressPercent,
+        bool isIndeterminate) {
+        line.IsPlaybackEditTranscribing = isActive;
+        line.PlaybackEditProgressPercent = isActive ? progressPercent : 0;
+        line.IsPlaybackEditProgressIndeterminate = isActive && isIndeterminate;
+    }
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null) {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
     private void LogPlaybackEdit(string message) {
         _processLogService?.Log("PlaybackEdit", message);
+    }
+
+    private void LogSegmentBatch(string message) {
+        _processLogService?.Log("SegmentBatch", message);
+    }
+
+    private static void PausePlaybackForPlaybackEditStop(MainViewModel vm) {
+        try {
+            if (vm.PauseAudioCommand.CanExecute(null)) {
+                vm.PauseAudioCommand.Execute(null);
+            }
+        }
+        catch (Exception ex) {
+            vm.LogHandledException("playback edit transcription pause", ex);
+        }
     }
 
     private static string FormatPlaybackEditOffset(TimeSpan value) {
@@ -1884,11 +2319,13 @@ public partial class MainWindow : Window {
             PlaybackTranscriptionSession session,
             FinalizedTranscriptLineViewModel line,
             TimeSpan startOffset,
-            TimeSpan stopOffset) {
+            TimeSpan stopOffset,
+            TaskCompletionSource<PlaybackEditAutomationResult>? completionSource) {
             Session = session;
             Line = line;
             StartOffset = startOffset;
             StopOffset = stopOffset;
+            CompletionSource = completionSource;
         }
 
         public PlaybackTranscriptionSession Session { get; }
@@ -1899,14 +2336,27 @@ public partial class MainWindow : Window {
 
         public TimeSpan StopOffset { get; }
 
+        public object SyncRoot { get; } = new();
+
         public List<string> FinalSegments { get; } = new();
+
+        public TaskCompletionSource<PlaybackEditAutomationResult>? CompletionSource { get; }
 
         public int StopRequestedFlag;
 
         public bool IgnoreResults { get; set; }
 
+        public Exception? Failure { get; set; }
+
         public EventHandler<PlaybackTranscriptionUpdate>? FinalHandler { get; set; }
 
         public EventHandler<Exception>? FaultHandler { get; set; }
     }
+
+    private sealed record PlaybackEditAutomationResult(
+        FinalizedTranscriptLineViewModel Line,
+        bool WasDiscarded,
+        bool HadFinalText,
+        Exception? Failure
+    );
 }

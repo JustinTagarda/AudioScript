@@ -49,15 +49,78 @@ public sealed class PlaybackAudioTranscriptionServiceTests {
         AssertFormField(handler.LastRequestBody, "temperature");
         AssertFormField(handler.LastRequestBody, "stream");
         AssertFormField(handler.LastRequestBody, "prompt");
+        AssertFormField(handler.LastRequestBody, "language");
+        Assert.Contains("ceb", handler.LastRequestBody, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("audio/wav", handler.LastRequestBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("chunking_strategy", handler.LastRequestBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("include[]", handler.LastRequestBody, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TranscribePcmChunkAsync_RetriesWithoutLanguage_WhenLanguageHintIsRejected() {
+        int requestCount = 0;
+        List<string> bodies = new();
+
+        var handler = new CapturingHttpMessageHandler(async (request, cancellationToken) => {
+            string body = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            bodies.Add(body);
+            requestCount++;
+
+            if (requestCount == 1) {
+                return new HttpResponseMessage(HttpStatusCode.BadRequest) {
+                    Content = new StringContent(
+                        "{\"error\":{\"message\":\"Unsupported language value for this model.\"}}",
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    "{\"text\":\"final text\"}",
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        });
+
+        using var httpClient = new HttpClient(handler);
+        var service = new PlaybackAudioTranscriptionService(
+            new AudioStandardizer(),
+            httpClient,
+            new OpenAiTranscriptionOptions {
+                ApiKey = "sk-test",
+                Endpoint = new Uri("https://api.openai.com/v1/audio/transcriptions"),
+                TimeoutSeconds = 30,
+                Prompt = OpenAiTranscriptionOptions.DefaultPrompt,
+                PlaybackLanguageHint = "ceb",
+            },
+            new ProcessLogService(),
+            new OpenAiTranscriptionResponseParser());
+
+        string text = await service.TranscribePcmChunkAsync(
+            new byte[3200],
+            new WaveFormat(16000, 16, 1),
+            OpenAiTranscriptionModelCatalog.Gpt4oMiniTranscribe,
+            CancellationToken.None);
+
+        Assert.Equal("final text", text);
+        Assert.Equal(2, requestCount);
+        AssertFormField(bodies[0], "language");
+        AssertNoFormField(bodies[1], "language");
     }
 
     private static void AssertFormField(string body, string fieldName) {
         bool quoted = body.Contains($"name=\"{fieldName}\"", StringComparison.OrdinalIgnoreCase);
         bool unquoted = body.Contains($"name={fieldName}", StringComparison.OrdinalIgnoreCase);
         Assert.True(quoted || unquoted, $"Form field '{fieldName}' was not found in multipart body.");
+    }
+
+    private static void AssertNoFormField(string body, string fieldName) {
+        bool quoted = body.Contains($"name=\"{fieldName}\"", StringComparison.OrdinalIgnoreCase);
+        bool unquoted = body.Contains($"name={fieldName}", StringComparison.OrdinalIgnoreCase);
+        Assert.False(quoted || unquoted, $"Form field '{fieldName}' was unexpectedly found in multipart body.");
     }
 
     private sealed class CapturingHttpMessageHandler : HttpMessageHandler {

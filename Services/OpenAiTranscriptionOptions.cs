@@ -13,5 +13,7 @@ public sealed class OpenAiTranscriptionOptions {
 
     public string Prompt { get; set; } = DefaultPrompt;
 
+    public string PlaybackLanguageHint { get; set; } = "ceb";
+
     public double LowConfidenceLogprobThreshold { get; set; } = -1.0;
 }

@@ -9,6 +9,9 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     private string _text;
     private bool _isPlaybackTimelineMatch;
     private bool _areRowActionsVisible;
+    private bool _isPlaybackEditTranscribing;
+    private double _playbackEditProgressPercent;
+    private bool _isPlaybackEditProgressIndeterminate;
 
     public FinalizedTranscriptLineViewModel(
         TimeSpan? startOffset,
@@ -98,6 +101,46 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
             }
 
             _areRowActionsVisible = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsPlaybackEditTranscribing {
+        get => _isPlaybackEditTranscribing;
+        set {
+            if (_isPlaybackEditTranscribing == value) {
+                return;
+            }
+
+            _isPlaybackEditTranscribing = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public double PlaybackEditProgressPercent {
+        get => _playbackEditProgressPercent;
+        set {
+            double normalized = double.IsFinite(value)
+                ? Math.Clamp(value, 0, 100)
+                : 0;
+
+            if (Math.Abs(_playbackEditProgressPercent - normalized) < 0.001d) {
+                return;
+            }
+
+            _playbackEditProgressPercent = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsPlaybackEditProgressIndeterminate {
+        get => _isPlaybackEditProgressIndeterminate;
+        set {
+            if (_isPlaybackEditProgressIndeterminate == value) {
+                return;
+            }
+
+            _isPlaybackEditProgressIndeterminate = value;
             OnPropertyChanged();
         }
     }
