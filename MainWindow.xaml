@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Audio Transcription"
+        Icon="pack://application:,,,/Assets/AudioTranscript.ico"
         Height="820"
         Width="1280"
         MinHeight="720"
@@ -649,6 +650,115 @@
                                       Style="{StaticResource ModernComboBoxStyle}"
                                       ItemContainerStyle="{StaticResource ModernComboBoxItemStyle}"/>
 
+                            <TextBlock Text="Transcription"
+                                       Style="{StaticResource CaptionTextStyle}"
+                                       Margin="0,14,0,6"/>
+                            <Border Background="#FFFDFEFF"
+                                    BorderBrush="#FFD2E2E7"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Button Grid.Row="0"
+                                            Grid.Column="0"
+                                            Content="Open File..."
+                                            Style="{StaticResource PlaybackSecondaryButtonStyle}"
+                                            Height="33"
+                                            MinHeight="33"
+                                            Command="{Binding OpenAudioFileCommand}"/>
+                                    <Button x:Name="TranscribeButton"
+                                            Grid.Row="0"
+                                            Grid.Column="1"
+                                            Style="{StaticResource PlaybackActionButtonStyle}"
+                                            FontSize="12"
+                                            Height="33"
+                                            MinHeight="33"
+                                            Command="{Binding TranscribeFileCommand}">
+                                        <TextBlock Text="Transcribe&#x0A;File"
+                                                   LineStackingStrategy="BlockLineHeight"
+                                                   LineHeight="12"
+                                                   TextAlignment="Center"/>
+                                    </Button>
+                                    <Button Grid.Row="1"
+                                            Grid.Column="0"
+                                            Height="33"
+                                            MinHeight="33"
+                                            Click="CancelProcessing_Click">
+                                        <Button.Style>
+                                            <Style TargetType="{x:Type Button}"
+                                                   BasedOn="{StaticResource PlaybackActionButtonStyle}">
+                                                <Setter Property="IsEnabled"
+                                                        Value="False"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFileTranscribing}"
+                                                                 Value="True">
+                                                        <Setter Property="IsEnabled"
+                                                                Value="True"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                 Value="True">
+                                                        <Setter Property="IsEnabled"
+                                                                Value="True"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <TextBlock Text="Cancel"
+                                                   TextAlignment="Center"/>
+                                    </Button>
+                                    <Button x:Name="TranscribeBySegmentsButton"
+                                            Grid.Row="0"
+                                            Grid.Column="2"
+                                            FontSize="12"
+                                            Height="33"
+                                            MinHeight="33"
+                                            IsEnabled="{Binding IsSegmentTranscriptionEnabled}"
+                                            Click="TranscribeBySegments_Click">
+                                        <Button.Style>
+                                            <Style TargetType="{x:Type Button}"
+                                                   BasedOn="{StaticResource PlaybackActionButtonStyle}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                 Value="True">
+                                                        <Setter Property="IsEnabled"
+                                                                Value="False"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <TextBlock Text="Transcribe&#x0A;By Segments"
+                                                   LineStackingStrategy="BlockLineHeight"
+                                                   LineHeight="12"
+                                                   TextAlignment="Center"/>
+                                    </Button>
+                                    <Button Grid.Row="1"
+                                            Grid.Column="1"
+                                            Content="Clear"
+                                            Style="{StaticResource PlaybackActionButtonStyle}"
+                                            Height="33"
+                                            MinHeight="33"
+                                            Command="{Binding ClearCommand}"/>
+                                    <Button Grid.Row="1"
+                                            Grid.Column="2"
+                                            Style="{StaticResource PlaybackActionButtonStyle}"
+                                            FontSize="12"
+                                            Height="33"
+                                            MinHeight="33"
+                                            IsEnabled="{Binding IsOpenAiSettingsEnabled}"
+                                            Content="OpenAI API Key"
+                                            Click="OpenOpenAiSettings_Click"/>
+                                </Grid>
+                            </Border>
+
                             <TextBlock Text="Sessions"
                                        Style="{StaticResource CaptionTextStyle}"
                                        Margin="0,14,0,6"/>
@@ -717,120 +827,6 @@
                                                 Command="{Binding DeleteSelectedSessionCommand}"/>
                                     </StackPanel>
                                 </StackPanel>
-                            </Border>
-
-                            <TextBlock Text="Transcription"
-                                       Style="{StaticResource CaptionTextStyle}"
-                                       Margin="0,14,0,6"/>
-                            <Border Background="#FFFDFEFF"
-                                    BorderBrush="#FFD2E2E7"
-                                    BorderThickness="1"
-                                    CornerRadius="10"
-                                    Padding="10">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="Auto"/>
-                                    </Grid.RowDefinitions>
-                                    <Button Grid.Row="0"
-                                            Grid.Column="0"
-                                            Content="Open File..."
-                                            Style="{StaticResource PlaybackSecondaryButtonStyle}"
-                                            Height="33"
-                                            MinHeight="33"
-                                            Command="{Binding OpenAudioFileCommand}"/>
-                                    <Button x:Name="TranscribeButton"
-                                            Grid.Row="0"
-                                            Grid.Column="1"
-                                            Style="{StaticResource PlaybackActionButtonStyle}"
-                                            FontSize="12"
-                                            Height="33"
-                                            MinHeight="33"
-                                            Command="{Binding TranscribeFileCommand}">
-                                        <TextBlock Text="Transcribe&#x0A;File"
-                                                   LineStackingStrategy="BlockLineHeight"
-                                                   LineHeight="12"
-                                                   TextAlignment="Center"/>
-                                    </Button>
-                                    <Button Grid.Row="0"
-                                            Grid.Column="2"
-                                            Content="Clear"
-                                            Style="{StaticResource PlaybackActionButtonStyle}"
-                                            Height="33"
-                                            MinHeight="33"
-                                            Command="{Binding ClearCommand}"/>
-                                    <Button Grid.Row="1"
-                                            Grid.Column="0"
-                                            Height="33"
-                                            MinHeight="33"
-                                            Click="CancelProcessing_Click">
-                                        <Button.Style>
-                                            <Style TargetType="{x:Type Button}"
-                                                   BasedOn="{StaticResource PlaybackActionButtonStyle}">
-                                                <Setter Property="IsEnabled"
-                                                        Value="False"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsFileTranscribing}"
-                                                                 Value="True">
-                                                        <Setter Property="IsEnabled"
-                                                                Value="True"/>
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                 Value="True">
-                                                        <Setter Property="IsEnabled"
-                                                                Value="True"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Button.Style>
-                                        <TextBlock Text="Cancel"
-                                                   TextAlignment="Center"/>
-                                    </Button>
-                                    <Button x:Name="TranscribeBySegmentsButton"
-                                            Grid.Row="1"
-                                            Grid.Column="1"
-                                            FontSize="12"
-                                            Height="33"
-                                            MinHeight="33"
-                                            Click="TranscribeBySegments_Click">
-                                        <Button.Style>
-                                            <Style TargetType="{x:Type Button}"
-                                                   BasedOn="{StaticResource PlaybackActionButtonStyle}">
-                                                <Setter Property="IsEnabled"
-                                                        Value="False"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsEnabled, ElementName=TranscribeButton}"
-                                                                 Value="True">
-                                                        <Setter Property="IsEnabled"
-                                                                Value="True"/>
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                 Value="True">
-                                                        <Setter Property="IsEnabled"
-                                                                Value="False"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Button.Style>
-                                        <TextBlock Text="Transcribe&#x0A;By Segments"
-                                                   LineStackingStrategy="BlockLineHeight"
-                                                   LineHeight="12"
-                                                   TextAlignment="Center"/>
-                                    </Button>
-                                    <Button Grid.Row="1"
-                                            Grid.Column="2"
-                                            Content="API Key"
-                                            Style="{StaticResource PlaybackActionButtonStyle}"
-                                            Height="33"
-                                            MinHeight="33"
-                                            IsEnabled="{Binding IsOpenAiSettingsEnabled}"
-                                            Click="OpenOpenAiSettings_Click"/>
-                                </Grid>
                             </Border>
 
                             <TextBlock Text="Audio File"
@@ -1410,7 +1406,7 @@
             <Grid>
                 <Border HorizontalAlignment="Center"
                         VerticalAlignment="Center"
-                        Width="320"
+                        Width="360"
                         Background="#FFFDFEFF"
                         BorderBrush="#FFD2E2E7"
                         BorderThickness="1"
@@ -1440,14 +1436,25 @@
                                    Foreground="{StaticResource SecondaryTextBrush}"
                                    TextAlignment="Center"
                                    TextWrapping="Wrap"/>
-                        <Button x:Name="SegmentBatchCancelButton"
-                                Content="Cancel"
-                                Width="110"
-                                HorizontalAlignment="Center"
-                                Margin="0,16,0,0"
-                                Style="{StaticResource PlaybackActionButtonStyle}"
-                                IsEnabled="True"
-                                Click="CancelProcessing_Click"/>
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      Content="Mute"
+                                      Style="{StaticResource ToolbarCheckBoxStyle}"
+                                      IsChecked="{Binding IsPlaybackMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      VerticalAlignment="Center"/>
+                            <Button x:Name="SegmentBatchCancelButton"
+                                    Grid.Column="1"
+                                    Content="Cancel"
+                                    Width="110"
+                                    HorizontalAlignment="Right"
+                                    Style="{StaticResource PlaybackActionButtonStyle}"
+                                    IsEnabled="True"
+                                    Click="CancelProcessing_Click"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
             </Grid>

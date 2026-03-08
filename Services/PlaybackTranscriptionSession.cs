@@ -317,7 +317,7 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
                 _captureFormat = e.WaveFormat;
             }
             else if (!WaveFormatsMatch(_captureFormat, e.WaveFormat)) {
-                _captureFault ??= new InvalidOperationException("Playback loopback capture format changed during transcription.");
+                _captureFault ??= new InvalidOperationException("Playback audio capture format changed during transcription.");
                 return;
             }
 
@@ -348,7 +348,7 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
         }
 
         if (captureFault is not null) {
-            throw new InvalidOperationException("Playback loopback capture failed.", captureFault);
+            throw new InvalidOperationException("Playback audio capture failed.", captureFault);
         }
     }
 
@@ -420,7 +420,7 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             _captureService.StopCapture();
         }
         catch (Exception ex) {
-            Log($"Playback loopback capture stop failed: {ex.Message}");
+            Log($"Playback audio capture stop failed: {ex.Message}");
         }
     }
 

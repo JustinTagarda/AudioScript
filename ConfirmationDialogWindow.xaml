@@ -5,10 +5,11 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Confirm Action"
-        Width="360"
-        Height="170"
+        Icon="pack://application:,,,/Assets/AudioTranscript.ico"
+        Width="420"
         MinWidth="360"
         MinHeight="170"
+        SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
@@ -35,19 +36,31 @@
                         Background="#FFD7A14B"
                         CornerRadius="3" />
 
-                <StackPanel Grid.Column="1"
-                            Margin="10,0,0,0">
+                <Grid Grid.Column="1"
+                      Margin="10,0,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
                     <TextBlock x:Name="DialogTitleText"
+                               Grid.Row="0"
                                FontFamily="Bahnschrift"
                                FontSize="18"
                                Foreground="#FF15232D" />
-                    <TextBlock x:Name="DialogMessageText"
-                               Margin="0,8,0,0"
-                               FontFamily="Segoe UI Variable Text"
-                               FontSize="11"
-                               Foreground="#FF49616F"
-                               TextWrapping="Wrap" />
-                </StackPanel>
+                    <ScrollViewer Grid.Row="1"
+                                  Margin="0,8,0,0"
+                                  MaxHeight="180"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto"
+                                  CanContentScroll="False">
+                        <TextBlock x:Name="DialogMessageText"
+                                   FontFamily="Segoe UI Variable Text"
+                                   FontSize="11"
+                                   Foreground="#FF49616F"
+                                   TextWrapping="Wrap" />
+                    </ScrollViewer>
+                </Grid>
             </Grid>
         </Border>
 

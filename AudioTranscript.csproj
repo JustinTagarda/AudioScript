@@ -7,6 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Assets\AudioTranscript.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +18,10 @@
     <Compile Remove="AudioTranscript.Tests\\**\\*.cs" />
     <EmbeddedResource Remove="AudioTranscript.Tests\\**\\*" />
     <Page Remove="AudioTranscript.Tests\\**\\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\AudioTranscript.ico" />
   </ItemGroup>
 
 </Project>

@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 using AudioTranscript.Audio;
 using AudioTranscript.Services;
 using AudioTranscript.ViewModels;
@@ -16,6 +17,10 @@ public partial class App : System.Windows.Application {
     private EventWaitHandle? _activateEvent;
     private CancellationTokenSource? _activationListenerCts;
     private Task? _activationListenerTask;
+    private CancellationTokenSource? _applicationVersionCheckCts;
+    private Task? _applicationVersionCheckTask;
+    private ProcessLogService? _processLogService;
+    private int _requiredUpdateDialogShown;
 
     private HttpClient? _httpClient;
     private MainViewModel? _mainViewModel;
@@ -55,6 +60,7 @@ public partial class App : System.Windows.Application {
         _httpClient = new HttpClient();
         _openAiApiKeyValidationService = new OpenAiApiKeyValidationService(_httpClient);
         var processLogService = new ProcessLogService();
+        _processLogService = processLogService;
         var responseParser = new OpenAiTranscriptionResponseParser();
         var audioStandardizer = new AudioStandardizer();
         var audioChunkPlanner = new AudioChunkPlanner();
@@ -98,7 +104,7 @@ public partial class App : System.Windows.Application {
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
-                new WasapiLoopbackCaptureService(),
+                new PlaybackAudioCaptureService(audioPlaybackService),
                 playbackTranscriptionService,
                 processLogService,
                 playbackEditTranscriptionOptions),
@@ -110,6 +116,12 @@ public partial class App : System.Windows.Application {
 
         MainWindow = mainWindow;
         mainWindow.Show();
+
+        _applicationVersionCheckCts = new CancellationTokenSource();
+        var applicationVersionCheckService = new ApplicationVersionCheckService(_httpClient, processLogService);
+        _applicationVersionCheckTask = RunApplicationVersionCheckAsync(
+            applicationVersionCheckService,
+            _applicationVersionCheckCts.Token);
     }
 
     protected override void OnExit(System.Windows.ExitEventArgs e) {
@@ -117,9 +129,9 @@ public partial class App : System.Windows.Application {
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
         finally {
-            _httpClient?.Dispose();
-
+            _applicationVersionCheckCts?.Cancel();
             _activationListenerCts?.Cancel();
+            _httpClient?.Dispose();
 
             try {
                 _activateEvent?.Set();
@@ -140,6 +152,9 @@ public partial class App : System.Windows.Application {
             _activationListenerTask = null;
             _activationListenerCts?.Dispose();
             _activationListenerCts = null;
+            _applicationVersionCheckTask = null;
+            _applicationVersionCheckCts?.Dispose();
+            _applicationVersionCheckCts = null;
             _activateEvent?.Dispose();
             _activateEvent = null;
 
@@ -202,6 +217,75 @@ public partial class App : System.Windows.Application {
         MainWindow.Topmost = true;
         MainWindow.Topmost = false;
         MainWindow.Focus();
+    }
+
+    private async Task RunApplicationVersionCheckAsync(
+        ApplicationVersionCheckService applicationVersionCheckService,
+        CancellationToken cancellationToken) {
+        try {
+            ApplicationVersionCheckResult result = await applicationVersionCheckService.CheckAsync(cancellationToken);
+            if (cancellationToken.IsCancellationRequested || !result.IsExpired) {
+                return;
+            }
+
+            DispatcherOperation<Task> shutdownOperation = Dispatcher.InvokeAsync(
+                () => HandleRequiredUpdateAsync(result),
+                DispatcherPriority.Normal);
+            await shutdownOperation.Task.Unwrap();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            // Ignore shutdown cancellation.
+        }
+        catch (Exception ex) {
+            _processLogService?.Log("VersionCheck", $"Application version check failed unexpectedly: {ex.Message}");
+        }
+    }
+
+    private async Task HandleRequiredUpdateAsync(ApplicationVersionCheckResult result) {
+        if (Interlocked.Exchange(ref _requiredUpdateDialogShown, 1) != 0) {
+            return;
+        }
+
+        try {
+            CloseAuxiliaryWindows();
+
+            if (MainWindow is AudioTranscript.MainWindow mainWindow) {
+                await mainWindow.PrepareForRequiredUpdateShutdownAsync();
+            }
+            else {
+                _mainViewModel?.PrepareForRequiredUpdateShutdown();
+            }
+
+            var dialog = new UpdateRequiredDialogWindow(result.UpdateMessage);
+
+            if (MainWindow is not null && MainWindow.IsLoaded) {
+                dialog.Owner = MainWindow;
+            }
+            else {
+                dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            }
+
+            dialog.ShowDialog();
+        }
+        finally {
+            Shutdown();
+        }
+    }
+
+    private void CloseAuxiliaryWindows() {
+        Window[] windows = Windows
+            .Cast<Window>()
+            .Where(window => !ReferenceEquals(window, MainWindow))
+            .ToArray();
+
+        foreach (Window window in windows) {
+            try {
+                window.Close();
+            }
+            catch {
+                // Ignore auxiliary window close failures.
+            }
+        }
     }
 
     private static void NotifyRunningInstance() {

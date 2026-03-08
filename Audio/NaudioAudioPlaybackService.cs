@@ -3,13 +3,16 @@ using NAudio.Wave;
 
 namespace AudioTranscript.Audio;
 
-public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
+public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybackAudioTapSource {
     private readonly object _sync = new();
     private WaveOutEvent? _output;
     private AudioFileReader? _reader;
     private string? _loadedFilePath;
+    private bool _isMuted;
 
     public event EventHandler? PlaybackStateChanged;
+    public event EventHandler<PlaybackAudioFrameEventArgs>? PlaybackAudioFrameProduced;
+    public event EventHandler<Exception>? PlaybackAudioFaulted;
 
     public string? LoadedFilePath {
         get {
@@ -27,11 +30,43 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
         }
     }
 
+    public WaveFormat? PlaybackAudioFormat {
+        get {
+            lock (_sync) {
+                return _reader?.WaveFormat;
+            }
+        }
+    }
+
     public bool IsPlaying {
         get {
             lock (_sync) {
                 return _output?.PlaybackState == PlaybackState.Playing;
             }
+        }
+    }
+
+    public bool IsMuted {
+        get {
+            lock (_sync) {
+                return _isMuted;
+            }
+        }
+        set {
+            WaveOutEvent? output;
+            bool shouldApply;
+
+            lock (_sync) {
+                shouldApply = _isMuted != value;
+                if (!shouldApply) {
+                    return;
+                }
+
+                _isMuted = value;
+                output = _output;
+            }
+
+            ApplyMuteState(output, value);
         }
     }
 
@@ -63,8 +98,13 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
         }
 
         var reader = new AudioFileReader(fullPath);
+        var tappedProvider = new TappedWaveProvider(
+            reader,
+            OnPlaybackAudioFrameProduced,
+            OnPlaybackAudioFaulted);
         var output = new WaveOutEvent();
-        output.Init(reader);
+        output.Init(tappedProvider);
+        ApplyMuteState(output, IsMuted);
         output.PlaybackStopped += OnPlaybackStopped;
 
         WaveOutEvent? previousOutput;
@@ -216,5 +256,56 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService {
 
         output?.Dispose();
         reader?.Dispose();
+    }
+
+    private void OnPlaybackAudioFrameProduced(byte[] buffer, WaveFormat waveFormat) {
+        PlaybackAudioFrameProduced?.Invoke(this, new PlaybackAudioFrameEventArgs(buffer, waveFormat));
+    }
+
+    private void OnPlaybackAudioFaulted(Exception ex) {
+        PlaybackAudioFaulted?.Invoke(this, ex);
+    }
+
+    private static void ApplyMuteState(WaveOutEvent? output, bool isMuted) {
+        if (output is null) {
+            return;
+        }
+
+        output.Volume = isMuted ? 0f : 1f;
+    }
+
+    private sealed class TappedWaveProvider : IWaveProvider {
+        private readonly IWaveProvider _source;
+        private readonly Action<byte[], WaveFormat> _frameHandler;
+        private readonly Action<Exception> _faultHandler;
+
+        public TappedWaveProvider(
+            IWaveProvider source,
+            Action<byte[], WaveFormat> frameHandler,
+            Action<Exception> faultHandler) {
+            _source = source;
+            _frameHandler = frameHandler;
+            _faultHandler = faultHandler;
+        }
+
+        public WaveFormat WaveFormat => _source.WaveFormat;
+
+        public int Read(byte[] buffer, int offset, int count) {
+            try {
+                int bytesRead = _source.Read(buffer, offset, count);
+                if (bytesRead <= 0) {
+                    return bytesRead;
+                }
+
+                byte[] copied = new byte[bytesRead];
+                Buffer.BlockCopy(buffer, offset, copied, 0, bytesRead);
+                _frameHandler(copied, WaveFormat);
+                return bytesRead;
+            }
+            catch (Exception ex) {
+                _faultHandler(ex);
+                throw;
+            }
+        }
     }
 }

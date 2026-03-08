@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="OpenAI Settings"
+        Icon="pack://application:,,,/Assets/AudioTranscript.ico"
         Width="560"
         Height="280"
         MinWidth="560"

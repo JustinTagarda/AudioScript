@@ -41,6 +41,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private bool _isCurrentSessionAudioMissing;
     private string _loadedAudioFilePath = string.Empty;
     private bool _isAudioPlaying;
+    private bool _isPlaybackMuted;
     private double _audioSeekMaximumSeconds;
     private double _audioSeekPositionSeconds;
     private string _audioElapsedText = "00:00";
@@ -96,6 +97,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
         _isAudioPlaying = _audioPlaybackService.IsPlaying;
+        _isPlaybackMuted = _audioPlaybackService.IsMuted;
 
         _audioTimelineTimer = new DispatcherTimer {
             Interval = TimeSpan.FromMilliseconds(250),
@@ -109,7 +111,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _sessionAutosaveTimer.Tick += OnSessionAutosaveTimerTick;
 
         SelectedEngine = Engines.FirstOrDefault(engine =>
-            string.Equals(engine.Id, OpenAiTranscriptionModelCatalog.Gpt4oMiniTranscribe, StringComparison.OrdinalIgnoreCase))
+            string.Equals(engine.Id, OpenAiTranscriptionModelCatalog.Gpt4oTranscribe, StringComparison.OrdinalIgnoreCase))
             ?? Engines.FirstOrDefault();
 
         AppendLogCore("Application initialized.");
@@ -124,7 +126,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         if (Engines.Count > 0) {
             string available = string.Join(", ", Engines.Select(model => model.DisplayName));
-            AppendLogCore($"Available OpenAI models: {available}.");
+            AppendLogCore($"Available transcription models: {available}.");
         }
 
         if (SelectedEngine is not null) {
@@ -169,6 +171,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             NotifyPropertyChanged(nameof(IsOpenAiEngineSelected));
+            NotifyPropertyChanged(nameof(IsManualTranscriptionSelected));
             NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
 
@@ -218,13 +221,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
     }
 
-    public bool IsOpenAiEngineSelected => SelectedEngine is not null;
+    public bool IsOpenAiEngineSelected =>
+        OpenAiTranscriptionModelCatalog.UsesAiAssist(SelectedEngine?.Id ?? string.Empty);
+
+    public bool IsManualTranscriptionSelected =>
+        OpenAiTranscriptionModelCatalog.IsManualOnly(SelectedEngine?.Id ?? string.Empty);
 
     public bool IsEngineSelectionEnabled =>
         !IsBusy && !IsFileTranscribing;
 
     public bool IsOpenAiSettingsEnabled =>
         IsOpenAiEngineSelected && !IsBusy && !IsFileTranscribing;
+
+    public bool IsSegmentTranscriptionEnabled =>
+        SelectedEngine is not null
+        && IsAudioFileLoaded
+        && !IsBusy
+        && !IsFileTranscribing;
 
     public bool CopyFinalizedWithTimeline {
         get => _copyFinalizedWithTimeline;
@@ -247,6 +260,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
             NotifyPropertyChanged(nameof(IsAudioFileLoaded));
+            NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
         }
     }
@@ -276,6 +290,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             RefreshCommandStates();
+        }
+    }
+
+    public bool IsPlaybackMuted {
+        get => _isPlaybackMuted;
+        set {
+            if (!SetProperty(ref _isPlaybackMuted, value)) {
+                return;
+            }
+
+            _audioPlaybackService.IsMuted = value;
+            AppendLog($"Playback mute: {(value ? "ON" : "OFF")}.");
         }
     }
 
@@ -468,11 +494,47 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         UpdateAudioTimelineFromPlayback();
     }
 
+    public void PrepareForRequiredUpdateShutdown() {
+        AppendLog("An application update is required. Canceling active work.");
+
+        try {
+            _fileTranscriptionCts?.Cancel();
+        }
+        catch (ObjectDisposedException) {
+            // Ignore cancellation race at teardown.
+        }
+
+        try {
+            if (IsAudioFileLoaded) {
+                _audioPlaybackService.Stop();
+            }
+        }
+        catch (Exception ex) {
+            AppendLog($"Audio stop during update shutdown failed: {ex.Message}");
+        }
+
+        IsAudioPlaying = _audioPlaybackService.IsPlaying;
+
+        if (IsAudioFileLoaded) {
+            UpdateAudioTimelineFromPlayback();
+        }
+        else {
+            ResetAudioTimeline();
+        }
+
+        StatusMessage = "A newer version of the application is required.";
+    }
+
     private async Task TranscribeFileAsync() {
         AppendLog("Command requested: Transcribe File.");
 
         if (SelectedEngine is null) {
             AppendLog("Transcribe aborted: no model selected.");
+            return;
+        }
+
+        if (!IsOpenAiEngineSelected) {
+            AppendLog("Transcribe aborted: manual transcription mode does not use AI file transcription.");
             return;
         }
 
@@ -901,7 +963,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     private bool CanTranscribeFile() {
-        return SelectedEngine is not null
+        return IsOpenAiEngineSelected
             && IsAudioFileLoaded
             && !IsBusy
             && !IsFileTranscribing;
@@ -965,11 +1027,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private void NotifyInteractionAvailabilityChanged() {
         NotifyPropertyChanged(nameof(IsEngineSelectionEnabled));
         NotifyPropertyChanged(nameof(IsOpenAiSettingsEnabled));
+        NotifyPropertyChanged(nameof(IsSegmentTranscriptionEnabled));
     }
 
     private bool EnsureSelectedModelConfigured() {
         if (SelectedEngine is null) {
             AppendLog("Model configuration check failed: no selected model.");
+            return false;
+        }
+
+        if (!IsOpenAiEngineSelected) {
+            AppendLog("OpenAI transcription blocked: manual transcription mode is selected.");
             return false;
         }
 

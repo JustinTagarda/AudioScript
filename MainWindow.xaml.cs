@@ -28,7 +28,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private const double ToastHiddenOffsetY = -14;
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditSegmentDuration = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.Zero;
 
     private bool _isOpenAiDialogOpen;
     private bool _isApplyingTranscriptEditLoopSeek;
@@ -48,6 +48,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private TimeSpan? _editLoopRepeatOffset;
     private string _timelineEditOriginalTimeline = string.Empty;
     private bool _timelineEditShouldResumePlayback;
+    private int _requiredUpdateShutdownStarted;
 
     public MainWindow(
         Func<PlaybackTranscriptionSession>? playbackTranscriptionSessionFactory = null,
@@ -101,6 +102,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
 
         if (IsSegmentBatchTranscribing) {
+            return;
+        }
+
+        if (vm.IsManualTranscriptionSelected) {
+            LogSegmentBatch("Manual transcription mode selected. Creating placeholder timeline only.");
+
+            bool placeholdersCreated = await vm.CreatePlaceholdersForSegmentTranscriptionAsync();
+            if (placeholdersCreated) {
+                vm.StatusMessage = "Placeholder transcript created for manual transcription.";
+                ShowCopyToast(
+                    "Timeline created",
+                    "Segment timelines are ready for manual transcription.",
+                    ToastNotificationType.Success);
+            }
+
             return;
         }
 
@@ -267,6 +283,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         finally {
             _segmentBatchTranscriptionCts?.Dispose();
             _segmentBatchTranscriptionCts = null;
+            if (vm.IsPlaybackMuted) {
+                vm.IsPlaybackMuted = false;
+            }
             IsSegmentBatchTranscribing = false;
             RestoreSegmentBatchInteractionLock();
             _ = Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
@@ -718,6 +737,53 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             discardResults: true);
     }
 
+    public async Task PrepareForRequiredUpdateShutdownAsync() {
+        if (Interlocked.Exchange(ref _requiredUpdateShutdownStarted, 1) != 0) {
+            return;
+        }
+
+        MainViewModel? vm = _boundViewModel ?? DataContext as MainViewModel;
+        LogPlaybackEdit("Preparing for required update shutdown.");
+        LogSegmentBatch("Preparing for required update shutdown.");
+
+        if (_segmentBatchTranscriptionCts is not null && !_segmentBatchTranscriptionCts.IsCancellationRequested) {
+            _segmentBatchTranscriptionCts.Cancel();
+        }
+
+        PlaybackEditTranscriptionState? state = _activePlaybackEditTranscription;
+        if (state is not null) {
+            await StopPlaybackEditTranscriptionAsync(
+                state,
+                vm,
+                pausePlayback: true,
+                reason: "application update required",
+                discardResults: true);
+        }
+
+        vm?.PrepareForRequiredUpdateShutdown();
+
+        SegmentBatchOverlay.IsHitTestVisible = false;
+        SegmentBatchOverlay.Visibility = Visibility.Collapsed;
+        MainContentHost.IsEnabled = false;
+        MainContentHost.IsHitTestVisible = false;
+
+        ClearTimelineEditState();
+        ClearTranscriptEditPlaybackLoop();
+
+        try {
+            FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+            FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        }
+        catch {
+            // Best-effort edit shutdown.
+        }
+
+        FinalizedTranscriptGrid.SelectedCells.Clear();
+        FinalizedTranscriptGrid.UnselectAllCells();
+        FinalizedTranscriptGrid.CurrentCell = default;
+        Keyboard.ClearFocus();
+    }
+
     private void InsertTranscriptRowBelow_Click(object sender, RoutedEventArgs e) {
         if (IsSegmentBatchTranscribing) {
             ShowCopyToast(
@@ -891,7 +957,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             reason: "starting another transcript edit",
             discardResults: true);
 
-        if (string.IsNullOrWhiteSpace(line.Text)
+        if (vm.IsOpenAiEngineSelected
+            && string.IsNullOrWhiteSpace(line.Text)
             && TryStartPlaybackEditTranscription(vm, line)) {
             e.Cancel = true;
             Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);

@@ -5,10 +5,11 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Audio Transcription Error"
+        Icon="pack://application:,,,/Assets/AudioTranscript.ico"
         Width="560"
-        Height="260"
         MinWidth="560"
         MinHeight="260"
+        SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
@@ -25,18 +26,30 @@
                 BorderThickness="1"
                 CornerRadius="10"
                 Padding="14">
-            <StackPanel>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
                 <TextBlock Text="An error occurred"
+                           Grid.Row="0"
                            FontFamily="Bahnschrift"
                            FontSize="22"
                            Foreground="#FF15232D" />
-                <TextBlock x:Name="ErrorMessageText"
-                           Margin="0,10,0,0"
-                           FontFamily="Segoe UI Variable Text"
-                           FontSize="13"
-                           Foreground="#FF49616F"
-                           TextWrapping="Wrap" />
-            </StackPanel>
+                <ScrollViewer Grid.Row="1"
+                              Margin="0,10,0,0"
+                              MaxHeight="280"
+                              HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Auto"
+                              CanContentScroll="False">
+                    <TextBlock x:Name="ErrorMessageText"
+                               FontFamily="Segoe UI Variable Text"
+                               FontSize="13"
+                               Foreground="#FF49616F"
+                               TextWrapping="Wrap" />
+                </ScrollViewer>
+            </Grid>
         </Border>
 
         <StackPanel Grid.Row="1"
