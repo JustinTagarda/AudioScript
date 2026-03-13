@@ -462,6 +462,8 @@ public sealed class TranscriptSessionLineDocument {
     public double? EndSeconds { get; set; }
 
     public bool IsTimestampEstimated { get; set; }
+
+    public bool IsManuallyReviewed { get; set; }
 }
 
 public sealed class TranscriptSessionEditingDocument {

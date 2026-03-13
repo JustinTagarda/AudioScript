@@ -1198,6 +1198,16 @@
                                                 <Setter Property="Foreground"
                                                         Value="{StaticResource PrimaryTextBrush}"/>
                                             </MultiDataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsManuallyReviewed}"
+                                                               Value="True"/>
+                                                    <Condition Binding="{Binding Column.DisplayIndex, RelativeSource={RelativeSource Self}}"
+                                                               Value="1"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Background"
+                                                        Value="#E0FFFF"/>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                     <Style TargetType="{x:Type DataGridRow}">

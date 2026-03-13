@@ -12,16 +12,19 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     private bool _isPlaybackEditTranscribing;
     private double _playbackEditProgressPercent;
     private bool _isPlaybackEditProgressIndeterminate;
+    private bool _isManuallyReviewed;
 
     public FinalizedTranscriptLineViewModel(
         TimeSpan? startOffset,
         TimeSpan? endOffset,
         bool isTimestampEstimated,
-        string text) {
+        string text,
+        bool isManuallyReviewed = false) {
         _startOffset = startOffset;
         _endOffset = endOffset;
         IsTimestampEstimated = isTimestampEstimated;
         _text = text ?? string.Empty;
+        _isManuallyReviewed = isManuallyReviewed;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -141,6 +144,18 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
             }
 
             _isPlaybackEditProgressIndeterminate = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsManuallyReviewed {
+        get => _isManuallyReviewed;
+        set {
+            if (_isManuallyReviewed == value) {
+                return;
+            }
+
+            _isManuallyReviewed = value;
             OnPropertyChanged();
         }
     }

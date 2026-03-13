@@ -1228,7 +1228,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 startOffset: line.StartSeconds is null ? null : TimeSpan.FromSeconds(Math.Max(line.StartSeconds.Value, 0)),
                 endOffset: line.EndSeconds is null ? null : TimeSpan.FromSeconds(Math.Max(line.EndSeconds.Value, 0)),
                 isTimestampEstimated: line.IsTimestampEstimated,
-                text: line.Text);
+                text: line.Text,
+                isManuallyReviewed: line.IsManuallyReviewed);
             item.PropertyChanged += OnFinalizedLinePropertyChanged;
             FinalizedTranscriptLines.Add(item);
         }
@@ -1347,6 +1348,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     private void OnFinalizedLinePropertyChanged(object? sender, PropertyChangedEventArgs e) {
+        if (string.Equals(e.PropertyName, nameof(FinalizedTranscriptLineViewModel.IsManuallyReviewed), StringComparison.Ordinal)) {
+            ScheduleSessionAutosave();
+            return;
+        }
+
         if (!string.Equals(e.PropertyName, nameof(FinalizedTranscriptLineViewModel.Text), StringComparison.Ordinal)
             && !string.Equals(e.PropertyName, nameof(FinalizedTranscriptLineViewModel.Timeline), StringComparison.Ordinal)
             && !string.Equals(e.PropertyName, nameof(FinalizedTranscriptLineViewModel.StartOffset), StringComparison.Ordinal)
@@ -1798,6 +1804,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 StartSeconds = line.StartOffset?.TotalSeconds,
                 EndSeconds = line.EndOffset?.TotalSeconds,
                 IsTimestampEstimated = line.IsTimestampEstimated,
+                IsManuallyReviewed = line.IsManuallyReviewed,
             })
             .ToList();
 
@@ -1813,6 +1820,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 StartSeconds = line.StartSeconds,
                 EndSeconds = line.EndSeconds,
                 IsTimestampEstimated = line.IsTimestampEstimated,
+                IsManuallyReviewed = line.IsManuallyReviewed,
             })
             .ToList();
 

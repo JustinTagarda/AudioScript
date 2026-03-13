@@ -48,6 +48,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private TimeSpan? _editLoopRepeatOffset;
     private string _timelineEditOriginalTimeline = string.Empty;
     private bool _timelineEditShouldResumePlayback;
+    private FinalizedTranscriptLineViewModel? _transcriptTextEditLine;
+    private string _transcriptTextEditOriginalText = string.Empty;
     private int _requiredUpdateShutdownStarted;
 
     public MainWindow(
@@ -923,12 +925,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
 
     private void FinalizedTranscriptGrid_BeginningEdit(object sender, DataGridBeginningEditEventArgs e) {
         if (IsSegmentBatchTranscribing) {
+            ClearTranscriptTextEditState();
             e.Cancel = true;
             return;
         }
 
         if (DataContext is not MainViewModel vm
             || e.Row?.Item is not FinalizedTranscriptLineViewModel line) {
+            ClearTranscriptTextEditState();
             StopActivePlaybackEditTranscription(
                 _boundViewModel,
                 pausePlayback: false,
@@ -940,12 +944,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
 
         if (line.IsPlaybackEditTranscribing) {
+            ClearTranscriptTextEditState();
             e.Cancel = true;
             Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
             return;
         }
 
         if (IsTimelineColumn(e.Column)) {
+            ClearTranscriptTextEditState();
             BeginTimelineEdit(vm, line);
             return;
         }
@@ -960,10 +966,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         if (vm.IsOpenAiEngineSelected
             && string.IsNullOrWhiteSpace(line.Text)
             && TryStartPlaybackEditTranscription(vm, line)) {
+            ClearTranscriptTextEditState();
             e.Cancel = true;
             Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
             return;
         }
+
+        _transcriptTextEditLine = line;
+        _transcriptTextEditOriginalText = line.Text ?? string.Empty;
 
         if (!vm.IsAudioFileLoaded || line.StartOffset is null) {
             ClearTranscriptEditPlaybackLoop();
@@ -999,17 +1009,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
                     ? "transcript edit canceled"
                     : "transcript edit completed",
                 discardResults: e.EditAction == DataGridEditAction.Cancel);
+            ClearTranscriptTextEditState();
             Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
             return;
         }
 
         if (DataContext is not MainViewModel vm) {
+            ClearTranscriptTextEditState();
             ClearTranscriptEditPlaybackLoop();
             Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
             return;
         }
 
-        if (e.Row?.Item is FinalizedTranscriptLineViewModel line && ReferenceEquals(line, _editLoopLine)) {
+        if (e.Row?.Item is FinalizedTranscriptLineViewModel line
+            && ReferenceEquals(line, _transcriptTextEditLine)) {
+            if (e.EditAction == DataGridEditAction.Commit
+                && !string.Equals(line.Text, _transcriptTextEditOriginalText, StringComparison.Ordinal)) {
+                line.IsManuallyReviewed = true;
+            }
+
+            ClearTranscriptTextEditState();
+        }
+
+        if (e.Row?.Item is FinalizedTranscriptLineViewModel editLoopLine
+            && ReferenceEquals(editLoopLine, _editLoopLine)) {
             PausePlaybackAfterTranscriptEdit(vm);
             return;
         }
@@ -1308,6 +1331,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         BindingExpression? binding = textBox.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty);
         binding?.UpdateSource();
 
+        if (!string.Equals(_timelineEditOriginalTimeline, normalized, StringComparison.Ordinal)) {
+            line.IsManuallyReviewed = true;
+        }
+
         ResumePlaybackAfterTimelineEdit(vm);
         ClearTimelineEditState();
     }
@@ -1348,6 +1375,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         _timelineEditLine = null;
         _timelineEditOriginalTimeline = string.Empty;
         _timelineEditShouldResumePlayback = false;
+    }
+
+    private void ClearTranscriptTextEditState() {
+        _transcriptTextEditLine = null;
+        _transcriptTextEditOriginalText = string.Empty;
     }
 
     private bool TryStartPlaybackEditTranscription(
@@ -1609,6 +1641,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
 
         state.Line.Text = mergedText;
+        state.Line.IsManuallyReviewed = false;
 
         LogPlaybackEdit(
             $"Applied buffered playback transcription text to row '{state.Line.Timeline}' " +
