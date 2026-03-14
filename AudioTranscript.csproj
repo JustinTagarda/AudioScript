@@ -7,17 +7,40 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <StartupObject>AudioTranscript.App</StartupObject>
+    <Version>0.1.0</Version>
     <ApplicationIcon>Assets\AudioTranscript.ico</ApplicationIcon>
+    <VelopackPackId>JustinTagarda.AudioTranscript</VelopackPackId>
+    <VelopackPackTitle>AudioTranscript</VelopackPackTitle>
+    <VelopackPackAuthors>Justin Tagarda</VelopackPackAuthors>
+    <VelopackMainExe>AudioTranscript.exe</VelopackMainExe>
+    <VelopackReleaseChannel>win</VelopackReleaseChannel>
+    <VelopackReleaseRepoUrl>https://github.com/REPLACE_ME/AudioTranscript-Releases</VelopackReleaseRepoUrl>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="Velopack" Version="0.0.1298" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="AudioTranscript.Tests\\**\\*.cs" />
     <EmbeddedResource Remove="AudioTranscript.Tests\\**\\*" />
     <Page Remove="AudioTranscript.Tests\\**\\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="VelopackPackId" Value="$(VelopackPackId)" />
+    <AssemblyMetadata Include="VelopackPackTitle" Value="$(VelopackPackTitle)" />
+    <AssemblyMetadata Include="VelopackPackAuthors" Value="$(VelopackPackAuthors)" />
+    <AssemblyMetadata Include="VelopackMainExe" Value="$(VelopackMainExe)" />
+    <AssemblyMetadata Include="VelopackReleaseChannel" Value="$(VelopackReleaseChannel)" />
+    <AssemblyMetadata Include="VelopackReleaseRepoUrl" Value="$(VelopackReleaseRepoUrl)" />
   </ItemGroup>
 
   <ItemGroup>

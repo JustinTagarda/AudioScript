@@ -2,10 +2,10 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Threading;
 using AudioTranscript.Audio;
 using AudioTranscript.Services;
 using AudioTranscript.ViewModels;
+using Velopack;
 
 namespace AudioTranscript;
 
@@ -17,10 +17,10 @@ public partial class App : System.Windows.Application {
     private EventWaitHandle? _activateEvent;
     private CancellationTokenSource? _activationListenerCts;
     private Task? _activationListenerTask;
-    private CancellationTokenSource? _applicationVersionCheckCts;
-    private Task? _applicationVersionCheckTask;
+    private CancellationTokenSource? _applicationUpdateCts;
+    private Task? _applicationUpdateTask;
+    private ApplicationUpdateService? _applicationUpdateService;
     private ProcessLogService? _processLogService;
-    private int _requiredUpdateDialogShown;
 
     private HttpClient? _httpClient;
     private MainViewModel? _mainViewModel;
@@ -28,6 +28,15 @@ public partial class App : System.Windows.Application {
     private OpenAiSettingsStore? _openAiSettingsStore;
     private OpenAiApiKeyValidationService? _openAiApiKeyValidationService;
     private AppPreferencesStore? _appPreferencesStore;
+
+    [STAThread]
+    private static void Main(string[] args) {
+        VelopackApp.Build().Run();
+
+        var app = new App();
+        app.InitializeComponent();
+        app.Run();
+    }
 
     protected override void OnStartup(System.Windows.StartupEventArgs e) {
         base.OnStartup(e);
@@ -117,11 +126,11 @@ public partial class App : System.Windows.Application {
         MainWindow = mainWindow;
         mainWindow.Show();
 
-        _applicationVersionCheckCts = new CancellationTokenSource();
-        var applicationVersionCheckService = new ApplicationVersionCheckService(_httpClient, processLogService);
-        _applicationVersionCheckTask = RunApplicationVersionCheckAsync(
-            applicationVersionCheckService,
-            _applicationVersionCheckCts.Token);
+        _applicationUpdateService = new ApplicationUpdateService(processLogService);
+        _applicationUpdateCts = new CancellationTokenSource();
+        _applicationUpdateTask = RunApplicationUpdateAsync(
+            _applicationUpdateService,
+            _applicationUpdateCts.Token);
     }
 
     protected override void OnExit(System.Windows.ExitEventArgs e) {
@@ -129,7 +138,19 @@ public partial class App : System.Windows.Application {
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
         finally {
-            _applicationVersionCheckCts?.Cancel();
+            _applicationUpdateCts?.Cancel();
+
+            if (_applicationUpdateTask is not null) {
+                try {
+                    _applicationUpdateTask.Wait(TimeSpan.FromSeconds(1));
+                }
+                catch {
+                    // Ignore update task shutdown failures.
+                }
+            }
+
+            TryApplyPendingUpdates();
+
             _activationListenerCts?.Cancel();
             _httpClient?.Dispose();
 
@@ -152,9 +173,10 @@ public partial class App : System.Windows.Application {
             _activationListenerTask = null;
             _activationListenerCts?.Dispose();
             _activationListenerCts = null;
-            _applicationVersionCheckTask = null;
-            _applicationVersionCheckCts?.Dispose();
-            _applicationVersionCheckCts = null;
+            _applicationUpdateTask = null;
+            _applicationUpdateService = null;
+            _applicationUpdateCts?.Dispose();
+            _applicationUpdateCts = null;
             _activateEvent?.Dispose();
             _activateEvent = null;
 
@@ -219,72 +241,31 @@ public partial class App : System.Windows.Application {
         MainWindow.Focus();
     }
 
-    private async Task RunApplicationVersionCheckAsync(
-        ApplicationVersionCheckService applicationVersionCheckService,
+    private async Task RunApplicationUpdateAsync(
+        ApplicationUpdateService applicationUpdateService,
         CancellationToken cancellationToken) {
         try {
-            ApplicationVersionCheckResult result = await applicationVersionCheckService.CheckAsync(cancellationToken);
-            if (cancellationToken.IsCancellationRequested || !result.IsExpired) {
-                return;
-            }
-
-            DispatcherOperation<Task> shutdownOperation = Dispatcher.InvokeAsync(
-                () => HandleRequiredUpdateAsync(result),
-                DispatcherPriority.Normal);
-            await shutdownOperation.Task.Unwrap();
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+            await applicationUpdateService.CheckForUpdatesAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
             // Ignore shutdown cancellation.
         }
         catch (Exception ex) {
-            _processLogService?.Log("VersionCheck", $"Application version check failed unexpectedly: {ex.Message}");
+            _processLogService?.Log("AutoUpdate", $"Background update check failed unexpectedly: {ex.Message}");
         }
     }
 
-    private async Task HandleRequiredUpdateAsync(ApplicationVersionCheckResult result) {
-        if (Interlocked.Exchange(ref _requiredUpdateDialogShown, 1) != 0) {
+    private void TryApplyPendingUpdates() {
+        if (_applicationUpdateService is null) {
             return;
         }
 
         try {
-            CloseAuxiliaryWindows();
-
-            if (MainWindow is AudioTranscript.MainWindow mainWindow) {
-                await mainWindow.PrepareForRequiredUpdateShutdownAsync();
-            }
-            else {
-                _mainViewModel?.PrepareForRequiredUpdateShutdown();
-            }
-
-            var dialog = new UpdateRequiredDialogWindow(result.UpdateMessage);
-
-            if (MainWindow is not null && MainWindow.IsLoaded) {
-                dialog.Owner = MainWindow;
-            }
-            else {
-                dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            }
-
-            dialog.ShowDialog();
+            _applicationUpdateService.ApplyPendingUpdatesOnExitAsync().GetAwaiter().GetResult();
         }
-        finally {
-            Shutdown();
-        }
-    }
-
-    private void CloseAuxiliaryWindows() {
-        Window[] windows = Windows
-            .Cast<Window>()
-            .Where(window => !ReferenceEquals(window, MainWindow))
-            .ToArray();
-
-        foreach (Window window in windows) {
-            try {
-                window.Close();
-            }
-            catch {
-                // Ignore auxiliary window close failures.
-            }
+        catch (Exception ex) {
+            _processLogService?.Log("AutoUpdate", $"Failed to apply a staged update during shutdown: {ex.Message}");
         }
     }
 

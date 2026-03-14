@@ -3,6 +3,8 @@
 bin/
 obj/
 publish/
+artifacts/
+Releases/
 
 # User-local IDE files
 *.user
