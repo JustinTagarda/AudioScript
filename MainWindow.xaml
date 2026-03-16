@@ -6,10 +6,10 @@
         mc:Ignorable="d"
         Title="Audio Transcription"
         Icon="pack://application:,,,/Assets/AudioTranscript.ico"
-        Height="820"
-        Width="1280"
-        MinHeight="720"
-        MinWidth="1100"
+        Height="670"
+        Width="1140"
+        MinHeight="600"
+        MinWidth="960"
         WindowStartupLocation="CenterScreen"
         Background="#FFF4F7F8">
     <Window.Resources>
@@ -105,7 +105,7 @@
             <Setter Property="Foreground"
                     Value="{StaticResource SecondaryTextBrush}"/>
             <Setter Property="Margin"
-                    Value="0,12,0,6"/>
+                    Value="0,10,0,5"/>
             <Setter Property="FontSize"
                     Value="11"/>
         </Style>
@@ -687,16 +687,16 @@
                 </StatusBarItem>
             </StatusBar>
 
-            <Grid Margin="14,3.5,14,5">
+            <Grid Margin="11,3,11,4">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="360"/>
+                    <ColumnDefinition Width="332"/>
                     <ColumnDefinition Width="6"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
                 <Border Grid.Column="0"
                         Style="{StaticResource CardStyle}"
-                        Padding="11">
+                        Padding="10">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -712,7 +712,7 @@
 
                             <TextBlock Text="AI Assist"
                                        Style="{StaticResource CaptionTextStyle}"
-                                       Margin="0,14,0,8"/>
+                                       Margin="0,12,0,7"/>
                             <Border Background="#FFFDFEFF"
                                     BorderBrush="#FFD2E2E7"
                                     BorderThickness="1"
@@ -776,7 +776,7 @@
 
                             <TextBlock Text="Transcription"
                                        Style="{StaticResource CaptionTextStyle}"
-                                       Margin="0,14,0,6"/>
+                                       Margin="0,12,0,5"/>
                             <Border Background="#FFFDFEFF"
                                     BorderBrush="#FFD2E2E7"
                                     BorderThickness="1"
@@ -857,7 +857,7 @@
 
                             <TextBlock Text="Sessions"
                                        Style="{StaticResource CaptionTextStyle}"
-                                       Margin="0,14,0,6"/>
+                                       Margin="0,12,0,5"/>
                             <Border Background="#FFFDFEFF"
                                     BorderBrush="#FFD2E2E7"
                                     BorderThickness="1"
@@ -866,7 +866,7 @@
                                 <StackPanel>
                                     <ListBox ItemsSource="{Binding RecentSessions}"
                                              SelectedItem="{Binding SelectedRecentSession}"
-                                             Height="128"
+                                             Height="112"
                                              HorizontalContentAlignment="Stretch"
                                              Grid.IsSharedSizeScope="True"
                                              MouseDoubleClick="RecentSessionsList_MouseDoubleClick"
@@ -910,13 +910,13 @@
                                         <Button Content="Open"
                                                 Style="{StaticResource PlaybackSecondaryButtonStyle}"
                                                 MinWidth="0"
-                                                Width="80"
+                                                Width="72"
                                                 Margin="0,0,6,0"
                                                 Command="{Binding OpenSelectedSessionCommand}"/>
                                         <Button Content="Delete"
                                                 Style="{StaticResource DangerButtonStyle}"
                                                 MinWidth="0"
-                                                Width="80"
+                                                Width="72"
                                                 Height="29"
                                                 MinHeight="29"
                                                 Padding="12,4"
@@ -927,7 +927,7 @@
 
                             <TextBlock Text="Audio File"
                                        Style="{StaticResource CaptionTextStyle}"
-                                       Margin="0,14,0,6"/>
+                                       Margin="0,12,0,5"/>
                             <Border Background="#FFFDFEFF"
                                     BorderBrush="#FFD2E2E7"
                                     BorderThickness="1"
@@ -1043,7 +1043,7 @@
                         <TextBlock Grid.Row="1"
                                    Text="Process Logs"
                                    Style="{StaticResource CaptionTextStyle}"
-                                   Margin="0,15,0,6"/>
+                                   Margin="0,12,0,5"/>
 
                         <Border Grid.Row="2"
                                 Background="#FFFDFEFF"
@@ -1114,7 +1114,7 @@
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
                                         <GridViewColumn Header="Log"
-                                                        Width="284">
+                                                        Width="246">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding Message}"
@@ -1142,7 +1142,7 @@
 
                 <Border Grid.Column="2"
                         Style="{StaticResource CardStyle}"
-                        Padding="12"
+                        Padding="10"
                         Margin="0">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -1519,12 +1519,12 @@
             <Grid>
                 <Border HorizontalAlignment="Center"
                         VerticalAlignment="Center"
-                        Width="360"
+                        Width="320"
                         Background="#FFFDFEFF"
                         BorderBrush="#FFD2E2E7"
                         BorderThickness="1"
                         CornerRadius="14"
-                        Padding="18,16">
+                        Padding="16,14">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="28"
                                           ShadowDepth="0"
@@ -1537,7 +1537,7 @@
                                    FontSize="18"
                                    Foreground="{StaticResource PrimaryTextBrush}"
                                    HorizontalAlignment="Center"/>
-                        <ProgressBar Width="180"
+                        <ProgressBar Width="160"
                                      Height="8"
                                      Margin="0,14,0,0"
                                      IsIndeterminate="True"
