@@ -70,20 +70,11 @@ public partial class App : System.Windows.Application {
         _openAiApiKeyValidationService = new OpenAiApiKeyValidationService(_httpClient);
         var processLogService = new ProcessLogService();
         _processLogService = processLogService;
+        _applicationUpdateService = new ApplicationUpdateService(processLogService);
         var responseParser = new OpenAiTranscriptionResponseParser();
         var audioStandardizer = new AudioStandardizer();
-        var audioChunkPlanner = new AudioChunkPlanner();
-        var segmentMerger = new TranscriptionSegmentMerger();
         var audioPlaybackService = new NaudioAudioPlaybackService();
         var sessionStore = new TranscriptSessionStore(processLogService: processLogService);
-        var transcriptionService = new OpenAiAudioTranscriptionService(
-            audioStandardizer,
-            audioChunkPlanner,
-            segmentMerger,
-            _httpClient,
-            openAiOptions,
-            processLogService,
-            responseParser);
         var playbackTranscriptionService = new PlaybackAudioTranscriptionService(
             audioStandardizer,
             _httpClient,
@@ -101,7 +92,6 @@ public partial class App : System.Windows.Application {
 
         _mainViewModel = new MainViewModel(
             OpenAiTranscriptionModelCatalog.Models,
-            transcriptionService,
             audioPlaybackService,
             openAiOptions,
             _openAiSettingsStore,
@@ -109,7 +99,8 @@ public partial class App : System.Windows.Application {
             processLogService,
             sessionStore,
             _appPreferencesStore,
-            appPreferencesSnapshot);
+            appPreferencesSnapshot,
+            _applicationUpdateService);
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
@@ -126,10 +117,9 @@ public partial class App : System.Windows.Application {
         MainWindow = mainWindow;
         mainWindow.Show();
 
-        _applicationUpdateService = new ApplicationUpdateService(processLogService);
         _applicationUpdateCts = new CancellationTokenSource();
         _applicationUpdateTask = RunApplicationUpdateAsync(
-            _applicationUpdateService,
+            _applicationUpdateService!,
             _applicationUpdateCts.Token);
     }
 

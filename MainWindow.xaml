@@ -110,78 +110,6 @@
                     Value="11"/>
         </Style>
 
-        <Style x:Key="FooterProgressBarStyle"
-               TargetType="ProgressBar">
-            <Setter Property="Width"
-                    Value="160"/>
-            <Setter Property="Height"
-                    Value="10"/>
-            <Setter Property="Margin"
-                    Value="0,0,10,0"/>
-            <Setter Property="Minimum"
-                    Value="0"/>
-            <Setter Property="Maximum"
-                    Value="100"/>
-            <Setter Property="IsIndeterminate"
-                    Value="True"/>
-            <Setter Property="Background"
-                    Value="#FFD9E8EE"/>
-            <Setter Property="Foreground"
-                    Value="#FF1B86AA"/>
-            <Setter Property="BorderBrush"
-                    Value="#FFBBD1DB"/>
-            <Setter Property="BorderThickness"
-                    Value="1"/>
-            <Setter Property="Visibility"
-                    Value="Collapsed"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ProgressBar">
-                        <Grid ClipToBounds="True">
-                            <Border Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="5"/>
-                            <Border x:Name="Indicator"
-                                    Width="52"
-                                    HorizontalAlignment="Left"
-                                    CornerRadius="5"
-                                    Background="{TemplateBinding Foreground}"
-                                    Margin="0,1"
-                                    RenderTransformOrigin="0.5,0.5">
-                                <Border.RenderTransform>
-                                    <TranslateTransform X="-60"/>
-                                </Border.RenderTransform>
-                            </Border>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsIndeterminate"
-                                     Value="True">
-                                <Trigger.EnterActions>
-                                    <BeginStoryboard>
-                                        <Storyboard RepeatBehavior="Forever">
-                                            <DoubleAnimation Storyboard.TargetName="Indicator"
-                                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
-                                                             From="-60"
-                                                             To="220"
-                                                             Duration="0:0:1.1"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </Trigger.EnterActions>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsFileTranscribing}"
-                             Value="True">
-                    <Setter Property="Visibility"
-                            Value="Visible"/>
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
         <Style x:Key="TranscriptCellProgressBarStyle"
                TargetType="ProgressBar">
             <Setter Property="Height"
@@ -400,6 +328,72 @@
                     Value="8,0,4,0"/>
         </Style>
 
+        <Style x:Key="SettingsIconButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource IconActionButtonStyle}">
+            <Setter Property="Width"
+                    Value="28"/>
+            <Setter Property="MinWidth"
+                    Value="28"/>
+            <Setter Property="Height"
+                    Value="28"/>
+            <Setter Property="MinHeight"
+                    Value="28"/>
+            <Setter Property="Margin"
+                    Value="0"/>
+            <Setter Property="Background"
+                    Value="#FF1B86AA"/>
+            <Setter Property="BorderBrush"
+                    Value="#FF1B86AA"/>
+            <Setter Property="BorderThickness"
+                    Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="SettingsIconBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver"
+                                     Value="True">
+                                <Setter TargetName="SettingsIconBorder"
+                                        Property="Background"
+                                        Value="#FF2597BE"/>
+                                <Setter TargetName="SettingsIconBorder"
+                                        Property="BorderBrush"
+                                        Value="#FF2597BE"/>
+                                <Setter Property="Cursor"
+                                        Value="Hand"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed"
+                                     Value="True">
+                                <Setter TargetName="SettingsIconBorder"
+                                        Property="Background"
+                                        Value="#FF176E8D"/>
+                                <Setter TargetName="SettingsIconBorder"
+                                        Property="BorderBrush"
+                                        Value="#FF176E8D"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled"
+                                     Value="False">
+                                <Setter TargetName="SettingsIconBorder"
+                                        Property="Background"
+                                        Value="#FFD9E3E8"/>
+                                <Setter TargetName="SettingsIconBorder"
+                                        Property="BorderBrush"
+                                        Value="#FFD9E3E8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="PlaybackActionButtonStyle"
                TargetType="Button"
                BasedOn="{StaticResource ActionButtonStyle}">
@@ -518,6 +512,84 @@
             </Setter>
         </Style>
 
+        <Style x:Key="SettingsCheckBoxStyle"
+               TargetType="CheckBox"
+               BasedOn="{StaticResource ToolbarCheckBoxStyle}">
+            <Setter Property="FontSize"
+                    Value="14"/>
+            <Setter Property="FontWeight"
+                    Value="SemiBold"/>
+            <Setter Property="Foreground"
+                    Value="{StaticResource PrimaryTextBrush}"/>
+            <Setter Property="Margin"
+                    Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Background="Transparent">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="BulletBorder"
+                                    Grid.Column="0"
+                                    Width="18"
+                                    Height="18"
+                                    Margin="0,0,10,0"
+                                    VerticalAlignment="Center"
+                                    CornerRadius="5"
+                                    Background="#FFFDFEFF"
+                                    BorderBrush="#FF9DB6C0"
+                                    BorderThickness="1">
+                                <Path x:Name="CheckMark"
+                                      Data="M3.6,9.1 L7.2,12.6 L14.2,5.6"
+                                      Stroke="{StaticResource AccentBrush}"
+                                      StrokeThickness="2.2"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter Grid.Column="1"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver"
+                                     Value="True">
+                                <Setter TargetName="BulletBorder"
+                                        Property="BorderBrush"
+                                        Value="#FFA9C8D6"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked"
+                                     Value="True">
+                                <Setter TargetName="BulletBorder"
+                                        Property="BorderBrush"
+                                        Value="{StaticResource AccentBrush}"/>
+                                <Setter TargetName="BulletBorder"
+                                        Property="Background"
+                                        Value="{StaticResource AccentSurfaceBrush}"/>
+                                <Setter TargetName="CheckMark"
+                                        Property="Visibility"
+                                        Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled"
+                                     Value="False">
+                                <Setter TargetName="BulletBorder"
+                                        Property="Background"
+                                        Value="#FFF1F6F8"/>
+                                <Setter TargetName="BulletBorder"
+                                        Property="BorderBrush"
+                                        Value="#FFD9E3E8"/>
+                                <Setter Property="Foreground"
+                                        Value="#FFA0B0B9"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="TranscriptOverlayActionButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource ButtonChromeStyle}">
@@ -596,19 +668,18 @@
                 <StatusBarItem DockPanel.Dock="Right"
                                Padding="0"
                                BorderThickness="0">
-                    <StackPanel Orientation="Horizontal">
-                        <ProgressBar Style="{StaticResource FooterProgressBarStyle}"/>
-                        <TextBlock Text="{Binding SelectedEngine.DisplayName, TargetNullValue=No engine selected}"
-                                   FontFamily="Segoe UI Variable Text"
-                                   FontSize="12"
-                                   Foreground="{StaticResource SecondaryTextBrush}"/>
-                    </StackPanel>
+                    <TextBlock Text="{Binding ApplicationVersionStatusText}"
+                               ToolTip="{Binding ApplicationVersionStatusText}"
+                               FontFamily="Segoe UI Variable Text"
+                               FontSize="12"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{StaticResource SecondaryTextBrush}"/>
                 </StatusBarItem>
 
                 <StatusBarItem DockPanel.Dock="Left"
                                Padding="0"
                                BorderThickness="0">
-                    <TextBlock Text="© 2026 Justin Tagarda · justintagarda@gmail.com"
+                    <TextBlock Text="© 2026 JustinTagarda · justintagarda@gmail.com"
                                Margin="0,0,14,0"
                                FontFamily="Bahnschrift"
                                FontSize="12"
@@ -618,7 +689,7 @@
 
             <Grid Margin="14,3.5,14,5">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="400"/>
+                    <ColumnDefinition Width="360"/>
                     <ColumnDefinition Width="6"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
@@ -639,16 +710,69 @@
                                        FontSize="20"
                                        Foreground="{StaticResource PrimaryTextBrush}"/>
 
-                            <TextBlock Text="Transcription Engine"
+                            <TextBlock Text="AI Assist"
                                        Style="{StaticResource CaptionTextStyle}"
                                        Margin="0,14,0,8"/>
-                            <ComboBox ItemsSource="{Binding Engines}"
-                                      SelectedItem="{Binding SelectedEngine}"
-                                      SelectionChanged="EngineComboBox_SelectionChanged"
-                                      DisplayMemberPath="DisplayName"
-                                      IsEnabled="{Binding IsEngineSelectionEnabled}"
-                                      Style="{StaticResource ModernComboBoxStyle}"
-                                      ItemContainerStyle="{StaticResource ModernComboBoxItemStyle}"/>
+                            <Border Background="#FFFDFEFF"
+                                    BorderBrush="#FFD2E2E7"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="12,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <CheckBox Grid.Row="0"
+                                              Grid.Column="0"
+                                              Style="{StaticResource SettingsCheckBoxStyle}"
+                                              VerticalAlignment="Top"
+                                              Margin="0,2,6,0"
+                                              IsEnabled="{Binding IsEngineSelectionEnabled}"
+                                              IsChecked="{Binding AutoTranscribeWithAi, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              Checked="AutoTranscribeWithAiCheckBox_Checked"/>
+
+                                    <Grid Grid.Column="1"
+                                          VerticalAlignment="Center">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0"
+                                                   Text="Auto Transcribe with AI"
+                                                   FontFamily="Segoe UI Variable Text"
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{StaticResource PrimaryTextBrush}"/>
+                                        <TextBlock Grid.Row="1"
+                                                   Text="Turn this on to let AI help transcribe audio."
+                                                   Margin="0,-1,0,0"
+                                                   FontFamily="Segoe UI Variable Text"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource SecondaryTextBrush}"
+                                                   TextWrapping="Wrap"/>
+                                    </Grid>
+
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource SettingsIconButtonStyle}"
+                                            VerticalAlignment="Center"
+                                            Margin="10,0,0,0"
+                                            ToolTip="OpenAI API Key"
+                                            AutomationProperties.Name="OpenAI API Key"
+                                            IsEnabled="{Binding IsOpenAiSettingsEnabled}"
+                                            Click="OpenOpenAiSettings_Click">
+                                        <TextBlock Text="API"
+                                                   FontFamily="Segoe UI Variable Text"
+                                                   FontSize="9.5"
+                                                   FontWeight="Bold"
+                                                   Foreground="White"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                    </Button>
+                                </Grid>
+                            </Border>
 
                             <TextBlock Text="Transcription"
                                        Style="{StaticResource CaptionTextStyle}"
@@ -660,7 +784,6 @@
                                     Padding="10">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
@@ -675,19 +798,6 @@
                                             Height="33"
                                             MinHeight="33"
                                             Command="{Binding OpenAudioFileCommand}"/>
-                                    <Button x:Name="TranscribeButton"
-                                            Grid.Row="0"
-                                            Grid.Column="1"
-                                            Style="{StaticResource PlaybackActionButtonStyle}"
-                                            FontSize="12"
-                                            Height="33"
-                                            MinHeight="33"
-                                            Command="{Binding TranscribeFileCommand}">
-                                        <TextBlock Text="Transcribe&#x0A;File"
-                                                   LineStackingStrategy="BlockLineHeight"
-                                                   LineHeight="12"
-                                                   TextAlignment="Center"/>
-                                    </Button>
                                     <Button Grid.Row="1"
                                             Grid.Column="0"
                                             Height="33"
@@ -699,11 +809,6 @@
                                                 <Setter Property="IsEnabled"
                                                         Value="False"/>
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsFileTranscribing}"
-                                                                 Value="True">
-                                                        <Setter Property="IsEnabled"
-                                                                Value="True"/>
-                                                    </DataTrigger>
                                                     <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                  Value="True">
                                                         <Setter Property="IsEnabled"
@@ -717,7 +822,7 @@
                                     </Button>
                                     <Button x:Name="TranscribeBySegmentsButton"
                                             Grid.Row="0"
-                                            Grid.Column="2"
+                                            Grid.Column="1"
                                             FontSize="12"
                                             Height="33"
                                             MinHeight="33"
@@ -747,15 +852,6 @@
                                             Height="33"
                                             MinHeight="33"
                                             Command="{Binding ClearCommand}"/>
-                                    <Button Grid.Row="1"
-                                            Grid.Column="2"
-                                            Style="{StaticResource PlaybackActionButtonStyle}"
-                                            FontSize="12"
-                                            Height="33"
-                                            MinHeight="33"
-                                            IsEnabled="{Binding IsOpenAiSettingsEnabled}"
-                                            Content="OpenAI API Key"
-                                            Click="OpenOpenAiSettings_Click"/>
                                 </Grid>
                             </Border>
 
@@ -962,7 +1058,7 @@
                                       Background="Transparent"
                                       FontFamily="Segoe UI Variable Text"
                                       FontSize="12"
-                                      Foreground="{StaticResource PrimaryTextBrush}"
+                                      Foreground="#808080"
                                       ScrollViewer.VerticalScrollBarVisibility="Auto"
                                       ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListView.Resources>
@@ -1009,13 +1105,20 @@
                                 <ListView.View>
                                     <GridView AllowsColumnReorder="False">
                                         <GridViewColumn Header="Time"
-                                                        Width="74"
-                                                        DisplayMemberBinding="{Binding Time}"/>
+                                                        Width="74">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Time}"
+                                                               Foreground="#808080"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
                                         <GridViewColumn Header="Log"
                                                         Width="284">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding Message}"
+                                                               Foreground="#808080"
                                                                TextWrapping="Wrap"
                                                                Margin="0,0,4,0"/>
                                                 </DataTemplate>
@@ -1048,7 +1151,7 @@
                         </Grid.RowDefinitions>
                         <DockPanel Grid.Row="0"
                                    LastChildFill="False">
-                            <TextBlock Text="Finalized Transcript"
+                            <TextBlock Text="Transcriptions"
                                        DockPanel.Dock="Left"
                                        FontFamily="Bahnschrift"
                                        FontSize="20"

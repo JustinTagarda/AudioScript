@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="OpenAI Settings"
+        Title="OpenAI API Key"
         Icon="pack://application:,,,/Assets/AudioTranscript.ico"
         Width="560"
         Height="280"
@@ -40,11 +40,11 @@
                 CornerRadius="10"
                 Padding="14">
             <StackPanel>
-                <TextBlock Text="OpenAI Configuration"
+                <TextBlock Text="OpenAI API Key"
                            FontFamily="Bahnschrift"
                            FontSize="22"
                            Foreground="{StaticResource PrimaryTextBrush}" />
-                <TextBlock Text="Changes apply immediately to online transcriptions."
+                <TextBlock Text="Changes apply immediately when AI transcription is turned on."
                            Margin="0,2,0,2"
                            FontFamily="Segoe UI Variable Text"
                            FontSize="12"
@@ -59,7 +59,7 @@
                          BorderThickness="1"
                          Background="#FFFDFEFF" />
 
-                <TextBlock Text="Model is set by the selected option in the main window."
+                <TextBlock Text="This key is used when Auto Transcribe with AI is turned on."
                            Margin="0,10,0,0"
                            FontFamily="Segoe UI Variable Text"
                            FontSize="12"

@@ -24,7 +24,9 @@ public sealed class AppPreferencesStore {
 
     public AppPreferencesSnapshot Load() {
         if (!File.Exists(_settingsFilePath)) {
-            return new AppPreferencesSnapshot(CopyFinalizedWithTimeline: false);
+            return new AppPreferencesSnapshot(
+                CopyFinalizedWithTimeline: false,
+                AutoTranscribeWithAi: false);
         }
 
         try {
@@ -32,24 +34,30 @@ public sealed class AppPreferencesStore {
             PersistedAppPreferences? persisted = JsonSerializer.Deserialize<PersistedAppPreferences>(json, JsonOptions);
 
             if (persisted is null) {
-                return new AppPreferencesSnapshot(CopyFinalizedWithTimeline: false);
+                return new AppPreferencesSnapshot(
+                    CopyFinalizedWithTimeline: false,
+                    AutoTranscribeWithAi: false);
             }
 
             return new AppPreferencesSnapshot(
-                CopyFinalizedWithTimeline: persisted.CopyFinalizedWithTimeline);
+                CopyFinalizedWithTimeline: persisted.CopyFinalizedWithTimeline,
+                AutoTranscribeWithAi: persisted.AutoTranscribeWithAi);
         }
         catch {
-            return new AppPreferencesSnapshot(CopyFinalizedWithTimeline: false);
+            return new AppPreferencesSnapshot(
+                CopyFinalizedWithTimeline: false,
+                AutoTranscribeWithAi: false);
         }
     }
 
-    public void Save(bool copyFinalizedWithTimeline) {
+    public void Save(AppPreferencesSnapshot snapshot) {
         try {
             string directory = Path.GetDirectoryName(_settingsFilePath)!;
             Directory.CreateDirectory(directory);
 
             var persisted = new PersistedAppPreferences {
-                CopyFinalizedWithTimeline = copyFinalizedWithTimeline,
+                CopyFinalizedWithTimeline = snapshot.CopyFinalizedWithTimeline,
+                AutoTranscribeWithAi = snapshot.AutoTranscribeWithAi,
             };
 
             string json = JsonSerializer.Serialize(persisted, JsonOptions);
@@ -84,7 +92,11 @@ public sealed class AppPreferencesStore {
 
     private sealed class PersistedAppPreferences {
         public bool CopyFinalizedWithTimeline { get; init; }
+
+        public bool AutoTranscribeWithAi { get; init; }
     }
 }
 
-public sealed record AppPreferencesSnapshot(bool CopyFinalizedWithTimeline);
+public sealed record AppPreferencesSnapshot(
+    bool CopyFinalizedWithTimeline,
+    bool AutoTranscribeWithAi);

@@ -78,12 +78,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
     }
 
-    private void EngineComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) {
+    private void AutoTranscribeWithAiCheckBox_Checked(object sender, RoutedEventArgs e) {
         if (!IsLoaded || DataContext is not MainViewModel vm) {
-            return;
-        }
-
-        if (!vm.IsOpenAiEngineSelected) {
             return;
         }
 
@@ -91,7 +87,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             return;
         }
 
-        ShowOpenAiSettingsDialog();
+        if (ShowOpenAiSettingsDialog()) {
+            return;
+        }
+
+        vm.AutoTranscribeWithAi = false;
     }
 
     private void OpenOpenAiSettings_Click(object sender, RoutedEventArgs e) {
@@ -131,12 +131,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             return;
         }
 
-        string selectedModel = vm.SelectedEngine?.Id?.Trim() ?? string.Empty;
-        if (!OpenAiTranscriptionModelCatalog.IsSupported(selectedModel)) {
-            LogSegmentBatch("Segment transcription aborted: no supported OpenAI transcription model is selected.");
+        if (!vm.IsOpenAiEngineSelected) {
+            LogSegmentBatch("Segment transcription aborted: Auto Transcribe with AI is turned off.");
             ShowCopyToast(
                 "Segment transcription unavailable",
-                "Select a supported OpenAI transcription model first.",
+                "Turn on Auto Transcribe with AI first.",
                 ToastNotificationType.Warning);
             return;
         }
@@ -301,11 +300,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
 
         if (IsSegmentBatchTranscribing) {
             CancelSegmentBatchTranscription(vm);
-            return;
-        }
-
-        if (vm.CancelCommand.CanExecute(null)) {
-            vm.CancelCommand.Execute(null);
         }
     }
 
@@ -351,14 +345,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
     }
 
-    private void ShowOpenAiSettingsDialog() {
-        if (_isOpenAiDialogOpen || DataContext is not MainViewModel vm || !vm.IsOpenAiEngineSelected) {
-            return;
+    private bool ShowOpenAiSettingsDialog() {
+        if (DataContext is not MainViewModel vm) {
+            return false;
+        }
+
+        if (_isOpenAiDialogOpen) {
+            return !string.IsNullOrWhiteSpace(vm.OpenAiApiKey);
         }
 
         var dialog = new OpenAiSettingsWindow {
             Owner = this,
-            DataContext = DataContext,
+            DataContext = vm,
         };
 
         try {
@@ -368,6 +366,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         finally {
             _isOpenAiDialogOpen = false;
         }
+
+        return !string.IsNullOrWhiteSpace(vm.OpenAiApiKey);
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e) {
@@ -1400,11 +1400,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             return false;
         }
 
-        string selectedModel = vm.SelectedEngine?.Id?.Trim() ?? string.Empty;
-        if (!OpenAiTranscriptionModelCatalog.IsSupported(selectedModel)) {
-            LogPlaybackEdit("Playback transcription for empty transcript cells was skipped because no supported OpenAI transcription model is selected.");
+        if (!vm.IsOpenAiEngineSelected) {
+            LogPlaybackEdit("Playback transcription for empty transcript cells was skipped because Auto Transcribe with AI is turned off.");
             return false;
         }
+
+        string selectedModel = vm.SelectedEngine?.Id?.Trim() ?? OpenAiTranscriptionModelCatalog.Gpt4oTranscribe;
 
         if (!TryResolvePlaybackEditStopOffset(vm, line, out TimeSpan stopOffset)) {
             LogPlaybackEdit(
