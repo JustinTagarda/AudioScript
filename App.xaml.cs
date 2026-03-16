@@ -1,5 +1,4 @@
 using System.Net.Http;
-using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -18,11 +17,11 @@ public partial class App : System.Windows.Application {
     private EventWaitHandle? _activateEvent;
     private CancellationTokenSource? _activationListenerCts;
     private Task? _activationListenerTask;
+    private CancellationTokenSource? _startupUpdateCts;
+    private Task? _startupUpdateTask;
     private ApplicationUpdateService? _applicationUpdateService;
     private ProcessLogService? _processLogService;
     private UpdateProgressWindow? _updateProgressWindow;
-    private bool _allowMainWindowClose;
-    private int _shutdownUpdateFlowStarted;
 
     private HttpClient? _httpClient;
     private MainViewModel? _mainViewModel;
@@ -115,10 +114,12 @@ public partial class App : System.Windows.Application {
         };
         _windowPlacementService.Apply(mainWindow);
         mainWindow.Closing += (_, _) => _windowPlacementService.Save(mainWindow);
-        mainWindow.Closing += OnMainWindowClosing;
 
         MainWindow = mainWindow;
         mainWindow.Show();
+
+        _startupUpdateCts = new CancellationTokenSource();
+        _startupUpdateTask = RunStartupUpdateAsync(mainWindow, _startupUpdateCts.Token);
     }
 
     protected override void OnExit(System.Windows.ExitEventArgs e) {
@@ -126,7 +127,7 @@ public partial class App : System.Windows.Application {
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
         finally {
-            TryApplyPendingUpdates();
+            _startupUpdateCts?.Cancel();
 
             _activationListenerCts?.Cancel();
             _httpClient?.Dispose();
@@ -150,6 +151,9 @@ public partial class App : System.Windows.Application {
             _activationListenerTask = null;
             _activationListenerCts?.Dispose();
             _activationListenerCts = null;
+            _startupUpdateTask = null;
+            _startupUpdateCts?.Dispose();
+            _startupUpdateCts = null;
             _updateProgressWindow = null;
             _applicationUpdateService = null;
             _activateEvent?.Dispose();
@@ -169,73 +173,6 @@ public partial class App : System.Windows.Application {
         }
 
         base.OnExit(e);
-    }
-
-    private async void OnMainWindowClosing(object? sender, CancelEventArgs e) {
-        if (_allowMainWindowClose) {
-            return;
-        }
-
-        if (sender is not MainWindow mainWindow || _applicationUpdateService is null) {
-            return;
-        }
-
-        if (Interlocked.Exchange(ref _shutdownUpdateFlowStarted, 1) != 0) {
-            e.Cancel = true;
-            return;
-        }
-
-        e.Cancel = true;
-
-        try {
-            ApplicationExitUpdateCheckResult checkResult =
-                await _applicationUpdateService.CheckForUpdateOnExitAsync(CancellationToken.None);
-
-            if (!checkResult.ShouldInstallOnExit) {
-                _allowMainWindowClose = true;
-                mainWindow.Close();
-                return;
-            }
-
-            UpdateProgressWindow progressWindow = ShowUpdateProgressWindow(mainWindow);
-
-            if (checkResult.Update is not null) {
-                progressWindow.ShowDownloading(checkResult.TargetVersion, progressPercent: 0);
-            }
-            else {
-                progressWindow.ShowInstalling(checkResult.TargetVersion);
-            }
-
-            await mainWindow.PrepareForRequiredUpdateShutdownAsync();
-
-            if (checkResult.Update is not null) {
-                var progress = new Progress<int>(value =>
-                    progressWindow.ShowDownloading(checkResult.TargetVersion, value));
-
-                bool isReadyToInstall = await _applicationUpdateService.DownloadUpdateOnExitAsync(
-                    checkResult.Update,
-                    progress,
-                    CancellationToken.None);
-
-                if (!isReadyToInstall) {
-                    CloseUpdateProgressWindow();
-                    _allowMainWindowClose = true;
-                    mainWindow.Close();
-                    return;
-                }
-            }
-
-            progressWindow.ShowInstalling(checkResult.TargetVersion);
-            progressWindow.AllowClose();
-            _allowMainWindowClose = true;
-            mainWindow.Close();
-        }
-        catch (Exception ex) {
-            _processLogService?.Log("AutoUpdate", $"Exit update flow failed unexpectedly: {ex.Message}");
-            CloseUpdateProgressWindow();
-            _allowMainWindowClose = true;
-            mainWindow.Close();
-        }
     }
 
     private void ListenForActivationRequests(CancellationToken cancellationToken) {
@@ -283,16 +220,59 @@ public partial class App : System.Windows.Application {
         MainWindow.Focus();
     }
 
-    private void TryApplyPendingUpdates() {
+    private async Task RunStartupUpdateAsync(MainWindow mainWindow, CancellationToken cancellationToken) {
         if (_applicationUpdateService is null) {
             return;
         }
 
         try {
-            _applicationUpdateService.ApplyPendingUpdatesOnExitAsync().GetAwaiter().GetResult();
+            ApplicationStartupUpdateCheckResult checkResult =
+                await _applicationUpdateService.CheckForUpdateOnStartupAsync(cancellationToken);
+
+            if (cancellationToken.IsCancellationRequested
+                || !checkResult.ShouldRestartForUpdate
+                || !mainWindow.IsLoaded) {
+                return;
+            }
+
+            UpdateProgressWindow progressWindow = ShowUpdateProgressWindow(mainWindow);
+
+            if (checkResult.Update is not null) {
+                progressWindow.ShowDownloading(checkResult.TargetVersion, progressPercent: 0);
+
+                var progress = new Progress<int>(value =>
+                    progressWindow.ShowDownloading(checkResult.TargetVersion, value));
+
+                bool isReadyToRestart = await _applicationUpdateService.DownloadUpdateOnStartupAsync(
+                    checkResult.Update,
+                    progress,
+                    cancellationToken);
+
+                if (!isReadyToRestart || cancellationToken.IsCancellationRequested) {
+                    CloseUpdateProgressWindow();
+                    return;
+                }
+            }
+
+            if (cancellationToken.IsCancellationRequested || !mainWindow.IsLoaded) {
+                CloseUpdateProgressWindow();
+                return;
+            }
+
+            await mainWindow.PrepareForRequiredUpdateShutdownAsync();
+            progressWindow.ShowInstalling(checkResult.TargetVersion);
+            await Task.Delay(TimeSpan.FromMilliseconds(600), cancellationToken);
+            progressWindow.ShowCompletedAndRestarting(checkResult.TargetVersion);
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            progressWindow.AllowClose();
+            _applicationUpdateService.ApplyPendingUpdateAndRestart();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            CloseUpdateProgressWindow();
         }
         catch (Exception ex) {
-            _processLogService?.Log("AutoUpdate", $"Failed to apply a staged update during shutdown: {ex.Message}");
+            _processLogService?.Log("AutoUpdate", $"Startup update flow failed unexpectedly: {ex.Message}");
+            CloseUpdateProgressWindow();
         }
     }
 
@@ -323,7 +303,7 @@ public partial class App : System.Windows.Application {
         _updateProgressWindow.Closed += (_, _) => {
             _updateProgressWindow = null;
 
-            if (!_allowMainWindowClose && owner.IsLoaded) {
+            if (owner.IsLoaded) {
                 owner.IsEnabled = true;
             }
         };

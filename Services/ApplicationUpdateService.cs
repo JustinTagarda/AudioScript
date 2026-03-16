@@ -36,47 +36,47 @@ public sealed class ApplicationUpdateService {
 
     public string FooterStatusText => _footerStatusText;
 
-    public async Task<ApplicationExitUpdateCheckResult> CheckForUpdateOnExitAsync(CancellationToken cancellationToken) {
+    public async Task<ApplicationStartupUpdateCheckResult> CheckForUpdateOnStartupAsync(CancellationToken cancellationToken) {
         if (_updateManager is null) {
-            return ApplicationExitUpdateCheckResult.None;
+            return ApplicationStartupUpdateCheckResult.None;
         }
 
         if (!_updateManager.IsInstalled) {
             Log("Skipping update check because this copy is not installed by Velopack.");
-            return ApplicationExitUpdateCheckResult.None;
+            return ApplicationStartupUpdateCheckResult.None;
         }
 
         if (_pendingUpdate is not null) {
-            Log($"Using previously-downloaded update {_pendingUpdate.Version} during shutdown.");
-            return new ApplicationExitUpdateCheckResult(
+            Log($"Using previously-downloaded update {_pendingUpdate.Version} during startup.");
+            return new ApplicationStartupUpdateCheckResult(
                 Update: null,
                 TargetVersion: _pendingUpdate.Version.ToString(),
                 HasPendingUpdate: true);
         }
 
-        Log($"Checking for updates from {ApplicationDeploymentInfo.ReleaseRepoUrl} before exit.");
+        Log($"Checking for updates from {ApplicationDeploymentInfo.ReleaseRepoUrl} during startup.");
 
         UpdateInfo? update = await _updateManager.CheckForUpdatesAsync();
         if (cancellationToken.IsCancellationRequested) {
-            return ApplicationExitUpdateCheckResult.None;
+            return ApplicationStartupUpdateCheckResult.None;
         }
 
         if (update is null) {
             Log("No updates are available.");
             SetFooterStatus(BuildInstalledVersionStatus());
-            return ApplicationExitUpdateCheckResult.None;
+            return ApplicationStartupUpdateCheckResult.None;
         }
 
         string targetVersion = update.TargetFullRelease.Version.ToString();
-        Log($"Update {targetVersion} is available for installation during shutdown.");
+        Log($"Update {targetVersion} is available during startup.");
 
-        return new ApplicationExitUpdateCheckResult(
+        return new ApplicationStartupUpdateCheckResult(
             Update: update,
             TargetVersion: targetVersion,
             HasPendingUpdate: false);
     }
 
-    public async Task<bool> DownloadUpdateOnExitAsync(
+    public async Task<bool> DownloadUpdateOnStartupAsync(
         UpdateInfo update,
         IProgress<int>? progress,
         CancellationToken cancellationToken) {
@@ -85,7 +85,7 @@ public sealed class ApplicationUpdateService {
         }
 
         string targetVersion = update.TargetFullRelease.Version.ToString();
-        Log($"Downloading update {targetVersion} before exit.");
+        Log($"Downloading update {targetVersion} during startup.");
         SetFooterStatus(BuildDownloadStatus(targetVersion, 0));
         progress?.Report(0);
 
@@ -108,7 +108,7 @@ public sealed class ApplicationUpdateService {
         _pendingUpdate = _updateManager.UpdatePendingRestart;
 
         if (_pendingUpdate is not null) {
-            Log($"Update {_pendingUpdate.Version} is ready and will be installed during shutdown.");
+            Log($"Update {_pendingUpdate.Version} is ready and the app will restart to install it.");
             SetFooterStatus(BuildReadyOnExitStatus(_pendingUpdate.Version.ToString()));
             progress?.Report(100);
             return true;
@@ -119,7 +119,7 @@ public sealed class ApplicationUpdateService {
         return false;
     }
 
-    public async Task ApplyPendingUpdatesOnExitAsync() {
+    public void ApplyPendingUpdateAndRestart() {
         if (_updateManager is null || _pendingUpdate is null) {
             return;
         }
@@ -127,13 +127,9 @@ public sealed class ApplicationUpdateService {
         VelopackAsset updateToApply = _pendingUpdate;
         _pendingUpdate = null;
 
-        Log($"Applying staged update {updateToApply.Version} during shutdown.");
-        SetFooterStatus(BuildApplyingStatus(updateToApply.Version.ToString()));
-        await _updateManager.WaitExitThenApplyUpdatesAsync(
-            updateToApply,
-            silent: true,
-            restart: false,
-            restartArgs: Array.Empty<string>());
+        Log($"Restarting to apply staged update {updateToApply.Version}.");
+        SetFooterStatus(BuildRestartingStatus(updateToApply.Version.ToString()));
+        _updateManager.ApplyUpdatesAndRestart(updateToApply, Array.Empty<string>());
     }
 
     private void Log(string message) {
@@ -159,11 +155,15 @@ public sealed class ApplicationUpdateService {
     }
 
     private static string BuildReadyOnExitStatus(string targetVersion) {
-        return $"{BuildInstalledVersionStatus()} · Update {targetVersion} ready on exit";
+        return $"{BuildInstalledVersionStatus()} · Update {targetVersion} ready to restart";
     }
 
     private static string BuildApplyingStatus(string targetVersion) {
         return $"{BuildInstalledVersionStatus()} · Installing {targetVersion}...";
+    }
+
+    private static string BuildRestartingStatus(string targetVersion) {
+        return $"{BuildInstalledVersionStatus()} · Restarting for {targetVersion}...";
     }
 
     private static string FormatCurrentVersion(Version version) {
@@ -179,12 +179,12 @@ public sealed class ApplicationUpdateService {
     }
 }
 
-public sealed record ApplicationExitUpdateCheckResult(
+public sealed record ApplicationStartupUpdateCheckResult(
     UpdateInfo? Update,
     string TargetVersion,
     bool HasPendingUpdate) {
-    public static ApplicationExitUpdateCheckResult None { get; } =
+    public static ApplicationStartupUpdateCheckResult None { get; } =
         new(Update: null, TargetVersion: string.Empty, HasPendingUpdate: false);
 
-    public bool ShouldInstallOnExit => HasPendingUpdate || Update is not null;
+    public bool ShouldRestartForUpdate => HasPendingUpdate || Update is not null;
 }

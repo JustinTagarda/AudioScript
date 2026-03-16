@@ -15,7 +15,7 @@ public partial class UpdateProgressWindow : Window {
 
         StatusTitleText.Text = "Downloading update";
         StatusMessageText.Text =
-            $"AudioTranscript is downloading version {targetVersion}. The app will close automatically when the update is ready.";
+            $"AudioTranscript is downloading version {targetVersion}. Please wait while the update is prepared.";
         StatusProgressBar.IsIndeterminate = false;
         StatusProgressBar.Value = clampedProgress;
         ProgressText.Text = $"{clampedProgress}%";
@@ -24,9 +24,18 @@ public partial class UpdateProgressWindow : Window {
     public void ShowInstalling(string targetVersion) {
         StatusTitleText.Text = "Installing update";
         StatusMessageText.Text =
-            $"AudioTranscript is installing version {targetVersion}. Please wait while the app closes automatically.";
+            $"AudioTranscript is finalizing version {targetVersion}. Please wait while the app prepares to restart.";
         StatusProgressBar.IsIndeterminate = true;
         ProgressText.Text = "Installing...";
+    }
+
+    public void ShowCompletedAndRestarting(string targetVersion) {
+        StatusTitleText.Text = "Update completed";
+        StatusMessageText.Text =
+            $"Version {targetVersion} is ready. AudioTranscript will restart automatically.";
+        StatusProgressBar.IsIndeterminate = false;
+        StatusProgressBar.Value = 100;
+        ProgressText.Text = "Restarting...";
     }
 
     public void AllowClose() {
