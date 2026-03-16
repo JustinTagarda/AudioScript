@@ -1,0 +1,89 @@
+<Window x:Class="AudioTranscript.UpdateProgressWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Updating AudioTranscript"
+        Icon="pack://application:,,,/Assets/AudioTranscript.ico"
+        Width="440"
+        MinWidth="420"
+        MinHeight="220"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStyle="None"
+        Background="#FFF4F7F8">
+    <Border Margin="16"
+            Background="#CCFFFFFF"
+            BorderBrush="#55B7CAD2"
+            BorderThickness="1"
+            CornerRadius="16"
+            Padding="20">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0"
+                    Width="54"
+                    Height="54"
+                    HorizontalAlignment="Left"
+                    Background="#FFDFF2F8"
+                    BorderBrush="#FF9FD3E5"
+                    BorderThickness="1"
+                    CornerRadius="27">
+                <Viewbox Width="26"
+                         Height="26"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center">
+                    <Grid Width="26"
+                          Height="26">
+                        <Ellipse Fill="#FF2994BA" />
+                        <Path Fill="#FFFFFFFF"
+                              Data="M7.6,13.2 11.1,16.7 18.4,9.4 20,11 11.1,19.9 6,14.8 Z" />
+                    </Grid>
+                </Viewbox>
+            </Border>
+
+            <TextBlock x:Name="StatusTitleText"
+                       Grid.Row="1"
+                       Margin="0,16,0,0"
+                       Text="Preparing update"
+                       FontFamily="Bahnschrift"
+                       FontSize="24"
+                       Foreground="#FF15232D"
+                       TextWrapping="Wrap" />
+
+            <TextBlock x:Name="StatusMessageText"
+                       Grid.Row="2"
+                       Margin="0,12,0,0"
+                       FontFamily="Segoe UI Variable Text"
+                       FontSize="13"
+                       Foreground="#FF49616F"
+                       TextWrapping="Wrap"
+                       Text="AudioTranscript is downloading the latest version. The app will close automatically when the update is ready." />
+
+            <StackPanel Grid.Row="3"
+                        Margin="0,18,0,0">
+                <ProgressBar x:Name="StatusProgressBar"
+                             Height="12"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             Foreground="#FF2994BA"
+                             Background="#FFE6EEF1" />
+                <TextBlock x:Name="ProgressText"
+                           Margin="0,8,0,0"
+                           FontFamily="Segoe UI Variable Text"
+                           FontSize="12"
+                           Foreground="#FF49616F"
+                           Text="0%" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

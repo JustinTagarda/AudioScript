@@ -35,61 +35,88 @@ public sealed class ApplicationUpdateService {
     public event EventHandler? StatusChanged;
 
     public string FooterStatusText => _footerStatusText;
-    public async Task CheckForUpdatesAsync(CancellationToken cancellationToken) {
+
+    public async Task<ApplicationExitUpdateCheckResult> CheckForUpdateOnExitAsync(CancellationToken cancellationToken) {
         if (_updateManager is null) {
-            return;
+            return ApplicationExitUpdateCheckResult.None;
         }
 
         if (!_updateManager.IsInstalled) {
             Log("Skipping update check because this copy is not installed by Velopack.");
-            return;
+            return ApplicationExitUpdateCheckResult.None;
         }
 
         if (_pendingUpdate is not null) {
-            Log("Skipping update check because an update is already staged for shutdown.");
-            return;
+            Log($"Using previously-downloaded update {_pendingUpdate.Version} during shutdown.");
+            return new ApplicationExitUpdateCheckResult(
+                Update: null,
+                TargetVersion: _pendingUpdate.Version.ToString(),
+                HasPendingUpdate: true);
         }
 
-        Log($"Checking for updates from {ApplicationDeploymentInfo.ReleaseRepoUrl}.");
+        Log($"Checking for updates from {ApplicationDeploymentInfo.ReleaseRepoUrl} before exit.");
 
         UpdateInfo? update = await _updateManager.CheckForUpdatesAsync();
         if (cancellationToken.IsCancellationRequested) {
-            return;
+            return ApplicationExitUpdateCheckResult.None;
         }
 
         if (update is null) {
             Log("No updates are available.");
             SetFooterStatus(BuildInstalledVersionStatus());
-            return;
+            return ApplicationExitUpdateCheckResult.None;
         }
 
-        Log($"Update {update.TargetFullRelease.Version} is available. Downloading in the background.");
-        SetFooterStatus(BuildDownloadStatus(update.TargetFullRelease.Version.ToString(), 0));
+        string targetVersion = update.TargetFullRelease.Version.ToString();
+        Log($"Update {targetVersion} is available for installation during shutdown.");
+
+        return new ApplicationExitUpdateCheckResult(
+            Update: update,
+            TargetVersion: targetVersion,
+            HasPendingUpdate: false);
+    }
+
+    public async Task<bool> DownloadUpdateOnExitAsync(
+        UpdateInfo update,
+        IProgress<int>? progress,
+        CancellationToken cancellationToken) {
+        if (_updateManager is null) {
+            return false;
+        }
+
+        string targetVersion = update.TargetFullRelease.Version.ToString();
+        Log($"Downloading update {targetVersion} before exit.");
+        SetFooterStatus(BuildDownloadStatus(targetVersion, 0));
+        progress?.Report(0);
 
         int lastLoggedProgress = -10;
         await _updateManager.DownloadUpdatesAsync(
             update,
-            progress => {
-                SetFooterStatus(BuildDownloadStatus(update.TargetFullRelease.Version.ToString(), progress));
-                if (progress < 100 && progress < lastLoggedProgress + 10) {
+            progressValue => {
+                SetFooterStatus(BuildDownloadStatus(targetVersion, progressValue));
+                progress?.Report(progressValue);
+
+                if (progressValue < 100 && progressValue < lastLoggedProgress + 10) {
                     return;
                 }
 
-                lastLoggedProgress = progress;
-                Log($"Download progress: {progress}%");
+                lastLoggedProgress = progressValue;
+                Log($"Download progress: {progressValue}%");
             },
             cancellationToken);
 
         _pendingUpdate = _updateManager.UpdatePendingRestart;
 
         if (_pendingUpdate is not null) {
-            Log($"Update {_pendingUpdate.Version} is ready and will be applied when the app exits.");
+            Log($"Update {_pendingUpdate.Version} is ready and will be installed during shutdown.");
             SetFooterStatus(BuildReadyOnExitStatus(_pendingUpdate.Version.ToString()));
+            progress?.Report(100);
+            return true;
         }
-        else {
-            Log("Update download completed, but no pending update was registered.");
-            SetFooterStatus(BuildInstalledVersionStatus());
-        }
+
+        Log("Update download completed, but no pending update was registered.");
+        SetFooterStatus(BuildInstalledVersionStatus());
+        return false;
     }
 
     public async Task ApplyPendingUpdatesOnExitAsync() {
@@ -150,4 +177,14 @@ public sealed class ApplicationUpdateService {
 
         return version.ToString(2);
     }
+}
+
+public sealed record ApplicationExitUpdateCheckResult(
+    UpdateInfo? Update,
+    string TargetVersion,
+    bool HasPendingUpdate) {
+    public static ApplicationExitUpdateCheckResult None { get; } =
+        new(Update: null, TargetVersion: string.Empty, HasPendingUpdate: false);
+
+    public bool ShouldInstallOnExit => HasPendingUpdate || Update is not null;
 }
