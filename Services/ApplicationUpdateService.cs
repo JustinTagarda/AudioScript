@@ -1,7 +1,7 @@
 using Velopack;
 using Velopack.Sources;
 
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
 public sealed class ApplicationUpdateService {
     private readonly ProcessLogService _processLogService;
@@ -188,3 +188,5 @@ public sealed record ApplicationStartupUpdateCheckResult(
 
     public bool ShouldRestartForUpdate => HasPendingUpdate || Update is not null;
 }
+
+

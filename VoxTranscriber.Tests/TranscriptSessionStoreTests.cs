@@ -1,8 +1,8 @@
 using System.Text;
-using AudioTranscript.Services;
+using VoxTranscriber.Services;
 using Xunit;
 
-namespace AudioTranscript.Tests;
+namespace VoxTranscriber.Tests;
 
 public sealed class TranscriptSessionStoreTests {
     [Fact]
@@ -209,13 +209,13 @@ public sealed class TranscriptSessionStoreTests {
     }
 
     private static string CreateTempDirectory() {
-        string path = Path.Combine(Path.GetTempPath(), $"audiotranscript-session-tests-{Guid.NewGuid():N}");
+        string path = Path.Combine(Path.GetTempPath(), $"VoxTranscriber-session-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }
 
     private static string CreateSilentWaveFile(long dataBytes) {
-        string path = Path.Combine(Path.GetTempPath(), $"audiotranscript-session-audio-{Guid.NewGuid():N}.wav");
+        string path = Path.Combine(Path.GetTempPath(), $"VoxTranscriber-session-audio-{Guid.NewGuid():N}.wav");
         int sampleRate = 16000;
         short channels = 1;
         short bitsPerSample = 16;
@@ -251,3 +251,5 @@ public sealed class TranscriptSessionStoreTests {
         Directory.Delete(path, recursive: true);
     }
 }
+
+

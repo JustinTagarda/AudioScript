@@ -1,6 +1,6 @@
 using System.Net.Http;
 
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
 public sealed class ApplicationVersionCheckService {
     private static readonly Uri[] DefaultOnlineDateCheckEndpoints = {
@@ -13,7 +13,7 @@ public sealed class ApplicationVersionCheckService {
     public const string ReferenceTimeZoneDisplayName = "Philippine Time";
 
     public const string UpdateRequiredMessage =
-        "This version of AudioTranscript needs an update. Please contact Justin Tagarda at justintagarda@gmail.com to get the latest version.";
+        "This version of VoxTranscriber needs an update. Please contact Justin Tagarda at justintagarda@gmail.com to get the latest version.";
 
     private readonly HttpClient _httpClient;
     private readonly ProcessLogService _processLogService;
@@ -174,3 +174,5 @@ public sealed record ApplicationVersionCheckResult(
     string TimeSource,
     string UpdateMessage
 );
+
+

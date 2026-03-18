@@ -1,11 +1,14 @@
 using NAudio.Wave;
 
-namespace AudioTranscript.Abstractions;
+namespace VoxTranscriber.Abstractions;
 
-public interface IPlaybackAudioTranscriptionService {
+public interface IPlaybackTranscriptionService {
     Task<string> TranscribePcmChunkAsync(
         byte[] pcmAudio,
         WaveFormat sourceFormat,
         string model,
         CancellationToken cancellationToken);
 }
+
+
+

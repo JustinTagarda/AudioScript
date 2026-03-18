@@ -1,4 +1,4 @@
-namespace AudioTranscript.Abstractions;
+namespace VoxTranscriber.Abstractions;
 
 public sealed record TranscriptionResult(
     string Text,
@@ -9,3 +9,5 @@ public sealed record TranscriptionResult(
     IReadOnlyList<LowConfidenceToken> LowConfidenceTokens,
     IReadOnlyList<TranscriptionTimedLine>? TimedLines = null
 );
+
+

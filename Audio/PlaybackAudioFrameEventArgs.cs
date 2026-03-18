@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace AudioTranscript.Audio;
+namespace VoxTranscriber.Audio;
 
 public sealed class PlaybackAudioFrameEventArgs : EventArgs {
     public PlaybackAudioFrameEventArgs(byte[] buffer, WaveFormat waveFormat) {
@@ -17,3 +17,5 @@ public sealed class PlaybackAudioFrameEventArgs : EventArgs {
 
     public WaveFormat WaveFormat { get; }
 }
+
+

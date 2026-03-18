@@ -3,11 +3,11 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows.Threading;
-using AudioTranscript.Abstractions;
-using AudioTranscript.Audio;
-using AudioTranscript.Services;
+using VoxTranscriber.Abstractions;
+using VoxTranscriber.Audio;
+using VoxTranscriber.Services;
 
-namespace AudioTranscript.ViewModels;
+namespace VoxTranscriber.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private const int SeekStepSeconds = 5;
@@ -1731,3 +1731,5 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return new EngineOptionViewModel(new TranscriptionModelOption(id, fallbackDisplayName));
     }
 }
+
+

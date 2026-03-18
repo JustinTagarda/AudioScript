@@ -6,7 +6,7 @@ using Path = System.IO.Path;
 using Directory = System.IO.Directory;
 using File = System.IO.File;
 
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
 public sealed class WindowPlacementService {
     private static readonly JsonSerializerOptions JsonOptions = new() {
@@ -18,7 +18,7 @@ public sealed class WindowPlacementService {
     public WindowPlacementService() {
         var appDataDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "AudioTranscript");
+            "VoxTranscriber");
         _stateFilePath = Path.Combine(appDataDirectory, "window-placement.json");
     }
 
@@ -195,3 +195,5 @@ public sealed class WindowPlacementService {
         public string? ScreenDeviceName { get; init; }
     }
 }
+
+

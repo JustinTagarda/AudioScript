@@ -1,4 +1,4 @@
-<Application x:Class="AudioTranscript.App"
+<Application x:Class="VoxTranscriber.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
@@ -161,3 +161,5 @@
         </Style>
     </Application.Resources>
 </Application>
+
+

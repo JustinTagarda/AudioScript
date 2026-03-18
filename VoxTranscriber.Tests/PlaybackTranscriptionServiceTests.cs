@@ -1,14 +1,14 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
-using AudioTranscript.Audio;
-using AudioTranscript.Services;
+using VoxTranscriber.Audio;
+using VoxTranscriber.Services;
 using NAudio.Wave;
 using Xunit;
 
-namespace AudioTranscript.Tests;
+namespace VoxTranscriber.Tests;
 
-public sealed class PlaybackAudioTranscriptionServiceTests {
+public sealed class PlaybackTranscriptionServiceTests {
     [Fact]
     public async Task TranscribePcmChunkAsync_UsesPlaybackRequestShape_AndParsesText() {
         var handler = new CapturingHttpMessageHandler((_, _) => Task.FromResult(
@@ -20,7 +20,7 @@ public sealed class PlaybackAudioTranscriptionServiceTests {
             }));
 
         using var httpClient = new HttpClient(handler);
-        var service = new PlaybackAudioTranscriptionService(
+        var service = new PlaybackTranscriptionService(
             new AudioStandardizer(),
             httpClient,
             new OpenAiTranscriptionOptions {
@@ -86,7 +86,7 @@ public sealed class PlaybackAudioTranscriptionServiceTests {
         });
 
         using var httpClient = new HttpClient(handler);
-        var service = new PlaybackAudioTranscriptionService(
+        var service = new PlaybackTranscriptionService(
             new AudioStandardizer(),
             httpClient,
             new OpenAiTranscriptionOptions {
@@ -151,3 +151,6 @@ public sealed class PlaybackAudioTranscriptionServiceTests {
         }
     }
 }
+
+
+

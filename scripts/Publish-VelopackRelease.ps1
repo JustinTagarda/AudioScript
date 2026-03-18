@@ -1,5 +1,5 @@
 param(
-    [string]$ProjectPath = "AudioTranscript.csproj",
+    [string]$ProjectPath = "VoxTranscriber.csproj",
     [string]$Configuration = "Release",
     [string]$RuntimeId = "win-x64",
     [string]$OutputRoot = "artifacts/velopack",
@@ -69,12 +69,12 @@ if (-not (Test-Path $projectFullPath)) {
 [xml]$projectXml = Get-Content $projectFullPath
 
 $packId = Get-ProjectProperty -ProjectXml $projectXml -Name "VelopackPackId"
-$packTitle = Get-ProjectProperty -ProjectXml $projectXml -Name "VelopackPackTitle" -Fallback "AudioTranscript"
+$packTitle = Get-ProjectProperty -ProjectXml $projectXml -Name "VelopackPackTitle" -Fallback "VoxTranscriber"
 $packAuthors = Get-ProjectProperty -ProjectXml $projectXml -Name "VelopackPackAuthors"
-$mainExe = Get-ProjectProperty -ProjectXml $projectXml -Name "VelopackMainExe" -Fallback "AudioTranscript.exe"
+$mainExe = Get-ProjectProperty -ProjectXml $projectXml -Name "VelopackMainExe" -Fallback "VoxTranscriber.exe"
 $channel = Get-ProjectProperty -ProjectXml $projectXml -Name "VelopackReleaseChannel" -Fallback "win"
 $defaultRepoUrl = Get-ProjectProperty -ProjectXml $projectXml -Name "VelopackReleaseRepoUrl"
-$iconPath = Join-Path $repoRoot "assets\AudioTranscript.ico"
+$iconPath = Join-Path $repoRoot "assets\VoxTranscriber.ico"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = Get-ProjectProperty -ProjectXml $projectXml -Name "Version"
@@ -207,3 +207,5 @@ try {
 finally {
     Pop-Location
 }
+
+

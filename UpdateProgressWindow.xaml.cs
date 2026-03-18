@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 
-namespace AudioTranscript;
+namespace VoxTranscriber;
 
 public partial class UpdateProgressWindow : Window {
     private bool _allowClose;
@@ -15,7 +15,7 @@ public partial class UpdateProgressWindow : Window {
 
         StatusTitleText.Text = "Downloading update";
         StatusMessageText.Text =
-            $"AudioTranscript is downloading version {targetVersion}. Please wait while the update is prepared.";
+            $"VoxTranscriber is downloading version {targetVersion}. Please wait while the update is prepared.";
         StatusProgressBar.IsIndeterminate = false;
         StatusProgressBar.Value = clampedProgress;
         ProgressText.Text = $"{clampedProgress}%";
@@ -24,7 +24,7 @@ public partial class UpdateProgressWindow : Window {
     public void ShowInstalling(string targetVersion) {
         StatusTitleText.Text = "Installing update";
         StatusMessageText.Text =
-            $"AudioTranscript is finalizing version {targetVersion}. Please wait while the app prepares to restart.";
+            $"VoxTranscriber is finalizing version {targetVersion}. Please wait while the app prepares to restart.";
         StatusProgressBar.IsIndeterminate = true;
         ProgressText.Text = "Installing...";
     }
@@ -32,7 +32,7 @@ public partial class UpdateProgressWindow : Window {
     public void ShowCompletedAndRestarting(string targetVersion) {
         StatusTitleText.Text = "Update completed";
         StatusMessageText.Text =
-            $"Version {targetVersion} is ready. AudioTranscript will restart automatically.";
+            $"Version {targetVersion} is ready. VoxTranscriber will restart automatically.";
         StatusProgressBar.IsIndeterminate = false;
         StatusProgressBar.Value = 100;
         ProgressText.Text = "Restarting...";
@@ -51,3 +51,5 @@ public partial class UpdateProgressWindow : Window {
         base.OnClosing(e);
     }
 }
+
+

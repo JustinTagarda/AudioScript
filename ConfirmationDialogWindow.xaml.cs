@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace AudioTranscript;
+namespace VoxTranscriber;
 
 public partial class ConfirmationDialogWindow : Window {
     public ConfirmationDialogWindow(
@@ -24,3 +24,5 @@ public partial class ConfirmationDialogWindow : Window {
         DialogResult = true;
     }
 }
+
+

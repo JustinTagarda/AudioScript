@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
-  <title id="title">AudioTranscript app icon</title>
+  <title id="title">VoxTranscriber app icon</title>
   <desc id="desc">A compact icon combining playback audio bars and transcript lines inside a rounded square.</desc>
 
   <defs>
@@ -52,3 +52,5 @@
     <path d="M90 90l18 4-11 15z" fill="#F2BE5C"/>
   </g>
 </svg>
+
+

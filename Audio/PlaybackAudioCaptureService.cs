@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace AudioTranscript.Audio;
+namespace VoxTranscriber.Audio;
 
 public sealed class PlaybackAudioCaptureService : IAudioLoopbackCaptureService {
     private readonly object _sync = new();
@@ -99,3 +99,5 @@ public sealed class PlaybackAudioCaptureService : IAudioLoopbackCaptureService {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 }
+
+

@@ -1,4 +1,4 @@
-namespace AudioTranscript.ViewModels;
+namespace VoxTranscriber.ViewModels;
 
 public sealed class ProcessLogEntryViewModel {
     public ProcessLogEntryViewModel(string time, string message) {
@@ -10,3 +10,5 @@ public sealed class ProcessLogEntryViewModel {
 
     public string Message { get; }
 }
+
+

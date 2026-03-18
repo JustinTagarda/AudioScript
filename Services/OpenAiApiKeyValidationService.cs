@@ -4,7 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text.Json;
 
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
 public sealed class OpenAiApiKeyValidationService {
     private readonly HttpClient _httpClient;
@@ -108,3 +108,5 @@ public sealed record OpenAiApiKeyValidationResult(bool IsValid, string Message) 
     public static OpenAiApiKeyValidationResult Invalid(string message) =>
         new(false, message);
 }
+
+

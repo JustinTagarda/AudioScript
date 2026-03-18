@@ -1,4 +1,4 @@
-namespace AudioTranscript.Abstractions;
+namespace VoxTranscriber.Abstractions;
 
 public sealed record TranscriptionTokenLogprob(
     string Token,
@@ -11,3 +11,5 @@ public sealed record LowConfidenceToken(
     double Logprob,
     int? Index
 );
+
+

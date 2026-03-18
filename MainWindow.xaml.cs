@@ -13,13 +13,13 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using AudioTranscript.Abstractions;
-using AudioTranscript.Services;
-using AudioTranscript.ViewModels;
+using VoxTranscriber.Abstractions;
+using VoxTranscriber.Services;
+using VoxTranscriber.ViewModels;
 using DataGridCell = System.Windows.Controls.DataGridCell;
 using DataGridCellsPresenter = System.Windows.Controls.Primitives.DataGridCellsPresenter;
 
-namespace AudioTranscript;
+namespace VoxTranscriber;
 
 public partial class MainWindow : Window, INotifyPropertyChanged {
     private const int TimelineColumnIndex = 0;
@@ -2461,3 +2461,5 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         Exception? Failure
     );
 }
+
+

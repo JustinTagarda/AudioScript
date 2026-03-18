@@ -1,6 +1,6 @@
-using AudioTranscript.Abstractions;
+using VoxTranscriber.Abstractions;
 
-namespace AudioTranscript.ViewModels;
+namespace VoxTranscriber.ViewModels;
 
 public sealed class EngineOptionViewModel {
     public EngineOptionViewModel(TranscriptionModelOption model) {
@@ -17,3 +17,5 @@ public sealed class EngineOptionViewModel {
         return DisplayName;
     }
 }
+
+

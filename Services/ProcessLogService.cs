@@ -1,4 +1,4 @@
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
 public sealed class ProcessLogService {
     public event EventHandler<string>? LogEmitted;
@@ -18,3 +18,5 @@ public sealed class ProcessLogService {
         LogEmitted?.Invoke(this, payload);
     }
 }
+
+

@@ -1,16 +1,16 @@
-using AudioTranscript.Abstractions;
-using AudioTranscript.Audio;
-using AudioTranscript.Services;
+using VoxTranscriber.Abstractions;
+using VoxTranscriber.Audio;
+using VoxTranscriber.Services;
 using NAudio.Wave;
 using Xunit;
 
-namespace AudioTranscript.Tests;
+namespace VoxTranscriber.Tests;
 
 public sealed class PlaybackTranscriptionSessionTests {
     [Fact]
     public async Task Session_EmitsInterimUpdate_AndFlushesFinalTextOnStop() {
         var captureService = new FakeLoopbackCaptureService();
-        var transcriptionService = new FakePlaybackAudioTranscriptionService();
+        var transcriptionService = new FakePlaybackTranscriptionService();
         var processLogService = new ProcessLogService();
         var session = new PlaybackTranscriptionSession(
             captureService,
@@ -58,7 +58,7 @@ public sealed class PlaybackTranscriptionSessionTests {
     [Fact]
     public async Task Session_FinalizesCompletedWindows_AndFlushesRemainingAudio() {
         var captureService = new FakeLoopbackCaptureService();
-        var transcriptionService = new FakePlaybackAudioTranscriptionService();
+        var transcriptionService = new FakePlaybackTranscriptionService();
         var session = new PlaybackTranscriptionSession(
             captureService,
             transcriptionService,
@@ -104,7 +104,7 @@ public sealed class PlaybackTranscriptionSessionTests {
     public void Session_StartsOnlyOnce() {
         var session = new PlaybackTranscriptionSession(
             new FakeLoopbackCaptureService(),
-            new FakePlaybackAudioTranscriptionService(),
+            new FakePlaybackTranscriptionService(),
             new ProcessLogService());
 
         session.StartPlaybackTranscription(OpenAiTranscriptionModelCatalog.Gpt4oMiniTranscribe);
@@ -169,7 +169,7 @@ public sealed class PlaybackTranscriptionSessionTests {
         }
     }
 
-    private sealed class FakePlaybackAudioTranscriptionService : IPlaybackAudioTranscriptionService {
+    private sealed class FakePlaybackTranscriptionService : IPlaybackTranscriptionService {
         public List<int> SeenByteCounts { get; } = new();
 
         public Task<string> TranscribePcmChunkAsync(
@@ -182,3 +182,6 @@ public sealed class PlaybackTranscriptionSessionTests {
         }
     }
 }
+
+
+

@@ -2,7 +2,7 @@
 
 ## Objective
 
-Refactor the project AudioTranscript to **completely replace** the current audio transcription implementation with a new OpenAI Audio Transcriptions integration optimized for the following real-world input:
+Refactor the project VoxTranscriber to **completely replace** the current audio transcription implementation with a new OpenAI Audio Transcriptions integration optimized for the following real-world input:
 
 - classroom recording captured on a **mobile phone**
 - **background student voices** and ambient noise
@@ -377,3 +377,5 @@ That means:
 Inspect the current codebase first, then perform the refactor end-to-end.
 
 Do not guess at project structure. Use the actual existing files and architecture. Remove the old transcription implementation cleanly, then integrate the new OpenAI transcription implementation with the settings specified above while keeping the UI unchanged.
+
+

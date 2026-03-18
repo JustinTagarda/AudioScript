@@ -5,13 +5,13 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text.Json;
-using AudioTranscript.Abstractions;
-using AudioTranscript.Audio;
+using VoxTranscriber.Abstractions;
+using VoxTranscriber.Audio;
 using NAudio.Wave;
 
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
-public sealed class PlaybackAudioTranscriptionService : IPlaybackAudioTranscriptionService {
+public sealed class PlaybackTranscriptionService : IPlaybackTranscriptionService {
     private const string ResponseFormat = "json";
     private const string Temperature = "0";
     private const string StreamDisabled = "false";
@@ -22,7 +22,7 @@ public sealed class PlaybackAudioTranscriptionService : IPlaybackAudioTranscript
     private readonly ProcessLogService _processLogService;
     private readonly OpenAiTranscriptionResponseParser _responseParser;
 
-    public PlaybackAudioTranscriptionService(
+    public PlaybackTranscriptionService(
         AudioStandardizer audioStandardizer,
         HttpClient httpClient,
         OpenAiTranscriptionOptions options,
@@ -284,3 +284,6 @@ public sealed class PlaybackAudioTranscriptionService : IPlaybackAudioTranscript
         TranscriptionResult? Result
     );
 }
+
+
+

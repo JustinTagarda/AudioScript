@@ -7,15 +7,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <StartupObject>AudioTranscript.App</StartupObject>
+    <StartupObject>VoxTranscriber.App</StartupObject>
     <Version>0.1.6</Version>
-    <ApplicationIcon>Assets\AudioTranscript.ico</ApplicationIcon>
-    <VelopackPackId>JustinTagarda.AudioTranscript</VelopackPackId>
-    <VelopackPackTitle>AudioTranscript</VelopackPackTitle>
+    <ApplicationIcon>Assets\VoxTranscriber.ico</ApplicationIcon>
+    <VelopackPackId>JustinTagarda.VoxTranscriber</VelopackPackId>
+    <VelopackPackTitle>VoxTranscriber</VelopackPackTitle>
     <VelopackPackAuthors>Justin Tagarda</VelopackPackAuthors>
-    <VelopackMainExe>AudioTranscript.exe</VelopackMainExe>
+    <VelopackMainExe>VoxTranscriber.exe</VelopackMainExe>
     <VelopackReleaseChannel>win</VelopackReleaseChannel>
-    <VelopackReleaseRepoUrl>https://github.com/REPLACE_ME/AudioTranscript-Releases</VelopackReleaseRepoUrl>
+    <VelopackReleaseRepoUrl>https://github.com/JustinTagarda/VoxTranscriber-Releases</VelopackReleaseRepoUrl>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,9 +24,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="AudioTranscript.Tests\\**\\*.cs" />
-    <EmbeddedResource Remove="AudioTranscript.Tests\\**\\*" />
-    <Page Remove="AudioTranscript.Tests\\**\\*" />
+    <Compile Remove="VoxTranscriber.Tests\\**\\*.cs" />
+    <EmbeddedResource Remove="VoxTranscriber.Tests\\**\\*" />
+    <Page Remove="VoxTranscriber.Tests\\**\\*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,7 +44,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\AudioTranscript.ico" />
+    <Resource Include="Assets\VoxTranscriber.ico" />
   </ItemGroup>
 
 </Project>
+
+

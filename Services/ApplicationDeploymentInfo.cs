@@ -1,6 +1,6 @@
 using System.Reflection;
 
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
 public static class ApplicationDeploymentInfo {
     private static readonly Lazy<IReadOnlyDictionary<string, string>> Metadata = new(LoadMetadata);
@@ -50,3 +50,5 @@ public static class ApplicationDeploymentInfo {
             : string.Empty;
     }
 }
+
+

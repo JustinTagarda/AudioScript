@@ -2,16 +2,16 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using AudioTranscript.Audio;
-using AudioTranscript.Services;
-using AudioTranscript.ViewModels;
+using VoxTranscriber.Audio;
+using VoxTranscriber.Services;
+using VoxTranscriber.ViewModels;
 using Velopack;
 
-namespace AudioTranscript;
+namespace VoxTranscriber;
 
 public partial class App : System.Windows.Application {
-    private const string SingleInstanceMutexName = @"Local\AudioTranscript_SingleInstance";
-    private const string ActivateEventName = @"Local\AudioTranscript_Activate";
+    private const string SingleInstanceMutexName = @"Local\VoxTranscriber_SingleInstance";
+    private const string ActivateEventName = @"Local\VoxTranscriber_Activate";
 
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
@@ -76,7 +76,7 @@ public partial class App : System.Windows.Application {
         var audioStandardizer = new AudioStandardizer();
         var audioPlaybackService = new NaudioAudioPlaybackService();
         var sessionStore = new TranscriptSessionStore(processLogService: processLogService);
-        var playbackTranscriptionService = new PlaybackAudioTranscriptionService(
+        var playbackTranscriptionService = new PlaybackTranscriptionService(
             audioStandardizer,
             _httpClient,
             openAiOptions,
@@ -331,3 +331,6 @@ public partial class App : System.Windows.Application {
         }
     }
 }
+
+
+

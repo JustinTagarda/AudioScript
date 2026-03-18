@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="AudioTranscript.csproj" />
-  <Project Path="AudioTranscript.Tests/AudioTranscript.Tests.csproj" />
-</Solution>

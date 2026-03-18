@@ -1,4 +1,4 @@
-namespace AudioTranscript.Abstractions;
+namespace VoxTranscriber.Abstractions;
 
 public sealed record TranscriptionTimedLine(
     string Text,
@@ -6,3 +6,5 @@ public sealed record TranscriptionTimedLine(
     TimeSpan? EndOffset = null,
     bool IsTimestampEstimated = false
 );
+
+

@@ -1,4 +1,4 @@
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
 public sealed class OpenAiTranscriptionOptions {
     public const string DefaultPrompt =
@@ -17,3 +17,5 @@ public sealed class OpenAiTranscriptionOptions {
 
     public double LowConfidenceLogprobThreshold { get; set; } = -1.0;
 }
+
+

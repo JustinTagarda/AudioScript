@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace AudioTranscript.Audio;
+namespace VoxTranscriber.Audio;
 
 public interface IPlaybackAudioTapSource {
     event EventHandler<PlaybackAudioFrameEventArgs>? PlaybackAudioFrameProduced;
@@ -9,3 +9,5 @@ public interface IPlaybackAudioTapSource {
 
     WaveFormat? PlaybackAudioFormat { get; }
 }
+
+

@@ -1,14 +1,14 @@
 using System.IO;
-using AudioTranscript.Abstractions;
-using AudioTranscript.Audio;
+using VoxTranscriber.Abstractions;
+using VoxTranscriber.Audio;
 using NAudio.Wave;
 
-namespace AudioTranscript.Services;
+namespace VoxTranscriber.Services;
 
 public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
     private readonly object _sync = new();
     private readonly IAudioLoopbackCaptureService _captureService;
-    private readonly IPlaybackAudioTranscriptionService _transcriptionService;
+    private readonly IPlaybackTranscriptionService _transcriptionService;
     private readonly ProcessLogService _processLogService;
     private readonly PlaybackTranscriptionSessionOptions _options;
     private readonly MemoryStream _pendingPcm = new();
@@ -29,7 +29,7 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
     public PlaybackTranscriptionSession(
         IAudioLoopbackCaptureService captureService,
-        IPlaybackAudioTranscriptionService transcriptionService,
+        IPlaybackTranscriptionService transcriptionService,
         ProcessLogService processLogService,
         PlaybackTranscriptionSessionOptions? options = null) {
         _captureService = captureService;
@@ -467,3 +467,6 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
         WaveFormat SourceFormat
     );
 }
+
+
+

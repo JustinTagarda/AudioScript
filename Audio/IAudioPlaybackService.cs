@@ -1,4 +1,4 @@
-namespace AudioTranscript.Audio;
+namespace VoxTranscriber.Audio;
 
 public interface IAudioPlaybackService : IDisposable {
     event EventHandler? PlaybackStateChanged;
@@ -27,3 +27,5 @@ public interface IAudioPlaybackService : IDisposable {
 
     void Seek(TimeSpan position);
 }
+
+
