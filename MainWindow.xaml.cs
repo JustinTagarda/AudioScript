@@ -29,6 +29,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditSegmentDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.Zero;
+    private static readonly System.Windows.Media.Brush DefaultAudioDropZoneBackgroundBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(253, 254, 255));
+    private static readonly System.Windows.Media.Brush DefaultTranscriptEmptyStateBackgroundBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(248, 251, 252));
+    private static readonly System.Windows.Media.Brush DefaultAudioDropZoneBorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 226, 231));
 
     private bool _isOpenAiDialogOpen;
     private bool _isApplyingTranscriptEditLoopSeek;
@@ -122,6 +125,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
 
     private void OpenOpenAiSettings_Click(object sender, RoutedEventArgs e) {
         ShowOpenAiSettingsDialog();
+    }
+
+    private void Window_PreviewDragEnter(object sender, System.Windows.DragEventArgs e) {
+        UpdateAudioFileDropState(e);
+    }
+
+    private void Window_PreviewDragOver(object sender, System.Windows.DragEventArgs e) {
+        UpdateAudioFileDropState(e);
+    }
+
+    private void Window_PreviewDragLeave(object sender, System.Windows.DragEventArgs e) {
+        ResetAudioFileDropState();
+    }
+
+    private void Window_PreviewDrop(object sender, System.Windows.DragEventArgs e) {
+        string? filePath = GetDroppedAudioFilePath(e);
+        ResetAudioFileDropState();
+
+        if (_boundViewModel is null || string.IsNullOrWhiteSpace(filePath)) {
+            e.Effects = System.Windows.DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        e.Effects = _boundViewModel.TryImportAudioFileFromPath(filePath)
+            ? System.Windows.DragDropEffects.Copy
+            : System.Windows.DragDropEffects.None;
+        e.Handled = true;
     }
 
     private async void GenerateTranscript_Click(object sender, RoutedEventArgs e) {
@@ -506,6 +537,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             SetPlaybackTimelineMatch(null);
             SetTranscriptRowActionsLine(null);
         }
+    }
+
+    private void UpdateAudioFileDropState(System.Windows.DragEventArgs e) {
+        string? filePath = GetDroppedAudioFilePath(e);
+        bool canAccept = !string.IsNullOrWhiteSpace(filePath);
+
+        e.Effects = canAccept ? System.Windows.DragDropEffects.Copy : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+
+        SetDropTargetVisualState(AudioDropZoneBorder, canAccept, DefaultAudioDropZoneBackgroundBrush);
+        SetDropTargetVisualState(TranscriptEmptyStateBorder, canAccept, DefaultTranscriptEmptyStateBackgroundBrush);
+    }
+
+    private void ResetAudioFileDropState() {
+        SetDropTargetVisualState(AudioDropZoneBorder, false, DefaultAudioDropZoneBackgroundBrush);
+        SetDropTargetVisualState(TranscriptEmptyStateBorder, false, DefaultTranscriptEmptyStateBackgroundBrush);
+    }
+
+    private void SetDropTargetVisualState(Border border, bool isActive, System.Windows.Media.Brush defaultBackground) {
+        if (border is null) {
+            return;
+        }
+
+        border.Background = isActive
+            ? (System.Windows.Media.Brush)(FindResource("AccentSurfaceBrush") as System.Windows.Media.Brush ?? defaultBackground)
+            : defaultBackground;
+        border.BorderBrush = isActive
+            ? (System.Windows.Media.Brush)(FindResource("AccentBorderBrush") as System.Windows.Media.Brush ?? DefaultAudioDropZoneBorderBrush)
+            : DefaultAudioDropZoneBorderBrush;
+    }
+
+    private static string? GetDroppedAudioFilePath(System.Windows.DragEventArgs e) {
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)) {
+            return null;
+        }
+
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files || files.Length == 0) {
+            return null;
+        }
+
+        return files.FirstOrDefault(MainViewModel.IsSupportedAudioFilePath);
     }
 
     private void OnErrorOccurred(object? sender, string message) {

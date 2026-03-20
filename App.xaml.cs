@@ -135,7 +135,7 @@ public partial class App : System.Windows.Application {
             DataContext = _mainViewModel,
         };
         _windowPlacementService.Apply(mainWindow);
-        mainWindow.Closing += (_, _) => _windowPlacementService.Save(mainWindow);
+        _windowPlacementService.Attach(mainWindow);
 
         MainWindow = mainWindow;
         mainWindow.Show();

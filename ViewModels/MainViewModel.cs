@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -14,6 +15,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private const int SeekStepSeconds = 5;
     private static readonly TimeSpan PlaceholderSegmentDuration = TimeSpan.FromSeconds(10);
     private const string AudioFileDialogFilter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*";
+    private static readonly HashSet<string> SupportedAudioFileExtensions = new(StringComparer.OrdinalIgnoreCase) {
+        ".wav",
+        ".mp3",
+        ".flac",
+        ".aac",
+        ".m4a",
+        ".ogg",
+        ".wma",
+        ".mp4",
+    };
 
     private readonly IAudioPlaybackService _audioPlaybackService;
     private readonly OpenAiTranscriptionOptions _openAiOptions;
@@ -98,12 +109,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _segmentTranscriptMode = new TranscriptModeOptionViewModel(
             TranscriptGenerationMode.Segments,
             "Segments (10s)",
-            "Create 10-second chunks for manual or AI-assisted transcription.",
+            "10s chunks for manual or AI text.",
             OnTranscriptModeOptionSelected);
         _speakerDiarizationMode = new TranscriptModeOptionViewModel(
             TranscriptGenerationMode.SpeakerDiarization,
             "Speaker diarization",
-            "Detect and label different speakers in the current audio.",
+            "Label speakers automatically.",
             OnTranscriptModeOptionSelected);
         TranscriptModes = new ObservableCollection<TranscriptModeOptionViewModel> {
             _segmentTranscriptMode,
@@ -378,6 +389,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public bool CanCopyTranscript =>
         HasCurrentTranscriptLines && !IsBusy;
 
+    public static bool IsSupportedAudioFilePath(string? filePath) {
+        if (string.IsNullOrWhiteSpace(filePath)) {
+            return false;
+        }
+
+        string extension = Path.GetExtension(filePath);
+        return !string.IsNullOrWhiteSpace(extension)
+            && SupportedAudioFileExtensions.Contains(extension);
+    }
+
     public string GenerateTranscriptButtonText {
         get {
             if (IsSegmentModeSelected && !AutoTranscribeWithAi) {
@@ -387,8 +408,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             return HasCurrentTranscriptLines
-                ? "Regenerate Transcript"
-                : "Generate Transcript";
+                ? "Regenerate"
+                : "Generate";
         }
     }
 
@@ -402,39 +423,39 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 return CurrentSessionDisplayName;
             }
 
-            return "Choose an audio file or open a saved session to begin.";
+            return string.Empty;
         }
     }
 
     public string TranscriptEmptyStateTitle {
         get {
             if (!IsAudioFileLoaded) {
-                return "No transcript loaded";
+                return "No transcript";
             }
 
             if (IsSegmentModeSelected && !AutoTranscribeWithAi) {
-                return "Timeline ready for manual work";
+                return "Timeline ready";
             }
 
-            return "Ready to generate";
+            return "Ready";
         }
     }
 
     public string TranscriptEmptyStateMessage {
         get {
             if (!IsAudioFileLoaded) {
-                return "Choose an audio file or open a saved session to begin.";
+                return "Drop audio here, choose a file, or open a session.";
             }
 
             if (IsSegmentModeSelected && !AutoTranscribeWithAi) {
-                return "Create the 10-second timeline first, then fill in transcript rows manually or turn on AI Assist.";
+                return "Create the timeline, then fill rows manually or turn on AI.";
             }
 
             if (IsSpeakerDiarizationModeSelected && string.IsNullOrWhiteSpace(OpenAiApiKey)) {
-                return "Add your OpenAI API key, then run speaker diarization for speaker-labelled transcript output.";
+                return "Add an API key, then run diarization.";
             }
 
-            return "Choose a transcription mode and generate the transcript.";
+            return "Choose a mode, then generate the transcript.";
         }
     }
 
@@ -448,20 +469,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         get {
             if (AutoTranscribeWithAi) {
                 return string.IsNullOrWhiteSpace(OpenAiApiKey)
-                    ? "AI assist is on, but an OpenAI API key is still required."
-                    : "AI assist is on and ready to fill segment text automatically.";
+                    ? "On, but an API key is still required."
+                    : "On and ready to fill segment text.";
             }
 
             return string.IsNullOrWhiteSpace(OpenAiApiKey)
-                ? "AI assist is off. Add an OpenAI API key to enable automated segment transcription."
-                : "AI assist is off. Turn it on to fill segment text automatically.";
+                ? "Off. Add an API key to enable it."
+                : "Off. Turn it on to fill segment text.";
         }
     }
 
     public string SpeakerDiarizationStatusText =>
         string.IsNullOrWhiteSpace(OpenAiApiKey)
-            ? "OpenAI API key required to run speaker diarization."
-            : "Uses OpenAI gpt-4o-transcribe-diarize for speaker-labelled output.";
+            ? "API key required."
+            : "Uses OpenAI diarization.";
 
     public bool AutoTranscribeWithAi {
         get => _autoTranscribeWithAi;
@@ -521,7 +542,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 return _currentSessionDocument.Audio.OriginalFileName;
             }
 
-            return "No audio file selected.";
+            return "No audio selected.";
         }
     }
 
@@ -913,6 +934,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         LoadSessionFromImportedAudio(selectedFilePath);
         return Task.CompletedTask;
+    }
+
+    public bool TryImportAudioFileFromPath(string filePath) {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) {
+            AppendLog("Dropped file rejected: file path is missing or no longer exists.");
+            return false;
+        }
+
+        if (!IsSupportedAudioFilePath(filePath)) {
+            string extension = Path.GetExtension(filePath);
+            AppendLog($"Dropped file rejected: unsupported audio type '{extension}'.");
+            RaiseError("Unsupported audio file. Use WAV, MP3, FLAC, AAC, M4A, OGG, WMA, or MP4.");
+            return false;
+        }
+
+        AppendLog($"Audio file dropped: {Path.GetFileName(filePath)}");
+        LoadSessionFromImportedAudio(filePath);
+        return true;
     }
 
     private Task OpenSelectedSessionAsync() {

@@ -7,17 +7,25 @@
             <Setter Property="FontFamily"
                     Value="Segoe UI Variable Text"/>
             <Setter Property="FontSize"
-                    Value="13"/>
+                    Value="10.5"/>
             <Setter Property="FontWeight"
                     Value="SemiBold"/>
             <Setter Property="BorderThickness"
                     Value="1"/>
             <Setter Property="Margin"
-                    Value="4"/>
+                    Value="1"/>
             <Setter Property="Padding"
-                    Value="14,8"/>
+                    Value="4"/>
             <Setter Property="MinHeight"
-                    Value="38"/>
+                    Value="28"/>
+            <Setter Property="VerticalContentAlignment"
+                    Value="Center"/>
+            <Setter Property="HorizontalContentAlignment"
+                    Value="Center"/>
+            <Setter Property="UseLayoutRounding"
+                    Value="True"/>
+            <Setter Property="SnapsToDevicePixels"
+                    Value="True"/>
             <Setter Property="Cursor"
                     Value="Hand"/>
             <Setter Property="Template">
@@ -26,9 +34,11 @@
                         <Border Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8">
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
@@ -147,18 +157,132 @@
                 TargetType="Button"
                 BasedOn="{StaticResource SecondaryButtonStyle}">
             <Setter Property="FontSize"
-                    Value="13"/>
+                    Value="10.5"/>
             <Setter Property="Padding"
-                    Value="12,7"/>
+                    Value="4"/>
             <Setter Property="MinHeight"
-                    Value="34"/>
+                    Value="26"/>
             <Setter Property="MinWidth"
-                    Value="170"/>
+                    Value="128"/>
             <Setter Property="Margin"
-                    Value="0,8,0,2"/>
+                    Value="0,4,0,2"/>
             <Setter Property="HorizontalAlignment"
                     Value="Left"/>
         </Style>
+
+        <Style x:Key="ToggleButtonChromeStyle"
+                TargetType="ToggleButton">
+            <Setter Property="FontFamily"
+                    Value="Segoe UI Variable Text"/>
+            <Setter Property="FontSize"
+                    Value="10.5"/>
+            <Setter Property="FontWeight"
+                    Value="SemiBold"/>
+            <Setter Property="BorderThickness"
+                    Value="1"/>
+            <Setter Property="Margin"
+                    Value="1"/>
+            <Setter Property="Padding"
+                    Value="4"/>
+            <Setter Property="MinHeight"
+                    Value="28"/>
+            <Setter Property="VerticalContentAlignment"
+                    Value="Center"/>
+            <Setter Property="HorizontalContentAlignment"
+                    Value="Center"/>
+            <Setter Property="UseLayoutRounding"
+                    Value="True"/>
+            <Setter Property="SnapsToDevicePixels"
+                    Value="True"/>
+            <Setter Property="Cursor"
+                    Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="ToggleBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsEnabled"
+                                     Value="False">
+                                <Setter Property="Opacity"
+                                        Value="0.92"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryToggleButtonStyle"
+                TargetType="ToggleButton"
+                BasedOn="{StaticResource ToggleButtonChromeStyle}">
+            <Setter Property="Background"
+                    Value="#FFF8FBFC"/>
+            <Setter Property="Foreground"
+                    Value="#FF234F61"/>
+            <Setter Property="BorderBrush"
+                    Value="#FFB8CBD5"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver"
+                         Value="True">
+                    <Setter Property="Background"
+                            Value="#FFEFF6F9"/>
+                    <Setter Property="BorderBrush"
+                            Value="#FF9FB7C3"/>
+                </Trigger>
+                <Trigger Property="IsPressed"
+                         Value="True">
+                    <Setter Property="Background"
+                            Value="#FFE6F0F5"/>
+                    <Setter Property="BorderBrush"
+                            Value="#FF8FAAB7"/>
+                </Trigger>
+                <Trigger Property="IsChecked"
+                         Value="True">
+                    <Setter Property="Background"
+                            Value="#FFE7F4F9"/>
+                    <Setter Property="BorderBrush"
+                            Value="#FFC6DDE7"/>
+                    <Setter Property="Foreground"
+                            Value="#FF15232D"/>
+                </Trigger>
+                <Trigger Property="IsEnabled"
+                         Value="False">
+                    <Setter Property="Background"
+                            Value="#FFF1F6F8"/>
+                    <Setter Property="BorderBrush"
+                            Value="#FFD9E3E8"/>
+                    <Setter Property="Foreground"
+                            Value="#FFA0B0B9"/>
+                    <Setter Property="Opacity"
+                            Value="1"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CompactSecondaryToggleButtonStyle"
+                TargetType="ToggleButton"
+                BasedOn="{StaticResource SecondaryToggleButtonStyle}">
+            <Setter Property="FontSize"
+                    Value="10.5"/>
+            <Setter Property="Padding"
+                    Value="4"/>
+            <Setter Property="MinHeight"
+                    Value="26"/>
+            <Setter Property="Margin"
+                    Value="0"/>
+            <Setter Property="HorizontalAlignment"
+                    Value="Left"/>
+        </Style>
+
     </Application.Resources>
 </Application>
 
