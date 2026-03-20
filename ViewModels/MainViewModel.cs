@@ -12,7 +12,6 @@ using VoxTranscriber.Services;
 namespace VoxTranscriber.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
-    private const int SeekStepSeconds = 5;
     private static readonly TimeSpan PlaceholderSegmentDuration = TimeSpan.FromSeconds(10);
     private const string AudioFileDialogFilter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*";
     private static readonly HashSet<string> SupportedAudioFileExtensions = new(StringComparer.OrdinalIgnoreCase) {
@@ -134,9 +133,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         DeleteSelectedSessionCommand = new AsyncRelayCommand(DeleteSelectedSessionAsync, CanDeleteSelectedSession);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
-        StopAudioCommand = new AsyncRelayCommand(StopAudioAsync, CanStopAudio);
-        RewindAudioCommand = new AsyncRelayCommand(RewindAudioAsync, CanSeekAudio);
-        ForwardAudioCommand = new AsyncRelayCommand(ForwardAudioAsync, CanSeekAudio);
 
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
@@ -208,9 +204,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
-    public AsyncRelayCommand StopAudioCommand { get; }
-    public AsyncRelayCommand RewindAudioCommand { get; }
-    public AsyncRelayCommand ForwardAudioCommand { get; }
 
     public EngineOptionViewModel? SelectedEngine {
         get => _selectedEngine;
@@ -385,6 +378,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public bool HasCurrentTranscriptLines =>
         CurrentTranscriptLines.Any();
+
+    public bool IsTranscriptEmptyStateVisible =>
+        !HasCurrentSession && !HasCurrentTranscriptLines;
 
     public bool CanCopyTranscript =>
         HasCurrentTranscriptLines && !IsBusy;
@@ -1058,6 +1054,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             CurrentSessionAudioIssue = string.Empty;
             IsCurrentSessionAudioMissing = false;
             NotifyPropertyChanged(nameof(HasCurrentSession));
+            NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
         }
 
@@ -1134,54 +1131,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return Task.CompletedTask;
     }
 
-    private Task StopAudioAsync() {
-        if (!IsAudioFileLoaded) {
-            return Task.CompletedTask;
-        }
-
-        try {
-            _audioPlaybackService.Stop();
-            IsAudioPlaying = _audioPlaybackService.IsPlaying;
-        }
-        catch (Exception ex) {
-            RaiseError($"Unable to stop audio preview: {ex.Message}");
-        }
-
-        return Task.CompletedTask;
-    }
-
-    private Task RewindAudioAsync() {
-        if (!IsAudioFileLoaded) {
-            return Task.CompletedTask;
-        }
-
-        try {
-            double targetSeconds = Math.Max(0, AudioSeekPositionSeconds - SeekStepSeconds);
-            AudioSeekPositionSeconds = targetSeconds;
-        }
-        catch (Exception ex) {
-            RaiseError($"Unable to rewind audio preview: {ex.Message}");
-        }
-
-        return Task.CompletedTask;
-    }
-
-    private Task ForwardAudioAsync() {
-        if (!IsAudioFileLoaded) {
-            return Task.CompletedTask;
-        }
-
-        try {
-            double targetSeconds = Math.Min(AudioSeekMaximumSeconds, AudioSeekPositionSeconds + SeekStepSeconds);
-            AudioSeekPositionSeconds = targetSeconds;
-        }
-        catch (Exception ex) {
-            RaiseError($"Unable to forward audio preview: {ex.Message}");
-        }
-
-        return Task.CompletedTask;
-    }
-
     private bool CanClear() {
         return !IsBusy;
     }
@@ -1206,14 +1155,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return IsAudioFileLoaded && IsAudioPlaying;
     }
 
-    private bool CanStopAudio() {
-        return IsAudioFileLoaded;
-    }
-
-    private bool CanSeekAudio() {
-        return IsAudioFileLoaded;
-    }
-
     private void RefreshCommandStates() {
         ClearCommand.RaiseCanExecuteChanged();
         OpenAudioFileCommand.RaiseCanExecuteChanged();
@@ -1221,9 +1162,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         DeleteSelectedSessionCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
-        StopAudioCommand.RaiseCanExecuteChanged();
-        RewindAudioCommand.RaiseCanExecuteChanged();
-        ForwardAudioCommand.RaiseCanExecuteChanged();
     }
 
     private void NotifyInteractionAvailabilityChanged() {
@@ -1237,6 +1175,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private void NotifyCurrentTranscriptStateChanged() {
         NotifyPropertyChanged(nameof(CurrentTranscriptLines));
         NotifyPropertyChanged(nameof(HasCurrentTranscriptLines));
+        NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
         NotifyPropertyChanged(nameof(CanCopyTranscript));
         NotifyPropertyChanged(nameof(GenerateTranscriptButtonText));
         NotifyPropertyChanged(nameof(TranscriptEmptyStateTitle));
@@ -1361,6 +1300,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 : loadResult.Document.DisplayName;
 
             NotifyPropertyChanged(nameof(HasCurrentSession));
+            NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
 
             ApplyTranscriptDocument(loadResult.Document.Transcript);
@@ -1969,6 +1909,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         IsAudioPlaying = false;
         ResetAudioTimeline();
         NotifyPropertyChanged(nameof(HasCurrentSession));
+        NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
         NotifyPropertyChanged(nameof(LoadedAudioFileName));
         RefreshCommandStates();
     }

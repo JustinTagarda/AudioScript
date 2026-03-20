@@ -98,43 +98,20 @@
                                 Orientation="Horizontal"
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
-                        <Button Content="Play"
-                                MinWidth="56"
-                                Margin="0,0,4,0"
-                                Command="{Binding PlayAudioCommand}"/>
-                        <Button Content="Pause"
-                                MinWidth="56"
-                                Margin="0,0,4,0"
-                                Command="{Binding PauseAudioCommand}"/>
-                        <Button Content="Stop"
-                                MinWidth="56"
-                                Margin="0,0,4,0"
-                                Command="{Binding StopAudioCommand}"/>
-                        <Button ToolTip="Rewind 5 seconds"
-                                AutomationProperties.Name="Rewind 5 seconds"
-                                Margin="0,0,6,0"
-                                Command="{Binding RewindAudioCommand}">
-                            <Viewbox Width="11.2"
-                                     Height="11.2"
-                                     HorizontalAlignment="Center"
-                                     VerticalAlignment="Center">
-                                <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                      Stretch="Uniform"
-                                      Data="M14,4 L8,10 L14,16 Z M8.5,4 L2.5,10 L8.5,16 Z"/>
-                            </Viewbox>
-                        </Button>
-                        <Button ToolTip="Forward 5 seconds"
-                                AutomationProperties.Name="Forward 5 seconds"
-                                Margin="0"
-                                Command="{Binding ForwardAudioCommand}">
-                            <Viewbox Width="11.2"
-                                     Height="11.2"
-                                     HorizontalAlignment="Center"
-                                     VerticalAlignment="Center">
-                                <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                      Stretch="Uniform"
-                                      Data="M2,4 L8,10 L2,16 Z M7.5,4 L13.5,10 L7.5,16 Z"/>
-                            </Viewbox>
+                        <Button>
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Content" Value="Play"/>
+                                    <Setter Property="Command" Value="{Binding PlayAudioCommand}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsAudioPlaying}"
+                                                     Value="True">
+                                            <Setter Property="Content" Value="Pause"/>
+                                            <Setter Property="Command" Value="{Binding PauseAudioCommand}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
                         </Button>
                     </StackPanel>
 
@@ -176,6 +153,17 @@
 
 
 >
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsChecked, ElementName=LogsToggleButton}"
+                                         Value="True">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 
                 <Grid>
                     <Grid.RowDefinitions>
@@ -310,9 +298,6 @@
                                     </StackPanel>
                                     <Button Grid.Column="1"
                                             Content="Choose"
-                                            Height="28"
-                                            MinHeight="28"
-                                            Margin="6,0,0,0"
                                             VerticalAlignment="Center"
                                             Command="{Binding OpenAudioFileCommand}"/>
                                 </Grid>
@@ -379,6 +364,17 @@
 
                                     Padding="8"
                                     Margin="0,2,0,0">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsAutoTranscribeSettingVisible}"
+                                                         Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
                                 
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -418,9 +414,6 @@
                                     </Grid>
                                     <Button Grid.Column="1"
                                             Content="API Key"
-                                            Height="28"
-                                            MinHeight="28"
-                                            Margin="6,0,0,0"
                                             ToolTip="OpenAI API Key"
                                             AutomationProperties.Name="OpenAI API Key"
                                             IsEnabled="{Binding IsOpenAiSettingsEnabled}"
@@ -436,24 +429,17 @@
                                 <Button x:Name="GenerateTranscriptButton"
                                         Grid.Column="0"
                                         Content="{Binding GenerateTranscriptButtonText}"
-                                        Height="28"
-                                        MinHeight="28"
                                         IsEnabled="{Binding IsTranscriptGenerationEnabled}"
                                         Click="GenerateTranscript_Click">
                                     
                                 </Button>
                                 <Button Grid.Column="0"
                                         Content="Cancel Transcription"
-                                        Height="28"
-                                        MinHeight="28"
                                         Click="CancelProcessing_Click">
                                     
                                 </Button>
                                 <Button Grid.Column="1"
                                         Content="Clear"
-                                        Height="28"
-                                        MinHeight="28"
-                                        Margin="6,0,0,0"
                                         Command="{Binding ClearCommand}">
                                     
                                 </Button>
@@ -520,6 +506,17 @@
 
 
                                         Padding="10">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasRecentSessions}"
+                                                             Value="False">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
                                     
                                     <StackPanel HorizontalAlignment="Center"
                                                 VerticalAlignment="Center">
@@ -546,13 +543,8 @@
                                         HorizontalAlignment="Right"
                                         Margin="0,10,0,0">
                                 <Button Content="Open"
-                                        MinWidth="60"
-                                        Margin="0,0,4,0"
                                         Command="{Binding OpenSelectedSessionCommand}"/>
                                 <Button Content="Delete"
-                                        MinWidth="60"
-                                        Height="28"
-                                        MinHeight="28"
                                         Command="{Binding DeleteSelectedSessionCommand}"/>
                             </StackPanel>
                         </Grid>
@@ -619,7 +611,6 @@
                                 </TextBlock>
                                 <Button Content="Copy"
                                         Grid.Column="2"
-                                        MinWidth="52"
                                         VerticalAlignment="Center"
                                         ToolTip="Copy to Clipboard"
                                         AutomationProperties.Name="Copy to Clipboard"
@@ -712,6 +703,23 @@
                                                             VerticalAlignment="Center"
                                                             Margin="20,0"
                                                             Padding="0">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsPlaybackEditTranscribing}"
+                                                                                 Value="True">
+                                                                        <Setter Property="Visibility"
+                                                                                Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding IsPlaybackEditProgressIndeterminate}"
+                                                                                 Value="True">
+                                                                        <Setter Property="Visibility"
+                                                                                Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
                                                         
                                                         <ProgressBar Value="{Binding PlaybackEditProgressPercent}"
                                                                      IsIndeterminate="{Binding IsPlaybackEditProgressIndeterminate}"/>
@@ -753,7 +761,6 @@
                                                         </Viewbox>
                                                     </Button>
                                                     <Button Click="DeleteTranscriptRow_Click"
-                                                            Margin="0"
                                                             ToolTip="Delete this row">
                                                         <Viewbox Width="14"
                                                                  Height="14">
@@ -771,12 +778,21 @@
 
 
 
-
                                         Padding="12"
                                         Margin="0,56,0,0"
                                         VerticalAlignment="Top"
                                         MaxWidth="360">
-                                    
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsTranscriptEmptyStateVisible}"
+                                                             Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
                                     <StackPanel HorizontalAlignment="Center"
                                                 VerticalAlignment="Center"
                                                 MaxWidth="320">
@@ -794,7 +810,6 @@
                                                    TextAlignment="Center"
                                                    TextWrapping="Wrap"/>
                                         <Button Content="Choose File"
-                                                Margin="0,12,0,0"
                                                 HorizontalAlignment="Center"
                                                 Command="{Binding OpenAudioFileCommand}"/>
                                         <TextBlock Text="You can also drag audio into this window."
@@ -859,7 +874,6 @@
                             <Button x:Name="SegmentBatchCancelButton"
                                     Grid.Column="1"
                                     Content="Cancel"
-                                    Width="110"
                                     HorizontalAlignment="Right"
                                     IsEnabled="True"
                                     Click="CancelProcessing_Click"/>
