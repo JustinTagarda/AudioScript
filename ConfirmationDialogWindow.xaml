@@ -64,7 +64,7 @@
             </Grid>
         </Border>
 
-        <StackPanel Grid.Row="1"
+            <StackPanel Grid.Row="1"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     Margin="0,8,0,0">
@@ -72,13 +72,11 @@
                     Width="88"
                     MinHeight="28"
                     FontSize="12"
-                    Style="{StaticResource SecondaryButtonStyle}"
                     Click="CancelButton_Click" />
             <Button x:Name="ProceedButton"
                     Width="88"
                     MinHeight="28"
                     FontSize="12"
-                    Style="{StaticResource DangerButtonStyle}"
                     Click="ProceedButton_Click" />
         </StackPanel>
     </Grid>
