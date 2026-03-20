@@ -12,58 +12,40 @@
         MinHeight="600"
         MinWidth="900"
         WindowStartupLocation="CenterScreen"
-        Background="#FFF4F7F8"
+
         AllowDrop="True"
         PreviewDragEnter="Window_PreviewDragEnter"
         PreviewDragOver="Window_PreviewDragOver"
         PreviewDragLeave="Window_PreviewDragLeave"
         PreviewDrop="Window_PreviewDrop">
-    <Window.Resources>
-        <SolidColorBrush x:Key="SurfaceBrush"
-                Color="#CCFFFFFF"/>
-        <SolidColorBrush x:Key="SurfaceBorderBrush"
-                Color="#55B7CAD2"/>
-        <SolidColorBrush x:Key="PrimaryTextBrush"
-                Color="#FF15232D"/>
-        <SolidColorBrush x:Key="SecondaryTextBrush"
-                Color="#FF49616F"/>
-        <SolidColorBrush x:Key="PlaybackSyncTextBrush"
-                Color="#FF4682B4"/>
-        <SolidColorBrush x:Key="AccentBrush"
-                Color="#FF1B86AA"/>
-        <SolidColorBrush x:Key="AccentSurfaceBrush"
-                Color="#FFE7F4F9"/>
-        <SolidColorBrush x:Key="AccentBorderBrush"
-                Color="#FFC6DDE7"/>
-
-    </Window.Resources>
+    
 
 
     <Grid x:Name="MainRootGrid"
-          Background="#FFF4F7F8">
+>
         <DockPanel x:Name="MainContentHost"
                    LastChildFill="True">
             <StatusBar DockPanel.Dock="Bottom"
                        Margin="0"
                        MinHeight="28"
                        Padding="6,2"
-                       Background="#FFEFF3F6"
-                       BorderBrush="#FFC8D6DD"
-                       BorderThickness="1,1,1,0">
+
+
+>
                 <StatusBarItem DockPanel.Dock="Right"
                                Padding="0"
-                               BorderThickness="0">
+>
                     <TextBlock Text="{Binding ApplicationVersionStatusText}"
                                ToolTip="{Binding ApplicationVersionStatusText}"
                                FontFamily="Segoe UI Variable Text"
                                FontSize="12"
                                TextTrimming="CharacterEllipsis"
-                               Foreground="{StaticResource SecondaryTextBrush}"/>
+/>
                 </StatusBarItem>
 
                 <StatusBarItem DockPanel.Dock="Right"
                                Padding="0"
-                               BorderThickness="0">
+>
                     <ToggleButton x:Name="LogsToggleButton"
                                   Content="Logs"
                                   Margin="0,0,10,0"
@@ -72,13 +54,13 @@
 
                 <StatusBarItem DockPanel.Dock="Left"
                                Padding="0"
-                               BorderThickness="0">
+>
                     <TextBlock Text="{Binding StatusMessage}"
                                ToolTip="{Binding StatusMessage}"
                                FontFamily="Segoe UI Variable Text"
                                FontSize="12"
                                TextTrimming="CharacterEllipsis"
-                               Foreground="{StaticResource SecondaryTextBrush}"/>
+/>
                 </StatusBarItem>
             </StatusBar>
 
@@ -101,12 +83,12 @@
                         <TextBlock Text="Player"
                                    FontFamily="Bahnschrift"
                                    FontSize="16"
-                                   Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
                         <TextBlock Text="{Binding LoadedAudioFileName}"
                                    Margin="0,2,0,0"
                                    FontFamily="Segoe UI Variable Text"
                                    FontSize="11"
-                                   Foreground="{StaticResource SecondaryTextBrush}"
+
                                    TextTrimming="CharacterEllipsis"
                                    MaxWidth="220"/>
                     </StackPanel>
@@ -170,7 +152,7 @@
                                    Margin="0,0,8,0"
                                    FontFamily="Consolas"
                                    FontSize="12"
-                                   Foreground="{StaticResource SecondaryTextBrush}"/>
+/>
                         <Slider Grid.Column="1"
                                 Minimum="0"
                                 Maximum="{Binding AudioSeekMaximumSeconds}"
@@ -183,17 +165,17 @@
                                    Margin="8,0,0,0"
                                    FontFamily="Consolas"
                                    FontSize="12"
-                                   Foreground="{StaticResource SecondaryTextBrush}"/>
+/>
                     </Grid>
                 </Grid>
             </Border>
 
             <Border DockPanel.Dock="Bottom"
                     Margin="8,0,8,6"
-                    Background="#FFFDFEFF"
-                    BorderBrush="#FFD2E2E7"
-                    BorderThickness="1"
-                    CornerRadius="10">
+
+
+
+>
                 
                 <Grid>
                     <Grid.RowDefinitions>
@@ -208,13 +190,13 @@
                                    DockPanel.Dock="Left"
                                    FontFamily="Bahnschrift"
                                    FontSize="16"
-                                   Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
                         <TextBlock Text="Latest activity"
                                    DockPanel.Dock="Right"
                                    VerticalAlignment="Center"
                                    FontFamily="Segoe UI Variable Text"
                                    FontSize="11"
-                                   Foreground="{StaticResource SecondaryTextBrush}"/>
+/>
                     </DockPanel>
 
                     <ListView x:Name="ProcessLogsListView"
@@ -222,12 +204,12 @@
                               Margin="8,0,8,8"
                               Height="132"
                               ItemsSource="{Binding ProcessLogs}"
-                              BorderBrush="#FFD2E2E7"
-                              BorderThickness="1"
+
+
                               Background="Transparent"
                               FontFamily="Segoe UI Variable Text"
                               FontSize="12"
-                              Foreground="#808080"
+
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         
@@ -240,11 +222,11 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding Time}"
                                                FontFamily="Consolas"
-                                               Foreground="#808080"/>
+/>
                                     <TextBlock Grid.Column="1"
                                                Text="{Binding Message}"
                                                Margin="12,0,0,0"
-                                               Foreground="#808080"
+
                                                TextWrapping="Wrap"/>
                                 </Grid>
                             </DataTemplate>
@@ -272,22 +254,22 @@
                             <TextBlock Text="Current Task"
                                        FontFamily="Bahnschrift"
                                        FontSize="18"
-                                       Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
 
                             <TextBlock Text="Choose file and mode."
                                        Margin="0,4,0,0"
                                        FontFamily="Segoe UI Variable Text"
                                        FontSize="11"
-                                       Foreground="{StaticResource SecondaryTextBrush}"
+
                                        TextWrapping="Wrap"/>
 
                             <TextBlock Text="File"
                                        Margin="0,12,0,5"/>
                             <Border x:Name="AudioDropZoneBorder"
-                                    Background="#FFFDFEFF"
-                                    BorderBrush="#FFD2E2E7"
-                                    BorderThickness="1"
-                                    CornerRadius="9"
+
+
+
+
                                     Padding="8">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -300,21 +282,21 @@
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="13"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource PrimaryTextBrush}">
+>
                                             
                                         </TextBlock>
                                         <TextBlock Text="or choose a file"
                                                    Margin="0,2,0,0"
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="10.5"
-                                                   Foreground="{StaticResource SecondaryTextBrush}">
+>
                                             
                                         </TextBlock>
                                         <TextBlock Text="{Binding LoadedAudioFileName}"
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="12"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource PrimaryTextBrush}"
+
                                                    TextTrimming="CharacterEllipsis">
                                             
                                         </TextBlock>
@@ -322,7 +304,7 @@
                                                    Margin="0,2,0,0"
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="10.5"
-                                                   Foreground="{StaticResource SecondaryTextBrush}">
+>
                                             
                                         </TextBlock>
                                     </StackPanel>
@@ -339,7 +321,7 @@
                                        Margin="0,6,0,0"
                                        FontFamily="Segoe UI Variable Text"
                                        FontSize="11"
-                                       Foreground="#FF8A4B1D"
+
                                        TextWrapping="Wrap">
                                 
                             </TextBlock>
@@ -362,18 +344,18 @@
                                                            FontFamily="Segoe UI Variable Text"
                                                            FontSize="13"
                                                            FontWeight="SemiBold"
-                                                           Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
                                                 <TextBlock Text="{Binding Description}"
                                                            Margin="0,3,0,0"
                                                            FontFamily="Segoe UI Variable Text"
                                                            FontSize="10.5"
-                                                           Foreground="{StaticResource SecondaryTextBrush}"
+
                                                            TextWrapping="Wrap"/>
                                                 <TextBlock Text="{Binding DataContext.AutoTranscribeAssistStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
                                                            Margin="0,4,0,0"
                                                            FontFamily="Segoe UI Variable Text"
                                                            FontSize="10.5"
-                                                           Foreground="{StaticResource SecondaryTextBrush}"
+
                                                            TextWrapping="Wrap">
                                                     
                                                 </TextBlock>
@@ -381,7 +363,7 @@
                                                            Margin="0,4,0,0"
                                                            FontFamily="Segoe UI Variable Text"
                                                            FontSize="10.5"
-                                                           Foreground="{StaticResource SecondaryTextBrush}"
+
                                                            TextWrapping="Wrap">
                                                     
                                                 </TextBlock>
@@ -391,10 +373,10 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
 
-                            <Border Background="#FFFDFEFF"
-                                    BorderBrush="#FFD2E2E7"
-                                    BorderThickness="1"
-                                    CornerRadius="9"
+                            <Border
+
+
+
                                     Padding="8"
                                     Margin="0,2,0,0">
                                 
@@ -419,18 +401,18 @@
                                                        FontFamily="Segoe UI Variable Text"
                                                        FontSize="13"
                                                        FontWeight="SemiBold"
-                                                       Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
                                             <TextBlock Text="Fill segment text automatically."
                                                        Margin="0,2,0,0"
                                                        FontFamily="Segoe UI Variable Text"
                                                        FontSize="10.5"
-                                                       Foreground="{StaticResource SecondaryTextBrush}"
+
                                                        TextWrapping="Wrap"/>
                                             <TextBlock Text="{Binding AutoTranscribeAssistStatusText}"
                                                        Margin="0,4,0,0"
                                                        FontFamily="Segoe UI Variable Text"
                                                        FontSize="10.5"
-                                                       Foreground="{StaticResource SecondaryTextBrush}"
+
                                                        TextWrapping="Wrap"/>
                                         </StackPanel>
                                     </Grid>
@@ -494,12 +476,12 @@
                                 <TextBlock Text="Sessions"
                                            FontFamily="Bahnschrift"
                                            FontSize="18"
-                                           Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
                                 <TextBlock Text="Recent work."
                                            Margin="0,4,0,0"
                                            FontFamily="Segoe UI Variable Text"
                                            FontSize="11"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
+
                                            TextWrapping="Wrap"/>
                             </StackPanel>
 
@@ -509,10 +491,10 @@
                                          SelectedItem="{Binding SelectedRecentSession}"
                                          HorizontalContentAlignment="Stretch"
                                          MouseDoubleClick="RecentSessionsList_MouseDoubleClick"
-                                         BorderThickness="0"
+
                                          Background="Transparent"
                                          FontFamily="Segoe UI Variable Text"
-                                         Foreground="{StaticResource PrimaryTextBrush}"
+
                                          ScrollViewer.VerticalScrollBarVisibility="Auto">
                                     
                                     <ListBox.ItemTemplate>
@@ -521,22 +503,22 @@
                                                 <TextBlock Text="{Binding OriginalFileName}"
                                                            FontSize="12"
                                                            FontWeight="SemiBold"
-                                                           Foreground="{StaticResource PrimaryTextBrush}"
+
                                                            TextTrimming="CharacterEllipsis"/>
                                                 <TextBlock Text="{Binding UpdatedUtc, StringFormat=Updated {0:MMM dd, yyyy h:mm tt}}"
                                                            Margin="0,3,0,0"
                                                            FontSize="10.5"
-                                                           Foreground="{StaticResource SecondaryTextBrush}"
+
                                                            TextTrimming="CharacterEllipsis"/>
                                             </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
 
-                                <Border Background="#FFF8FBFC"
-                                        BorderBrush="#FFD2E2E7"
-                                        BorderThickness="1"
-                                        CornerRadius="9"
+                                <Border
+
+
+
                                         Padding="10">
                                     
                                     <StackPanel HorizontalAlignment="Center"
@@ -546,13 +528,13 @@
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="12"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
                                         <TextBlock Text="Import an audio file to create your first transcript session."
                                                    Margin="0,4,0,0"
                                                    HorizontalAlignment="Center"
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="10.5"
-                                                   Foreground="{StaticResource SecondaryTextBrush}"
+
                                                    TextWrapping="Wrap"
                                                    TextAlignment="Center"/>
                                     </StackPanel>
@@ -603,12 +585,12 @@
                                 <TextBlock Text="Transcript"
                                            FontFamily="Bahnschrift"
                                            FontSize="18"
-                                           Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
                                 <TextBlock Text="{Binding TranscriptPaneSubtitle}"
                                            Margin="0,3,0,0"
                                            FontFamily="Segoe UI Variable Text"
                                            FontSize="11"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
+
                                            TextTrimming="CharacterEllipsis">
                                     
                                 </TextBlock>
@@ -632,7 +614,7 @@
                                            VerticalAlignment="Center"
                                            FontFamily="Segoe UI Variable Text"
                                            FontSize="10.5"
-                                           Foreground="{StaticResource SecondaryTextBrush}">
+>
                                     
                                 </TextBlock>
                                 <Button Content="Copy"
@@ -648,10 +630,10 @@
 
                         <Border Grid.Row="1"
                                 Margin="0,8,0,0"
-                                Background="#FFFDFEFF"
-                                BorderBrush="#FFD2E2E7"
-                                BorderThickness="1"
-                                CornerRadius="9"
+
+
+
+
                                 ClipToBounds="True">
                             <Grid>
                             <DataGrid x:Name="FinalizedTranscriptGrid"
@@ -671,13 +653,13 @@
                                       BeginningEdit="FinalizedTranscriptGrid_BeginningEdit"
                                       CellEditEnding="FinalizedTranscriptGrid_CellEditEnding"
                                       PreviewKeyDown="FinalizedTranscriptGrid_PreviewKeyDown"
-                                      BorderThickness="0"
+
                                       Background="Transparent"
-                                      RowBackground="#00FFFFFF"
-                                      AlternatingRowBackground="#05EAF4F8"
+
+
                                        FontFamily="Segoe UI Variable Text"
                                        FontSize="13"
-                                       Foreground="{StaticResource PrimaryTextBrush}"
+
                                       VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled">
                                 
@@ -763,9 +745,9 @@
                                                                  Height="14">
                                                             <Grid Width="16"
                                                                   Height="16">
-                                                                <Path Fill="#FF234F61"
+                                                                <Path
                                                                       Data="M2,3 H14 V4.5 H2 Z M2,7 H14 V8.5 H2 Z M2,11 H9.5 V12.5 H2 Z"/>
-                                                                <Path Fill="#FF234F61"
+                                                                <Path
                                                                       Data="M11.2,9.2 H12.8 V11.2 H14.8 V12.8 H12.8 V14.8 H11.2 V12.8 H9.2 V11.2 H11.2 Z"/>
                                                             </Grid>
                                                         </Viewbox>
@@ -775,7 +757,7 @@
                                                             ToolTip="Delete this row">
                                                         <Viewbox Width="14"
                                                                  Height="14">
-                                                            <Path Fill="#FF234F61"
+                                                            <Path
                                                                   Data="M6,1.8 H10 L10.7,2.9 H14 V4.4 H2 V2.9 H5.3 Z M4.1,5.1 H11.9 L11.2,14.2 H4.8 Z M6,6.6 V12.4 H7.4 V6.6 Z M8.6,6.6 V12.4 H10 V6.6 Z"/>
                                                         </Viewbox>
                                                     </Button>
@@ -786,10 +768,10 @@
                                 </DataGrid.Columns>
                             </DataGrid>
                                 <Border x:Name="TranscriptEmptyStateBorder"
-                                        Background="#FFF8FBFC"
-                                        BorderBrush="#FFD2E2E7"
-                                        BorderThickness="1"
-                                        CornerRadius="9"
+
+
+
+
                                         Padding="12"
                                         Margin="0,56,0,0"
                                         VerticalAlignment="Top"
@@ -802,13 +784,13 @@
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="15"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource PrimaryTextBrush}"
+
                                                    TextAlignment="Center"/>
                                         <TextBlock Text="{Binding TranscriptEmptyStateMessage}"
                                                    Margin="0,6,0,0"
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="11"
-                                                   Foreground="{StaticResource SecondaryTextBrush}"
+
                                                    TextAlignment="Center"
                                                    TextWrapping="Wrap"/>
                                         <Button Content="Choose File"
@@ -819,7 +801,7 @@
                                                    Margin="0,8,0,0"
                                                    FontFamily="Segoe UI Variable Text"
                                                    FontSize="10.5"
-                                                   Foreground="{StaticResource SecondaryTextBrush}"
+
                                                    TextAlignment="Center"
                                                    TextWrapping="Wrap"/>
                                     </StackPanel>
@@ -840,22 +822,17 @@
                 <Border HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Width="320"
-                        Background="#FFFDFEFF"
-                        BorderBrush="#FFD2E2E7"
-                        BorderThickness="1"
-                        CornerRadius="14"
+
+
+
+
                         Padding="16,14">
-                    <Border.Effect>
-                        <DropShadowEffect BlurRadius="28"
-                                          ShadowDepth="0"
-                                          Opacity="0.18"
-                                          Color="#FF7F97A6"/>
-                    </Border.Effect>
+                    
                     <StackPanel>
                         <TextBlock Text="{Binding TranscriptProcessingTitle, RelativeSource={RelativeSource AncestorType=Window}}"
                                    FontFamily="Bahnschrift"
                                    FontSize="18"
-                                   Foreground="{StaticResource PrimaryTextBrush}"
+
                                    HorizontalAlignment="Center"/>
                         <ProgressBar Width="160"
                                      Height="8"
@@ -865,7 +842,7 @@
                                    Margin="0,12,0,0"
                                    FontFamily="Segoe UI Variable Text"
                                    FontSize="12"
-                                   Foreground="{StaticResource SecondaryTextBrush}"
+
                                    TextAlignment="Center"
                                    TextWrapping="Wrap"/>
                         <Grid Margin="0,16,0,0">
@@ -904,18 +881,13 @@
                 <TranslateTransform x:Name="CopyToastTransform"
                                     Y="-14"/>
             </Border.RenderTransform>
-            <Border Background="#FFFDFEFF"
-                    BorderBrush="#FFD2E2E7"
-                    BorderThickness="1"
-                    CornerRadius="14"
+            <Border
+
+
+
                     Padding="14,12"
                     MaxWidth="320">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="26"
-                                      ShadowDepth="0"
-                                      Opacity="0.2"
-                                      Color="#FF7F97A6"/>
-                </Border.Effect>
+                
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -924,17 +896,17 @@
                     <Border x:Name="CopyToastIconHost"
                             Width="34"
                             Height="34"
-                            CornerRadius="17"
-                            Background="{StaticResource AccentSurfaceBrush}"
-                            BorderBrush="{StaticResource AccentBorderBrush}"
-                            BorderThickness="1"
+
+
+
+
                             VerticalAlignment="Top">
                         <Viewbox Width="15"
                                  Height="15"
                                  HorizontalAlignment="Center"
                                  VerticalAlignment="Center">
                             <Path x:Name="CopyToastIconPath"
-                                  Stroke="{StaticResource AccentBrush}"
+
                                   StrokeThickness="2.6"
                                   StrokeStartLineCap="Round"
                                   StrokeEndLineCap="Round"
@@ -949,13 +921,13 @@
                                    FontFamily="Segoe UI Variable Text"
                                    FontSize="13"
                                    FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}"/>
+/>
                         <TextBlock x:Name="CopyToastMessageText"
                                    Text="Finalized transcript is ready to paste."
                                    Margin="0,3,0,0"
                                    FontFamily="Segoe UI Variable Text"
                                    FontSize="11"
-                                   Foreground="{StaticResource SecondaryTextBrush}"
+
                                    TextWrapping="Wrap"/>
                     </StackPanel>
                 </Grid>
@@ -963,5 +935,6 @@
         </Border>
     </Grid>
 </Window>
+
 
 
