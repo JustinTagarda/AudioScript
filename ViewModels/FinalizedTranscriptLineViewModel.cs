@@ -6,6 +6,7 @@ namespace VoxTranscriber.ViewModels;
 public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     private TimeSpan? _startOffset;
     private TimeSpan? _endOffset;
+    private string _speakerLabel;
     private string _text;
     private bool _isPlaybackTimelineMatch;
     private bool _areRowActionsVisible;
@@ -19,10 +20,12 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         TimeSpan? endOffset,
         bool isTimestampEstimated,
         string text,
+        string speakerLabel = "",
         bool isManuallyReviewed = false) {
         _startOffset = startOffset;
         _endOffset = endOffset;
         IsTimestampEstimated = isTimestampEstimated;
+        _speakerLabel = speakerLabel?.Trim() ?? string.Empty;
         _text = text ?? string.Empty;
         _isManuallyReviewed = isManuallyReviewed;
     }
@@ -34,6 +37,20 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     public TimeSpan? EndOffset => _endOffset;
 
     public bool IsTimestampEstimated { get; }
+
+    public string SpeakerLabel {
+        get => _speakerLabel;
+        set {
+            string normalized = value?.Trim() ?? string.Empty;
+
+            if (string.Equals(_speakerLabel, normalized, StringComparison.Ordinal)) {
+                return;
+            }
+
+            _speakerLabel = normalized;
+            OnPropertyChanged();
+        }
+    }
 
     public string Timeline {
         get => _startOffset is null

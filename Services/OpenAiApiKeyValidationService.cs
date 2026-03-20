@@ -7,6 +7,8 @@ using System.Text.Json;
 namespace VoxTranscriber.Services;
 
 public sealed class OpenAiApiKeyValidationService {
+    private static readonly TimeSpan ValidationTimeout = TimeSpan.FromSeconds(15);
+
     private readonly HttpClient _httpClient;
 
     public OpenAiApiKeyValidationService(HttpClient httpClient) {
@@ -30,7 +32,13 @@ public sealed class OpenAiApiKeyValidationService {
 
         HttpResponseMessage response;
         try {
-            response = await _httpClient.SendAsync(request, cancellationToken);
+            using var timeoutCts = new CancellationTokenSource(ValidationTimeout);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+            response = await _httpClient.SendAsync(request, linkedCts.Token);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) {
+            return OpenAiApiKeyValidationResult.Invalid(
+                "OpenAI validation timed out. Check your internet connection and try again.");
         }
         catch (TaskCanceledException) {
             return OpenAiApiKeyValidationResult.Invalid(

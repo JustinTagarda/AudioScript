@@ -6,6 +6,7 @@ public static class OpenAiTranscriptionModelCatalog {
     public const string ManualTranscription = "manual-transcription";
     public const string Gpt4oTranscribe = "gpt-4o-transcribe";
     public const string Gpt4oMiniTranscribe = "gpt-4o-mini-transcribe";
+    public const string Gpt4oTranscribeDiarize = "gpt-4o-transcribe-diarize";
 
     private static readonly TranscriptionModelOption ManualModel = new(
         Id: ManualTranscription,

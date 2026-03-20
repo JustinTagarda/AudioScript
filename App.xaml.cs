@@ -67,13 +67,22 @@ public partial class App : System.Windows.Application {
         AppPreferencesSnapshot appPreferencesSnapshot = _appPreferencesStore.Load();
         openAiOptions.ApiKey = openAiSnapshot.ApiKey;
 
-        _httpClient = new HttpClient();
+        _httpClient = new HttpClient {
+            // Long transcription and diarization uploads use service-level cancellation tokens.
+            // The framework default HttpClient timeout is 100 seconds and cancels valid long requests too early.
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
         _openAiApiKeyValidationService = new OpenAiApiKeyValidationService(_httpClient);
         var processLogService = new ProcessLogService();
         _processLogService = processLogService;
         _applicationUpdateService = new ApplicationUpdateService(processLogService);
         var responseParser = new OpenAiTranscriptionResponseParser();
+        var speakerDiarizationResponseParser = new OpenAiSpeakerDiarizationResponseParser();
         var audioStandardizer = new AudioStandardizer();
+        var silenceIntervalDetector = new SilenceIntervalDetector();
+        var diarizationChunkPlanner = new SilenceAwareChunkPlanner(
+            ChunkedSpeakerDiarizationService.BuildRecommendedChunkPlannerOptions());
+        var waveClipExtractor = new WaveClipExtractor();
         var audioPlaybackService = new NaudioAudioPlaybackService();
         var sessionStore = new TranscriptSessionStore(processLogService: processLogService);
         var playbackTranscriptionService = new PlaybackTranscriptionService(
@@ -82,6 +91,18 @@ public partial class App : System.Windows.Application {
             openAiOptions,
             processLogService,
             responseParser);
+        var speakerDiarizationService = new OpenAiSpeakerDiarizationService(
+            _httpClient,
+            openAiOptions,
+            processLogService,
+            speakerDiarizationResponseParser);
+        var chunkedSpeakerDiarizationService = new ChunkedSpeakerDiarizationService(
+            audioStandardizer,
+            silenceIntervalDetector,
+            diarizationChunkPlanner,
+            waveClipExtractor,
+            speakerDiarizationService,
+            processLogService);
         var playbackEditTranscriptionOptions = new PlaybackTranscriptionSessionOptions(
             MinimumSegmentDuration: TimeSpan.FromSeconds(1.5),
             InterimWindowDuration: TimeSpan.FromSeconds(10),
@@ -97,6 +118,7 @@ public partial class App : System.Windows.Application {
             openAiOptions,
             _openAiSettingsStore,
             _openAiApiKeyValidationService,
+            chunkedSpeakerDiarizationService,
             processLogService,
             sessionStore,
             _appPreferencesStore,

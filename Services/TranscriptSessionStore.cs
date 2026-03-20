@@ -264,6 +264,8 @@ public sealed class TranscriptSessionStore {
 
             document.Transcript ??= new TranscriptSessionTranscriptDocument();
             document.Transcript.Lines ??= new List<TranscriptSessionLineDocument>();
+            document.SpeakerTranscript ??= new TranscriptSessionTranscriptDocument();
+            document.SpeakerTranscript.Lines ??= new List<TranscriptSessionLineDocument>();
             document.Audio ??= new TranscriptSessionAudioDocument();
             document.Editing ??= new TranscriptSessionEditingDocument();
 
@@ -292,6 +294,7 @@ public sealed class TranscriptSessionStore {
                 OriginalFileName = originalFileName,
             },
             Transcript = new TranscriptSessionTranscriptDocument(),
+            SpeakerTranscript = new TranscriptSessionTranscriptDocument(),
             Editing = new TranscriptSessionEditingDocument(),
         };
     }
@@ -429,6 +432,8 @@ public sealed class TranscriptSessionDocument {
 
     public TranscriptSessionTranscriptDocument Transcript { get; set; } = new();
 
+    public TranscriptSessionTranscriptDocument SpeakerTranscript { get; set; } = new();
+
     public TranscriptSessionEditingDocument Editing { get; set; } = new();
 }
 
@@ -457,6 +462,8 @@ public sealed class TranscriptSessionTranscriptDocument {
 public sealed class TranscriptSessionLineDocument {
     public string Text { get; set; } = string.Empty;
 
+    public string SpeakerLabel { get; set; } = string.Empty;
+
     public double? StartSeconds { get; set; }
 
     public double? EndSeconds { get; set; }
@@ -468,6 +475,10 @@ public sealed class TranscriptSessionLineDocument {
 
 public sealed class TranscriptSessionEditingDocument {
     public int? SelectedRowIndex { get; set; }
+
+    public string SelectedTranscriptMode { get; set; } = string.Empty;
+
+    public int SelectedTranscriptViewIndex { get; set; }
 }
 
 public sealed record TranscriptSessionSummary(

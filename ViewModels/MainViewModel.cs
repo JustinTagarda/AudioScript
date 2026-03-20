@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
@@ -18,6 +19,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private readonly OpenAiTranscriptionOptions _openAiOptions;
     private readonly OpenAiSettingsStore _openAiSettingsStore;
     private readonly OpenAiApiKeyValidationService _openAiApiKeyValidationService;
+    private readonly ChunkedSpeakerDiarizationService _speakerDiarizationService;
     private readonly ProcessLogService _processLogService;
     private readonly TranscriptSessionStore _sessionStore;
     private readonly AppPreferencesStore _appPreferencesStore;
@@ -28,8 +30,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private readonly EngineOptionViewModel _manualEngine;
     private readonly EngineOptionViewModel _autoTranscribeEngine;
+    private readonly TranscriptModeOptionViewModel _segmentTranscriptMode;
+    private readonly TranscriptModeOptionViewModel _speakerDiarizationMode;
     private readonly ApplicationUpdateService? _applicationUpdateService;
     private EngineOptionViewModel? _selectedEngine;
+    private TranscriptModeOptionViewModel? _selectedTranscriptMode;
     private TranscriptSessionSummary? _selectedRecentSession;
     private TranscriptSessionDocument? _currentSessionDocument;
     private string _currentSessionDisplayName = "No session loaded.";
@@ -51,6 +56,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private bool _isUpdatingSeekFromPlayback;
     private bool _suppressSessionAutosave;
     private string _applicationVersionStatusText = string.Empty;
+    private int _selectedTranscriptViewIndex;
 
     public MainViewModel(
         IEnumerable<TranscriptionModelOption> models,
@@ -58,6 +64,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         OpenAiTranscriptionOptions openAiOptions,
         OpenAiSettingsStore openAiSettingsStore,
         OpenAiApiKeyValidationService openAiApiKeyValidationService,
+        ChunkedSpeakerDiarizationService speakerDiarizationService,
         ProcessLogService processLogService,
         TranscriptSessionStore sessionStore,
         AppPreferencesStore appPreferencesStore,
@@ -67,6 +74,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _openAiOptions = openAiOptions;
         _openAiSettingsStore = openAiSettingsStore;
         _openAiApiKeyValidationService = openAiApiKeyValidationService;
+        _speakerDiarizationService = speakerDiarizationService;
         _processLogService = processLogService;
         _sessionStore = sessionStore;
         _appPreferencesStore = appPreferencesStore;
@@ -87,9 +95,27 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             Engines,
             OpenAiTranscriptionModelCatalog.ManualTranscription,
             "No AI assist: Manual transcription");
+        _segmentTranscriptMode = new TranscriptModeOptionViewModel(
+            TranscriptGenerationMode.Segments,
+            "Segments (10s)",
+            "Create 10-second chunks for manual or AI-assisted transcription.",
+            OnTranscriptModeOptionSelected);
+        _speakerDiarizationMode = new TranscriptModeOptionViewModel(
+            TranscriptGenerationMode.SpeakerDiarization,
+            "Speaker diarization",
+            "Detect and label different speakers in the current audio.",
+            OnTranscriptModeOptionSelected);
+        TranscriptModes = new ObservableCollection<TranscriptModeOptionViewModel> {
+            _segmentTranscriptMode,
+            _speakerDiarizationMode,
+        };
         ProcessLogs = new ObservableCollection<ProcessLogEntryViewModel>();
         FinalizedTranscriptLines = new ObservableCollection<FinalizedTranscriptLineViewModel>();
+        SpeakerTranscriptLines = new ObservableCollection<FinalizedTranscriptLineViewModel>();
         RecentSessions = new ObservableCollection<TranscriptSessionSummary>();
+        ProcessLogs.CollectionChanged += OnProcessLogsCollectionChanged;
+        FinalizedTranscriptLines.CollectionChanged += OnFinalizedTranscriptLinesCollectionChanged;
+        SpeakerTranscriptLines.CollectionChanged += OnSpeakerTranscriptLinesCollectionChanged;
 
         ClearCommand = new AsyncRelayCommand(ClearAsync, CanClear);
         OpenAudioFileCommand = new AsyncRelayCommand(OpenAudioFileAsync, CanOpenAudioFile);
@@ -118,6 +144,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _sessionAutosaveTimer.Tick += OnSessionAutosaveTimerTick;
 
         SelectedEngine = _autoTranscribeWithAi ? _autoTranscribeEngine : _manualEngine;
+        SelectedTranscriptMode = _segmentTranscriptMode;
+        SelectedTranscriptViewIndex = 0;
         _applicationVersionStatusText = _applicationUpdateService?.FooterStatusText
             ?? BuildInstalledVersionStatus();
         if (_applicationUpdateService is not null) {
@@ -137,6 +165,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         AppendLogCore("Auto Transcribe with AI uses the fixed OpenAI gpt-4o-transcribe engine.");
         AppendLogCore($"Auto Transcribe with AI: {(_autoTranscribeWithAi ? "ON" : "OFF")}.");
         AppendLogCore($"Startup mode: {SelectedEngine?.DisplayName ?? "Unavailable"}.");
+        AppendLogCore($"Transcript mode: {SelectedTranscriptMode?.DisplayName ?? "Unavailable"}.");
 
         LoadRecentSessions(selectSessionId: null);
 
@@ -151,8 +180,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public event EventHandler<ToastNotification>? ToastRequested;
 
     public ObservableCollection<EngineOptionViewModel> Engines { get; }
+    public ObservableCollection<TranscriptModeOptionViewModel> TranscriptModes { get; }
     public ObservableCollection<ProcessLogEntryViewModel> ProcessLogs { get; }
     public ObservableCollection<FinalizedTranscriptLineViewModel> FinalizedTranscriptLines { get; }
+    public ObservableCollection<FinalizedTranscriptLineViewModel> SpeakerTranscriptLines { get; }
+
+    public IEnumerable<FinalizedTranscriptLineViewModel> CurrentTranscriptLines =>
+        IsSpeakerTranscriptViewSelected
+            ? SpeakerTranscriptLines
+            : FinalizedTranscriptLines;
     public ObservableCollection<TranscriptSessionSummary> RecentSessions { get; }
 
     public AsyncRelayCommand ClearCommand { get; }
@@ -199,17 +235,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public bool HasRecentSessions => RecentSessions.Count > 0;
 
+    public bool HasProcessLogs => ProcessLogs.Count > 0;
+
     public string CurrentSessionDisplayName {
         get => _currentSessionDisplayName;
-        private set => SetProperty(ref _currentSessionDisplayName, value);
+        private set {
+            if (!SetProperty(ref _currentSessionDisplayName, value)) {
+                return;
+            }
+
+            NotifyPropertyChanged(nameof(TranscriptPaneSubtitle));
+        }
     }
 
     public string CurrentSessionAudioIssue {
         get => _currentSessionAudioIssue;
-        private set => SetProperty(ref _currentSessionAudioIssue, value);
+        private set {
+            if (!SetProperty(ref _currentSessionAudioIssue, value)) {
+                return;
+            }
+
+            NotifyPropertyChanged(nameof(HasCurrentSessionAudioIssue));
+        }
     }
 
     public bool HasCurrentSession => _currentSessionDocument is not null;
+
+    public bool HasCurrentSessionAudioIssue => !string.IsNullOrWhiteSpace(CurrentSessionAudioIssue);
 
     public bool IsCurrentSessionAudioMissing {
         get => _isCurrentSessionAudioMissing;
@@ -232,6 +284,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public bool IsEngineSelectionEnabled =>
         !IsBusy;
 
+    public bool IsTranscriptModeSelectionEnabled =>
+        !IsBusy;
+
     public bool IsOpenAiSettingsEnabled =>
         !IsBusy;
 
@@ -239,6 +294,174 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         SelectedEngine is not null
         && IsAudioFileLoaded
         && !IsBusy;
+
+    public bool IsTranscriptGenerationEnabled =>
+        SelectedTranscriptMode is not null
+        && IsAudioFileLoaded
+        && !IsBusy;
+
+    public TranscriptModeOptionViewModel? SelectedTranscriptMode {
+        get => _selectedTranscriptMode;
+        set {
+            if (!SetProperty(ref _selectedTranscriptMode, value)) {
+                return;
+            }
+
+            SelectedTranscriptViewIndex =
+                value?.Mode == TranscriptGenerationMode.SpeakerDiarization ? 1 : 0;
+            NotifyPropertyChanged(nameof(IsSegmentModeSelected));
+            NotifyPropertyChanged(nameof(IsSpeakerDiarizationModeSelected));
+            NotifyPropertyChanged(nameof(CurrentTranscriptLines));
+            NotifyPropertyChanged(nameof(IsAutoTranscribeSettingVisible));
+            NotifyPropertyChanged(nameof(IsSpeakerDiarizationNoticeVisible));
+            NotifyPropertyChanged(nameof(IsSegmentTranscriptViewSelected));
+            NotifyPropertyChanged(nameof(IsSpeakerTranscriptViewSelected));
+            NotifyPropertyChanged(nameof(IsCopyWithTimelineOptionVisible));
+            NotifyPropertyChanged(nameof(IsSpeakerCopyFormatVisible));
+            NotifyCurrentTranscriptStateChanged();
+            NotifyAiAssistStateChanged();
+            NotifyInteractionAvailabilityChanged();
+            ScheduleSessionAutosave();
+
+            foreach (TranscriptModeOptionViewModel mode in TranscriptModes) {
+                mode.IsSelected = ReferenceEquals(mode, value);
+            }
+
+            if (value is null) {
+                AppendLog("Transcript mode cleared.");
+            }
+            else {
+                AppendLog($"Transcript mode selected: {value.DisplayName}.");
+            }
+        }
+    }
+
+    public bool IsSegmentModeSelected =>
+        SelectedTranscriptMode?.Mode == TranscriptGenerationMode.Segments;
+
+    public bool IsSpeakerDiarizationModeSelected =>
+        SelectedTranscriptMode?.Mode == TranscriptGenerationMode.SpeakerDiarization;
+
+    public bool IsAutoTranscribeSettingVisible =>
+        IsSegmentModeSelected;
+
+    public bool IsSpeakerDiarizationNoticeVisible =>
+        IsSpeakerDiarizationModeSelected;
+
+    public int SelectedTranscriptViewIndex {
+        get => _selectedTranscriptViewIndex;
+        set {
+            int normalized = value <= 0 ? 0 : 1;
+            if (!SetProperty(ref _selectedTranscriptViewIndex, normalized)) {
+                return;
+            }
+
+            ScheduleSessionAutosave();
+        }
+    }
+
+    public bool IsSegmentTranscriptViewSelected =>
+        IsSegmentModeSelected;
+
+    public bool IsSpeakerTranscriptViewSelected =>
+        IsSpeakerDiarizationModeSelected;
+
+    public bool IsCopyWithTimelineOptionVisible =>
+        IsSegmentTranscriptViewSelected;
+
+    public bool IsSpeakerCopyFormatVisible =>
+        IsSpeakerTranscriptViewSelected;
+
+    public bool HasCurrentTranscriptLines =>
+        CurrentTranscriptLines.Any();
+
+    public bool CanCopyTranscript =>
+        HasCurrentTranscriptLines && !IsBusy;
+
+    public string GenerateTranscriptButtonText {
+        get {
+            if (IsSegmentModeSelected && !AutoTranscribeWithAi) {
+                return HasFinalizedTranscriptLines
+                    ? "Refresh Timeline"
+                    : "Create Timeline";
+            }
+
+            return HasCurrentTranscriptLines
+                ? "Regenerate Transcript"
+                : "Generate Transcript";
+        }
+    }
+
+    public string TranscriptPaneSubtitle {
+        get {
+            if (IsAudioFileLoaded) {
+                return LoadedAudioFileName;
+            }
+
+            if (HasCurrentSession) {
+                return CurrentSessionDisplayName;
+            }
+
+            return "Choose an audio file or open a saved session to begin.";
+        }
+    }
+
+    public string TranscriptEmptyStateTitle {
+        get {
+            if (!IsAudioFileLoaded) {
+                return "No transcript loaded";
+            }
+
+            if (IsSegmentModeSelected && !AutoTranscribeWithAi) {
+                return "Timeline ready for manual work";
+            }
+
+            return "Ready to generate";
+        }
+    }
+
+    public string TranscriptEmptyStateMessage {
+        get {
+            if (!IsAudioFileLoaded) {
+                return "Choose an audio file or open a saved session to begin.";
+            }
+
+            if (IsSegmentModeSelected && !AutoTranscribeWithAi) {
+                return "Create the 10-second timeline first, then fill in transcript rows manually or turn on AI Assist.";
+            }
+
+            if (IsSpeakerDiarizationModeSelected && string.IsNullOrWhiteSpace(OpenAiApiKey)) {
+                return "Add your OpenAI API key, then run speaker diarization for speaker-labelled transcript output.";
+            }
+
+            return "Choose a transcription mode and generate the transcript.";
+        }
+    }
+
+    public bool HasFinalizedTranscriptLines =>
+        FinalizedTranscriptLines.Count > 0;
+
+    public bool HasSpeakerTranscriptLines =>
+        SpeakerTranscriptLines.Count > 0;
+
+    public string AutoTranscribeAssistStatusText {
+        get {
+            if (AutoTranscribeWithAi) {
+                return string.IsNullOrWhiteSpace(OpenAiApiKey)
+                    ? "AI assist is on, but an OpenAI API key is still required."
+                    : "AI assist is on and ready to fill segment text automatically.";
+            }
+
+            return string.IsNullOrWhiteSpace(OpenAiApiKey)
+                ? "AI assist is off. Add an OpenAI API key to enable automated segment transcription."
+                : "AI assist is off. Turn it on to fill segment text automatically.";
+        }
+    }
+
+    public string SpeakerDiarizationStatusText =>
+        string.IsNullOrWhiteSpace(OpenAiApiKey)
+            ? "OpenAI API key required to run speaker diarization."
+            : "Uses OpenAI gpt-4o-transcribe-diarize for speaker-labelled output.";
 
     public bool AutoTranscribeWithAi {
         get => _autoTranscribeWithAi;
@@ -249,6 +472,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
             SelectedEngine = value ? _autoTranscribeEngine : _manualEngine;
             SaveAppPreferences();
+            NotifyAiAssistStateChanged();
+            NotifyCurrentTranscriptStateChanged();
             AppendLog($"Auto Transcribe with AI: {(value ? "ON" : "OFF")}.");
         }
     }
@@ -279,6 +504,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
             NotifyPropertyChanged(nameof(IsAudioFileLoaded));
+            NotifyPropertyChanged(nameof(TranscriptPaneSubtitle));
+            NotifyCurrentTranscriptStateChanged();
             NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
         }
@@ -387,6 +614,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             AppendLog($"Busy state: {(value ? "ON" : "OFF")}.");
+            NotifyPropertyChanged(nameof(CanCopyTranscript));
             NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
         }
@@ -401,6 +629,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
             _openAiOptions.ApiKey = value.Trim();
             _openAiSettingsStore.Save(_openAiOptions.ApiKey);
+            NotifyAiAssistStateChanged();
+            NotifyCurrentTranscriptStateChanged();
             AppendLog($"OpenAI API key updated ({MaskApiKey(_openAiOptions.ApiKey)}).");
             RefreshCommandStates();
         }
@@ -412,7 +642,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _sessionAutosaveTimer.Stop();
         _sessionAutosaveTimer.Tick -= OnSessionAutosaveTimerTick;
         TrySaveCurrentSession(
-            updateTranscriptionMetadata: false,
+            updatedTranscriptMode: null,
             showErrorDialog: false,
             successLogMessage: string.Empty);
 
@@ -422,7 +652,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         _processLogService.LogEmitted -= OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged -= OnAudioPlaybackStateChanged;
+        ProcessLogs.CollectionChanged -= OnProcessLogsCollectionChanged;
+        FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
+        SpeakerTranscriptLines.CollectionChanged -= OnSpeakerTranscriptLinesCollectionChanged;
         UnsubscribeFromFinalizedLineChanges();
+        UnsubscribeFromSpeakerLineChanges();
         _audioTimelineTimer.Stop();
         _audioTimelineTimer.Tick -= OnAudioTimelineTick;
         _audioPlaybackService.Dispose();
@@ -523,6 +757,83 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return Task.FromResult(CreatePlaceholdersCore());
     }
 
+    public async Task<bool> GenerateSpeakerDiarizationTranscriptAsync(CancellationToken cancellationToken) {
+        if (!IsAudioFileLoaded) {
+            AppendLog("Speaker diarization aborted: no audio file is loaded in preview.");
+            return false;
+        }
+
+        if (!EnsureCurrentSessionForLoadedAudio()) {
+            AppendLog("Speaker diarization aborted: current audio is not associated with a session.");
+            return false;
+        }
+
+        bool hasExistingTranscript = HasExistingTranscriptContent(TranscriptGenerationMode.SpeakerDiarization);
+        if (hasExistingTranscript && !ConfirmTranscriptReplacement(
+                operationName: "Speaker diarization",
+                transcriptMode: TranscriptGenerationMode.SpeakerDiarization,
+                canceledStatusMessage: "Speaker diarization canceled. Existing speaker transcript was kept.")) {
+            return false;
+        }
+
+        if (hasExistingTranscript) {
+            ResetCurrentSessionTranscriptState(TranscriptGenerationMode.SpeakerDiarization);
+        }
+
+        ClearTranscriptAndLogs(unloadAudioPreview: false, transcriptMode: TranscriptGenerationMode.SpeakerDiarization);
+
+        if (hasExistingTranscript
+            && !TrySaveCurrentSession(
+                updatedTranscriptMode: null,
+                showErrorDialog: true,
+                successLogMessage: "Existing speaker transcript cleared before speaker diarization.")) {
+            AppendLog("Speaker diarization aborted: existing speaker transcript could not be cleared safely.");
+            return false;
+        }
+
+        IsBusy = true;
+        StatusMessage = "Transcribing with speaker diarization...";
+
+        try {
+            SpeakerDiarizationResult result = await _speakerDiarizationService.DiarizeAudioFileAsync(
+                LoadedAudioFilePath,
+                cancellationToken);
+
+            ApplySpeakerDiarizationResult(result);
+            SelectedTranscriptViewIndex = 1;
+
+            if (!TrySaveCurrentSession(
+                    updatedTranscriptMode: TranscriptGenerationMode.SpeakerDiarization,
+                    showErrorDialog: true,
+                    successLogMessage: "Session saved after speaker diarization.")) {
+                AppendLog("Speaker diarization aborted: diarized transcript could not be saved.");
+                return false;
+            }
+
+            if (_currentSessionDocument is not null) {
+                LoadRecentSessions(_currentSessionDocument.SessionId);
+            }
+
+            StatusMessage = $"Speaker diarization completed with {SpeakerTranscriptLines.Count:N0} line(s).";
+            AppendLog($"Speaker diarization completed with {SpeakerTranscriptLines.Count:N0} line(s).");
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            StatusMessage = "Speaker diarization canceled.";
+            AppendLog("Speaker diarization canceled.");
+            return false;
+        }
+        finally {
+            IsBusy = false;
+        }
+    }
+
+    public string BuildClipboardTranscriptText() {
+        return IsSpeakerTranscriptViewSelected
+            ? BuildSpeakerTranscriptText(includeTimeline: true)
+            : BuildSegmentTranscriptText(includeTimeline: CopyFinalizedWithTimeline);
+    }
+
     private bool CreatePlaceholdersCore() {
         if (!IsAudioFileLoaded) {
             AppendLog("Create placeholders aborted: no audio file is loaded in preview.");
@@ -540,22 +851,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             return false;
         }
 
-        bool hasExistingTranscript = HasExistingTranscriptContent();
+        bool hasExistingTranscript = HasExistingTranscriptContent(TranscriptGenerationMode.Segments);
         if (hasExistingTranscript && !ConfirmTranscriptReplacement(
                 operationName: "Create placeholders",
+                transcriptMode: TranscriptGenerationMode.Segments,
                 canceledStatusMessage: "Placeholder creation canceled. Existing transcript was kept.")) {
             return false;
         }
 
         if (hasExistingTranscript) {
-            ResetCurrentSessionTranscriptState();
+            ResetCurrentSessionTranscriptState(TranscriptGenerationMode.Segments);
         }
 
-        ClearTranscriptAndLogs(unloadAudioPreview: false);
+        ClearTranscriptAndLogs(unloadAudioPreview: false, transcriptMode: TranscriptGenerationMode.Segments);
 
         if (hasExistingTranscript
             && !TrySaveCurrentSession(
-                updateTranscriptionMetadata: false,
+                updatedTranscriptMode: null,
                 showErrorDialog: true,
                 successLogMessage: "Existing transcript cleared before placeholder creation.")) {
             AppendLog("Create placeholders aborted: existing transcript could not be cleared safely.");
@@ -569,7 +881,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             CreatePlaceholderTranscript(duration);
 
             if (!TrySaveCurrentSession(
-                    updateTranscriptionMetadata: false,
+                    updatedTranscriptMode: null,
                     showErrorDialog: true,
                     successLogMessage: "Session saved after placeholder creation.")) {
                 AppendLog("Create placeholders aborted: generated placeholders could not be saved.");
@@ -674,7 +986,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private Task ClearAsync() {
         _sessionAutosaveTimer.Stop();
         TrySaveCurrentSession(
-            updateTranscriptionMetadata: false,
+            updatedTranscriptMode: null,
             showErrorDialog: false,
             successLogMessage: string.Empty);
         ClearOutputCore(unloadAudioPreview: true, clearSessionContext: true);
@@ -691,7 +1003,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _suppressSessionAutosave = true;
         try {
             UnsubscribeFromFinalizedLineChanges();
+            UnsubscribeFromSpeakerLineChanges();
             FinalizedTranscriptLines.Clear();
+            SpeakerTranscriptLines.Clear();
             FinalizedText = string.Empty;
             ProcessLogs.Clear();
         }
@@ -715,8 +1029,38 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         RefreshCommandStates();
     }
 
-    private void ClearTranscriptAndLogs(bool unloadAudioPreview) {
-        ClearOutputCore(unloadAudioPreview, clearSessionContext: false);
+    private void ClearTranscriptAndLogs(bool unloadAudioPreview, TranscriptGenerationMode transcriptMode) {
+        _sessionAutosaveTimer.Stop();
+
+        if (unloadAudioPreview) {
+            _audioPlaybackService.UnloadFile();
+        }
+
+        _suppressSessionAutosave = true;
+        try {
+            switch (transcriptMode) {
+                case TranscriptGenerationMode.SpeakerDiarization:
+                    UnsubscribeFromSpeakerLineChanges();
+                    SpeakerTranscriptLines.Clear();
+                    break;
+                default:
+                    UnsubscribeFromFinalizedLineChanges();
+                    FinalizedTranscriptLines.Clear();
+                    FinalizedText = string.Empty;
+                    break;
+            }
+
+            ProcessLogs.Clear();
+        }
+        finally {
+            _suppressSessionAutosave = false;
+        }
+
+        _statusMessage = unloadAudioPreview
+            ? "Transcript, logs, and audio preview cleared."
+            : "Transcript and logs cleared.";
+        NotifyPropertyChanged(nameof(StatusMessage));
+        RefreshCommandStates();
     }
 
     private Task PlayAudioAsync() {
@@ -845,8 +1189,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private void NotifyInteractionAvailabilityChanged() {
         NotifyPropertyChanged(nameof(IsEngineSelectionEnabled));
+        NotifyPropertyChanged(nameof(IsTranscriptModeSelectionEnabled));
         NotifyPropertyChanged(nameof(IsOpenAiSettingsEnabled));
         NotifyPropertyChanged(nameof(IsSegmentTranscriptionEnabled));
+        NotifyPropertyChanged(nameof(IsTranscriptGenerationEnabled));
+    }
+
+    private void NotifyCurrentTranscriptStateChanged() {
+        NotifyPropertyChanged(nameof(CurrentTranscriptLines));
+        NotifyPropertyChanged(nameof(HasCurrentTranscriptLines));
+        NotifyPropertyChanged(nameof(CanCopyTranscript));
+        NotifyPropertyChanged(nameof(GenerateTranscriptButtonText));
+        NotifyPropertyChanged(nameof(TranscriptEmptyStateTitle));
+        NotifyPropertyChanged(nameof(TranscriptEmptyStateMessage));
+    }
+
+    private void NotifyAiAssistStateChanged() {
+        NotifyPropertyChanged(nameof(AutoTranscribeAssistStatusText));
+        NotifyPropertyChanged(nameof(SpeakerDiarizationStatusText));
     }
 
     private void SaveAppPreferences() {
@@ -892,7 +1252,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         try {
             _sessionAutosaveTimer.Stop();
             TrySaveCurrentSession(
-                updateTranscriptionMetadata: false,
+                updatedTranscriptMode: null,
                 showErrorDialog: false,
                 successLogMessage: string.Empty);
 
@@ -932,7 +1292,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         try {
             _sessionAutosaveTimer.Stop();
             TrySaveCurrentSession(
-                updateTranscriptionMetadata: false,
+                updatedTranscriptMode: null,
                 showErrorDialog: false,
                 successLogMessage: string.Empty);
 
@@ -965,6 +1325,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
 
             ApplyTranscriptDocument(loadResult.Document.Transcript);
+            ApplySpeakerTranscriptDocument(loadResult.Document.SpeakerTranscript);
+            ApplyEditingDocument(loadResult.Document.Editing);
 
             CurrentSessionAudioIssue = string.Empty;
             IsCurrentSessionAudioMissing = false;
@@ -1062,6 +1424,87 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         RebuildFinalizedTextFromLines();
     }
 
+    private void ApplySpeakerTranscriptDocument(TranscriptSessionTranscriptDocument transcript) {
+        UnsubscribeFromSpeakerLineChanges();
+        SpeakerTranscriptLines.Clear();
+
+        foreach (TranscriptSessionLineDocument line in transcript.Lines) {
+            if (line.StartSeconds is null && string.IsNullOrWhiteSpace(line.Text)) {
+                continue;
+            }
+
+            TimeSpan startOffset = line.StartSeconds is null
+                ? TimeSpan.Zero
+                : TimeSpan.FromSeconds(Math.Max(line.StartSeconds.Value, 0));
+            TimeSpan? endOffset = line.EndSeconds is null
+                ? null
+                : TimeSpan.FromSeconds(Math.Max(line.EndSeconds.Value, 0));
+
+            var item = new FinalizedTranscriptLineViewModel(
+                startOffset: startOffset,
+                endOffset: endOffset,
+                isTimestampEstimated: false,
+                text: line.Text,
+                speakerLabel: line.SpeakerLabel);
+            item.PropertyChanged += OnSpeakerTranscriptLinePropertyChanged;
+            SpeakerTranscriptLines.Add(item);
+        }
+    }
+
+    private void ApplyEditingDocument(TranscriptSessionEditingDocument editing) {
+        SelectedTranscriptMode = ResolveTranscriptMode(editing.SelectedTranscriptMode);
+        SelectedTranscriptViewIndex = editing.SelectedTranscriptViewIndex;
+    }
+
+    private TranscriptModeOptionViewModel ResolveTranscriptMode(string? value) {
+        if (Enum.TryParse(value, ignoreCase: true, out TranscriptGenerationMode parsedMode)) {
+            return parsedMode == TranscriptGenerationMode.SpeakerDiarization
+                ? _speakerDiarizationMode
+                : _segmentTranscriptMode;
+        }
+
+        return _segmentTranscriptMode;
+    }
+
+    private void OnTranscriptModeOptionSelected(TranscriptModeOptionViewModel option) {
+        if (option is null || ReferenceEquals(SelectedTranscriptMode, option)) {
+            return;
+        }
+
+        SelectedTranscriptMode = option;
+    }
+
+    private void ApplySpeakerDiarizationResult(SpeakerDiarizationResult result) {
+        _suppressSessionAutosave = true;
+
+        try {
+            UnsubscribeFromSpeakerLineChanges();
+            SpeakerTranscriptLines.Clear();
+
+            var speakerLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (SpeakerDiarizationSegment segment in result.Segments.OrderBy(item => item.StartOffset)) {
+                string speakerKey = segment.Speaker?.Trim() ?? string.Empty;
+                if (!speakerLabels.TryGetValue(speakerKey, out string? displayLabel)) {
+                    displayLabel = $"Speaker {speakerLabels.Count + 1}";
+                    speakerLabels[speakerKey] = displayLabel;
+                }
+
+                var line = new FinalizedTranscriptLineViewModel(
+                    startOffset: segment.StartOffset,
+                    endOffset: segment.EndOffset,
+                    isTimestampEstimated: false,
+                    text: segment.Text,
+                    speakerLabel: displayLabel);
+                line.PropertyChanged += OnSpeakerTranscriptLinePropertyChanged;
+                SpeakerTranscriptLines.Add(line);
+            }
+        }
+        finally {
+            _suppressSessionAutosave = false;
+        }
+    }
+
     private void CreatePlaceholderTranscript(TimeSpan duration) {
         _suppressSessionAutosave = true;
 
@@ -1151,6 +1594,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         ScheduleSessionAutosave();
     }
 
+    private void OnSpeakerTranscriptLinePropertyChanged(object? sender, PropertyChangedEventArgs e) {
+        if (!string.Equals(e.PropertyName, nameof(FinalizedTranscriptLineViewModel.Text), StringComparison.Ordinal)
+            && !string.Equals(e.PropertyName, nameof(FinalizedTranscriptLineViewModel.SpeakerLabel), StringComparison.Ordinal)) {
+            return;
+        }
+
+        ScheduleSessionAutosave();
+    }
+
     private void RebuildFinalizedTextFromLines() {
         string merged = string.Join(
             Environment.NewLine,
@@ -1174,8 +1626,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
     }
 
+    private void UnsubscribeFromSpeakerLineChanges() {
+        foreach (FinalizedTranscriptLineViewModel line in SpeakerTranscriptLines) {
+            line.PropertyChanged -= OnSpeakerTranscriptLinePropertyChanged;
+        }
+    }
+
     private void OnProcessLogEmitted(object? sender, string message) {
         _uiContext.Post(_ => AppendLogCore(message), null);
+    }
+
+    private void OnProcessLogsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
+        NotifyPropertyChanged(nameof(HasProcessLogs));
+    }
+
+    private void OnFinalizedTranscriptLinesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
+        NotifyPropertyChanged(nameof(HasFinalizedTranscriptLines));
+        NotifyCurrentTranscriptStateChanged();
+    }
+
+    private void OnSpeakerTranscriptLinesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
+        NotifyPropertyChanged(nameof(HasSpeakerTranscriptLines));
+        NotifyCurrentTranscriptStateChanged();
     }
 
     private void OnApplicationUpdateStatusChanged(object? sender, EventArgs e) {
@@ -1306,7 +1778,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _sessionAutosaveTimer.Stop();
 
         bool saved = TrySaveCurrentSession(
-            updateTranscriptionMetadata: false,
+            updatedTranscriptMode: null,
             showErrorDialog: true,
             successLogMessage: string.Empty);
 
@@ -1348,7 +1820,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return request.IsConfirmed;
     }
 
-    private bool HasExistingTranscriptContent() {
+    private bool HasExistingTranscriptContent(TranscriptGenerationMode transcriptMode) {
+        if (transcriptMode == TranscriptGenerationMode.SpeakerDiarization) {
+            if (SpeakerTranscriptLines.Count > 0) {
+                return true;
+            }
+
+            if (_currentSessionDocument is null) {
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(_currentSessionDocument.SpeakerTranscript.FinalText)
+                || _currentSessionDocument.SpeakerTranscript.Lines.Count > 0;
+        }
+
         if (FinalizedTranscriptLines.Count > 0) {
             return true;
         }
@@ -1361,7 +1846,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             || _currentSessionDocument.Transcript.Lines.Count > 0;
     }
 
-    private bool ConfirmTranscriptReplacement(string operationName, string canceledStatusMessage) {
+    private bool ConfirmTranscriptReplacement(
+        string operationName,
+        TranscriptGenerationMode transcriptMode,
+        string canceledStatusMessage) {
         EventHandler<ConfirmationRequest>? handler = ConfirmationRequested;
         if (handler is null) {
             RaiseError("The confirmation dialog is unavailable. The existing transcript was left unchanged.");
@@ -1371,7 +1859,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         var request = new ConfirmationRequest(
             title: "Replace current transcript?",
-            message: "This session already has transcript content. Proceeding will remove the current transcript and start a new transcription for this audio file.",
+            message: transcriptMode == TranscriptGenerationMode.SpeakerDiarization
+                ? "This session already has speaker transcript content. Proceeding will remove the current speaker transcript and start a new diarization for this audio file."
+                : "This session already has segment transcript content. Proceeding will remove the current segment transcript and start a new transcription for this audio file.",
             confirmButtonText: "Proceed",
             cancelButtonText: "Cancel");
 
@@ -1399,16 +1889,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return false;
     }
 
-    private void ResetCurrentSessionTranscriptState() {
+    private void ResetCurrentSessionTranscriptState(TranscriptGenerationMode transcriptMode) {
         if (_currentSessionDocument is null) {
             return;
         }
 
-        _currentSessionDocument.Transcript.FinalText = string.Empty;
-        _currentSessionDocument.Transcript.ModelId = string.Empty;
-        _currentSessionDocument.Transcript.LastTranscribedUtc = null;
-        _currentSessionDocument.Transcript.Lines.Clear();
-        _currentSessionDocument.Editing.SelectedRowIndex = null;
+        TranscriptSessionTranscriptDocument transcript = transcriptMode == TranscriptGenerationMode.SpeakerDiarization
+            ? _currentSessionDocument.SpeakerTranscript
+            : _currentSessionDocument.Transcript;
+
+        transcript.FinalText = string.Empty;
+        transcript.ModelId = string.Empty;
+        transcript.LastTranscribedUtc = null;
+        transcript.Lines.Clear();
+
+        if (transcriptMode == TranscriptGenerationMode.Segments) {
+            _currentSessionDocument.Editing.SelectedRowIndex = null;
+        }
     }
 
     private void ClearCurrentSessionAfterDeletion() {
@@ -1416,7 +1913,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         try {
             UnsubscribeFromFinalizedLineChanges();
+            UnsubscribeFromSpeakerLineChanges();
             FinalizedTranscriptLines.Clear();
+            SpeakerTranscriptLines.Clear();
             FinalizedText = string.Empty;
         }
         finally {
@@ -1436,7 +1935,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     private void QueueSessionAutosaveSave() {
-        TranscriptSessionDocument? snapshot = CreateSessionSaveSnapshot(updateTranscriptionMetadata: false);
+        TranscriptSessionDocument? snapshot = CreateSessionSaveSnapshot(updatedTranscriptMode: null);
         if (snapshot is null) {
             return;
         }
@@ -1448,10 +1947,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     private bool TrySaveCurrentSession(
-        bool updateTranscriptionMetadata,
+        TranscriptGenerationMode? updatedTranscriptMode,
         bool showErrorDialog,
         string successLogMessage) {
-        TranscriptSessionDocument? snapshot = CreateSessionSaveSnapshot(updateTranscriptionMetadata);
+        TranscriptSessionDocument? snapshot = CreateSessionSaveSnapshot(updatedTranscriptMode);
         if (snapshot is null) {
             return true;
         }
@@ -1477,7 +1976,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
     }
 
-    private TranscriptSessionDocument? CreateSessionSaveSnapshot(bool updateTranscriptionMetadata) {
+    private TranscriptSessionDocument? CreateSessionSaveSnapshot(TranscriptGenerationMode? updatedTranscriptMode) {
         if (_currentSessionDocument is null) {
             return null;
         }
@@ -1486,16 +1985,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             ? Path.GetFileNameWithoutExtension(_currentSessionDocument.Audio.OriginalFileName)
             : _currentSessionDocument.DisplayName;
         DateTimeOffset updatedUtc = DateTimeOffset.UtcNow;
-        DateTimeOffset? lastTranscribedUtc = updateTranscriptionMetadata
+        DateTimeOffset? segmentLastTranscribedUtc = updatedTranscriptMode == TranscriptGenerationMode.Segments
             ? updatedUtc
             : _currentSessionDocument.Transcript.LastTranscribedUtc;
+        DateTimeOffset? speakerLastTranscribedUtc = updatedTranscriptMode == TranscriptGenerationMode.SpeakerDiarization
+            ? updatedUtc
+            : _currentSessionDocument.SpeakerTranscript.LastTranscribedUtc;
         double? durationSeconds = _currentSessionDocument.Audio.DurationSeconds;
 
         if (_audioPlaybackService.Duration > TimeSpan.Zero) {
             durationSeconds = _audioPlaybackService.Duration.TotalSeconds;
         }
 
-        List<TranscriptSessionLineDocument> lines = FinalizedTranscriptLines
+        List<TranscriptSessionLineDocument> segmentLines = FinalizedTranscriptLines
             .Select(line => new TranscriptSessionLineDocument {
                 Text = line.Text,
                 StartSeconds = line.StartOffset?.TotalSeconds,
@@ -1504,14 +2006,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 IsManuallyReviewed = line.IsManuallyReviewed,
             })
             .ToList();
+        List<TranscriptSessionLineDocument> speakerLines = SpeakerTranscriptLines
+            .Select(line => new TranscriptSessionLineDocument {
+                Text = line.Text,
+                SpeakerLabel = line.SpeakerLabel,
+                StartSeconds = line.StartOffset?.TotalSeconds,
+                EndSeconds = line.EndOffset?.TotalSeconds,
+            })
+            .ToList();
 
         _currentSessionDocument.DisplayName = displayName;
         _currentSessionDocument.UpdatedUtc = updatedUtc;
         _currentSessionDocument.Audio.DurationSeconds = durationSeconds;
-        _currentSessionDocument.Transcript.FinalText = BuildPlainTranscriptText();
+        _currentSessionDocument.Transcript.FinalText = BuildSegmentTranscriptText(includeTimeline: false);
         _currentSessionDocument.Transcript.ModelId = SelectedEngine?.Id ?? _currentSessionDocument.Transcript.ModelId;
-        _currentSessionDocument.Transcript.LastTranscribedUtc = lastTranscribedUtc;
-        _currentSessionDocument.Transcript.Lines = lines
+        _currentSessionDocument.Transcript.LastTranscribedUtc = segmentLastTranscribedUtc;
+        _currentSessionDocument.Transcript.Lines = segmentLines
             .Select(line => new TranscriptSessionLineDocument {
                 Text = line.Text,
                 StartSeconds = line.StartSeconds,
@@ -1520,6 +2030,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 IsManuallyReviewed = line.IsManuallyReviewed,
             })
             .ToList();
+        _currentSessionDocument.SpeakerTranscript.FinalText = BuildSpeakerTranscriptText(includeTimeline: true);
+        _currentSessionDocument.SpeakerTranscript.ModelId =
+            updatedTranscriptMode == TranscriptGenerationMode.SpeakerDiarization
+                ? OpenAiTranscriptionModelCatalog.Gpt4oTranscribeDiarize
+                : _currentSessionDocument.SpeakerTranscript.ModelId;
+        _currentSessionDocument.SpeakerTranscript.LastTranscribedUtc = speakerLastTranscribedUtc;
+        _currentSessionDocument.SpeakerTranscript.Lines = speakerLines
+            .Select(line => new TranscriptSessionLineDocument {
+                Text = line.Text,
+                SpeakerLabel = line.SpeakerLabel,
+                StartSeconds = line.StartSeconds,
+                EndSeconds = line.EndSeconds,
+                IsTimestampEstimated = line.IsTimestampEstimated,
+                IsManuallyReviewed = line.IsManuallyReviewed,
+            })
+            .ToList();
+        _currentSessionDocument.Editing.SelectedTranscriptMode = SelectedTranscriptMode?.Mode.ToString() ?? string.Empty;
+        _currentSessionDocument.Editing.SelectedTranscriptViewIndex = SelectedTranscriptViewIndex;
 
         return new TranscriptSessionDocument {
             SchemaVersion = _currentSessionDocument.SchemaVersion,
@@ -1538,10 +2066,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 FinalText = _currentSessionDocument.Transcript.FinalText,
                 ModelId = _currentSessionDocument.Transcript.ModelId,
                 LastTranscribedUtc = _currentSessionDocument.Transcript.LastTranscribedUtc,
-                Lines = lines,
+                Lines = segmentLines,
+            },
+            SpeakerTranscript = new TranscriptSessionTranscriptDocument {
+                FinalText = _currentSessionDocument.SpeakerTranscript.FinalText,
+                ModelId = _currentSessionDocument.SpeakerTranscript.ModelId,
+                LastTranscribedUtc = _currentSessionDocument.SpeakerTranscript.LastTranscribedUtc,
+                Lines = speakerLines,
             },
             Editing = new TranscriptSessionEditingDocument {
                 SelectedRowIndex = _currentSessionDocument.Editing.SelectedRowIndex,
+                SelectedTranscriptMode = _currentSessionDocument.Editing.SelectedTranscriptMode,
+                SelectedTranscriptViewIndex = _currentSessionDocument.Editing.SelectedTranscriptViewIndex,
             },
         };
     }
@@ -1583,11 +2119,49 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
     }
 
-    private string BuildPlainTranscriptText() {
+    private string BuildSegmentTranscriptText(bool includeTimeline) {
         return string.Join(
             Environment.NewLine,
             FinalizedTranscriptLines
-                .Select(line => line.Text?.Trim() ?? string.Empty)
+                .Select(line => {
+                    string text = line.Text?.Trim() ?? string.Empty;
+
+                    if (!includeTimeline) {
+                        return text;
+                    }
+
+                    string timeline = line.Timeline?.Trim() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(timeline)) {
+                        return text;
+                    }
+
+                    return string.IsNullOrWhiteSpace(text) ? timeline : $"{timeline} {text}";
+                })
+                .Where(text => !string.IsNullOrWhiteSpace(text)));
+    }
+
+    private string BuildSpeakerTranscriptText(bool includeTimeline) {
+        return string.Join(
+            Environment.NewLine,
+            SpeakerTranscriptLines
+                .Select(line => {
+                    string speakerLabel = string.IsNullOrWhiteSpace(line.SpeakerLabel)
+                        ? "Speaker"
+                        : line.SpeakerLabel.Trim();
+                    string text = line.Text?.Trim() ?? string.Empty;
+                    string speakerText = string.IsNullOrWhiteSpace(text)
+                        ? speakerLabel
+                        : $"{speakerLabel}: {text}";
+
+                    if (!includeTimeline) {
+                        return speakerText;
+                    }
+
+                    string timeline = line.Timeline?.Trim() ?? string.Empty;
+                    return string.IsNullOrWhiteSpace(timeline)
+                        ? speakerText
+                        : $"{timeline} {speakerText}";
+                })
                 .Where(text => !string.IsNullOrWhiteSpace(text)));
     }
 

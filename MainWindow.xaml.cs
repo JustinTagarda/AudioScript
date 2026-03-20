@@ -23,7 +23,7 @@ namespace VoxTranscriber;
 
 public partial class MainWindow : Window, INotifyPropertyChanged {
     private const int TimelineColumnIndex = 0;
-    private const int TranscriptTextColumnIndex = 1;
+    private const int TranscriptTextColumnIndex = 2;
     private const double ToastBottomMargin = 48;
     private const double ToastHiddenOffsetY = -14;
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
@@ -39,6 +39,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private readonly Func<PlaybackTranscriptionSession>? _playbackTranscriptionSessionFactory;
     private readonly ProcessLogService? _processLogService;
     private bool _isSegmentBatchTranscribing;
+    private bool _isTranscriptProcessingMuteAvailable = true;
+    private string _transcriptProcessingTitle = "Generating Transcript";
     private FinalizedTranscriptLineViewModel? _playbackMatchedLine;
     private FinalizedTranscriptLineViewModel? _rowActionsLine;
     private FinalizedTranscriptLineViewModel? _editLoopLine;
@@ -78,6 +80,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
     }
 
+    public bool IsTranscriptProcessingMuteAvailable {
+        get => _isTranscriptProcessingMuteAvailable;
+        private set {
+            if (_isTranscriptProcessingMuteAvailable == value) {
+                return;
+            }
+
+            _isTranscriptProcessingMuteAvailable = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string TranscriptProcessingTitle {
+        get => _transcriptProcessingTitle;
+        private set {
+            if (string.Equals(_transcriptProcessingTitle, value, StringComparison.Ordinal)) {
+                return;
+            }
+
+            _transcriptProcessingTitle = value;
+            OnPropertyChanged();
+        }
+    }
+
     private void AutoTranscribeWithAiCheckBox_Checked(object sender, RoutedEventArgs e) {
         if (!IsLoaded || DataContext is not MainViewModel vm) {
             return;
@@ -98,7 +124,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         ShowOpenAiSettingsDialog();
     }
 
-    private async void TranscribeBySegments_Click(object sender, RoutedEventArgs e) {
+    private async void GenerateTranscript_Click(object sender, RoutedEventArgs e) {
         if (DataContext is not MainViewModel vm) {
             return;
         }
@@ -107,11 +133,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             return;
         }
 
+        if (vm.IsSpeakerDiarizationModeSelected) {
+            await GenerateSpeakerDiarizationAsync(vm);
+            return;
+        }
+
+        await RunSegmentTranscriptAsync(vm);
+    }
+
+    private async void TranscribeBySegments_Click(object sender, RoutedEventArgs e) {
+        if (DataContext is not MainViewModel vm || IsSegmentBatchTranscribing) {
+            return;
+        }
+
+        await RunSegmentTranscriptAsync(vm);
+    }
+
+    private async Task RunSegmentTranscriptAsync(MainViewModel vm) {
+        ConfigureTranscriptProcessingUi(
+            title: "Transcribing By Segments",
+            allowMute: true);
+
         if (vm.IsManualTranscriptionSelected) {
             LogSegmentBatch("Manual transcription mode selected. Creating placeholder timeline only.");
 
             bool placeholdersCreated = await vm.CreatePlaceholdersForSegmentTranscriptionAsync();
             if (placeholdersCreated) {
+                vm.SelectedTranscriptViewIndex = 0;
                 vm.StatusMessage = "Placeholder transcript created for manual transcription.";
                 ShowCopyToast(
                     "Timeline created",
@@ -174,6 +222,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
                 LogSegmentBatch("Transcribe by segments stopped before placeholder generation completed.");
                 return;
             }
+
+            vm.SelectedTranscriptViewIndex = 0;
 
             List<FinalizedTranscriptLineViewModel> pendingLines = vm.FinalizedTranscriptLines
                 .Where(line => line.StartOffset is not null)
@@ -293,6 +343,70 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
     }
 
+    private async Task GenerateSpeakerDiarizationAsync(MainViewModel vm) {
+        ConfigureTranscriptProcessingUi(
+            title: "Speaker Diarization",
+            allowMute: false);
+
+        if (string.IsNullOrWhiteSpace(vm.OpenAiApiKey) && !ShowOpenAiSettingsDialog()) {
+            vm.StatusMessage = "Speaker diarization requires an OpenAI API key.";
+            ShowCopyToast(
+                "API key required",
+                "Configure the OpenAI API key before running speaker diarization.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        IsSegmentBatchTranscribing = true;
+        _segmentBatchTranscriptionCts = new CancellationTokenSource();
+        CancellationToken cancellationToken = _segmentBatchTranscriptionCts.Token;
+        ApplySegmentBatchInteractionLock();
+        await Dispatcher.Yield(DispatcherPriority.Background);
+
+        try {
+            LogSpeakerDiarization("Speaker diarization requested.");
+
+            bool completed = await vm.GenerateSpeakerDiarizationTranscriptAsync(cancellationToken);
+            if (cancellationToken.IsCancellationRequested) {
+                ShowCopyToast(
+                    "Speaker diarization canceled",
+                    "The speaker diarization request was canceled.",
+                    ToastNotificationType.Info);
+                return;
+            }
+
+            if (!completed) {
+                return;
+            }
+
+            ShowCopyToast(
+                "Speaker diarization completed",
+                "Speaker transcript lines are ready.",
+                ToastNotificationType.Success);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            vm.StatusMessage = "Speaker diarization canceled.";
+            ShowCopyToast(
+                "Speaker diarization canceled",
+                "The speaker diarization request was canceled.",
+                ToastNotificationType.Info);
+        }
+        catch (Exception ex) {
+            vm.LogHandledException("speaker diarization", ex);
+            LogSpeakerDiarization($"Speaker diarization failed: {ex.Message}");
+            ShowCopyToast(
+                "Speaker diarization failed",
+                ex.Message,
+                ToastNotificationType.Error);
+        }
+        finally {
+            _segmentBatchTranscriptionCts?.Dispose();
+            _segmentBatchTranscriptionCts = null;
+            IsSegmentBatchTranscribing = false;
+            RestoreSegmentBatchInteractionLock();
+        }
+    }
+
     private void CancelProcessing_Click(object sender, RoutedEventArgs e) {
         if (DataContext is not MainViewModel vm) {
             return;
@@ -309,31 +423,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
 
         try {
-            string plainText = vm.CopyFinalizedWithTimeline
-                ? string.Join(
-                    Environment.NewLine,
-                    vm.FinalizedTranscriptLines
-                        .Select(line => {
-                            string timeline = line.Timeline?.Trim() ?? string.Empty;
-                            string text = line.Text?.Trim() ?? string.Empty;
-
-                            if (string.IsNullOrWhiteSpace(timeline)) {
-                                return text;
-                            }
-
-                            return string.IsNullOrWhiteSpace(text) ? timeline : $"{timeline} {text}";
-                        })
-                        .Where(text => !string.IsNullOrWhiteSpace(text)))
-                : string.Join(
-                    Environment.NewLine,
-                    vm.FinalizedTranscriptLines
-                        .Select(line => line.Text?.Trim() ?? string.Empty)
-                        .Where(text => !string.IsNullOrWhiteSpace(text)));
+            string plainText = vm.BuildClipboardTranscriptText();
 
             System.Windows.Clipboard.SetText(plainText);
             ShowCopyToast(
                 "Copied to clipboard",
-                "Finalized transcript is ready to paste.",
+                "Transcript is ready to paste.",
                 ToastNotificationType.Success);
         }
         catch (Exception ex) {
@@ -383,6 +478,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
             _boundViewModel.ProcessLogs.CollectionChanged -= OnProcessLogsCollectionChanged;
             _boundViewModel.FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
+            _boundViewModel.SpeakerTranscriptLines.CollectionChanged -= OnSpeakerTranscriptLinesCollectionChanged;
             _boundViewModel = null;
         }
 
@@ -394,7 +490,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             _boundViewModel.PropertyChanged += OnViewModelPropertyChanged;
             _boundViewModel.ProcessLogs.CollectionChanged += OnProcessLogsCollectionChanged;
             _boundViewModel.FinalizedTranscriptLines.CollectionChanged += OnFinalizedTranscriptLinesCollectionChanged;
+            _boundViewModel.SpeakerTranscriptLines.CollectionChanged += OnSpeakerTranscriptLinesCollectionChanged;
             ScrollLogsToLatest();
+            UpdateTranscriptGridPresentation();
             UpdatePlaybackTimelineHighlight();
             UpdateTranscriptRowActionsVisibility();
         }
@@ -452,6 +550,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _boundViewModel.ProcessLogs.CollectionChanged -= OnProcessLogsCollectionChanged;
         _boundViewModel.FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
+        _boundViewModel.SpeakerTranscriptLines.CollectionChanged -= OnSpeakerTranscriptLinesCollectionChanged;
         _boundViewModel = null;
         ClearTranscriptEditPlaybackLoop();
         SetPlaybackTimelineMatch(null);
@@ -610,6 +709,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e) {
+        if (e.PropertyName == nameof(MainViewModel.SelectedTranscriptMode)) {
+            StopActivePlaybackEditTranscription(
+                _boundViewModel,
+                pausePlayback: false,
+                reason: "transcript mode changed",
+                discardResults: true);
+            ClearTranscriptTextEditState();
+            ClearTimelineEditState();
+            ClearTranscriptEditPlaybackLoop();
+
+            UpdateTranscriptGridPresentation();
+            UpdatePlaybackTimelineHighlight();
+            UpdateTranscriptRowActionsVisibility();
+            return;
+        }
+
+        if (e.PropertyName == nameof(MainViewModel.SelectedTranscriptViewIndex)) {
+            UpdateTranscriptRowActionsVisibility();
+        }
+
         if (e.PropertyName is nameof(MainViewModel.AudioSeekPositionSeconds)
             or nameof(MainViewModel.LoadedAudioFilePath)
             or nameof(MainViewModel.IsAudioFileLoaded)) {
@@ -630,6 +749,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     }
 
     private void OnFinalizedTranscriptLinesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
+        UpdatePlaybackTimelineHighlight();
+        UpdateTranscriptRowActionsVisibility();
+    }
+
+    private void OnSpeakerTranscriptLinesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
         UpdatePlaybackTimelineHighlight();
         UpdateTranscriptRowActionsVisibility();
     }
@@ -677,6 +801,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }), DispatcherPriority.Background);
     }
 
+    private void ConfigureTranscriptProcessingUi(string title, bool allowMute) {
+        TranscriptProcessingTitle = title;
+        IsTranscriptProcessingMuteAvailable = allowMute;
+    }
+
     private void ApplySegmentBatchInteractionLock() {
         SegmentBatchOverlay.Visibility = Visibility.Visible;
         SegmentBatchOverlay.IsHitTestVisible = true;
@@ -711,6 +840,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private void RestoreSegmentBatchInteractionLock() {
         SegmentBatchOverlay.IsHitTestVisible = false;
         SegmentBatchOverlay.Visibility = Visibility.Collapsed;
+        IsTranscriptProcessingMuteAvailable = true;
+        TranscriptProcessingTitle = "Generating Transcript";
 
         MainContentHost.IsEnabled = true;
         MainContentHost.IsHitTestVisible = true;
@@ -950,6 +1081,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             return;
         }
 
+        if (e.Column?.IsReadOnly == true) {
+            ClearTranscriptTextEditState();
+            e.Cancel = true;
+            return;
+        }
+
+        if (!vm.IsSegmentTranscriptViewSelected) {
+            ClearTimelineEditState();
+            StopActivePlaybackEditTranscription(
+                vm,
+                pausePlayback: false,
+                reason: "speaker transcript edit started",
+                discardResults: true);
+            ClearTranscriptEditPlaybackLoop();
+            _transcriptTextEditLine = line;
+            _transcriptTextEditOriginalText = line.Text ?? string.Empty;
+            return;
+        }
+
         if (IsTimelineColumn(e.Column)) {
             ClearTranscriptTextEditState();
             BeginTimelineEdit(vm, line);
@@ -1029,6 +1179,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             }
 
             ClearTranscriptTextEditState();
+        }
+
+        if (!vm.IsSegmentTranscriptViewSelected) {
+            Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+            return;
         }
 
         if (e.Row?.Item is FinalizedTranscriptLineViewModel editLoopLine
@@ -1189,12 +1344,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             ? -1
             : FinalizedTranscriptGrid.Columns.IndexOf(currentColumn);
 
-        if (currentColumnIndex >= 0 && currentColumnIndex < FinalizedTranscriptGrid.Columns.Count) {
+        if (currentColumnIndex >= 0
+            && currentColumnIndex < FinalizedTranscriptGrid.Columns.Count
+            && currentColumn?.Visibility == Visibility.Visible) {
             return currentColumnIndex;
         }
 
-        if (defaultColumnIndex >= 0 && defaultColumnIndex < FinalizedTranscriptGrid.Columns.Count) {
+        if (defaultColumnIndex >= 0
+            && defaultColumnIndex < FinalizedTranscriptGrid.Columns.Count
+            && FinalizedTranscriptGrid.Columns[defaultColumnIndex].Visibility == Visibility.Visible) {
             return defaultColumnIndex;
+        }
+
+        for (int index = 0; index < FinalizedTranscriptGrid.Columns.Count; index++) {
+            if (FinalizedTranscriptGrid.Columns[index].Visibility == Visibility.Visible) {
+                return index;
+            }
         }
 
         return 0;
@@ -1244,8 +1409,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             && FinalizedTranscriptGrid.Columns.IndexOf(column) == TimelineColumnIndex;
     }
 
+    private void UpdateTranscriptGridPresentation() {
+        bool isSegmentMode = _boundViewModel?.IsSegmentTranscriptViewSelected == true;
+
+        if (SpeakerTranscriptColumn is not null) {
+            SpeakerTranscriptColumn.Visibility = isSegmentMode
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
+        if (TranscriptRowActionsColumn is not null) {
+            TranscriptRowActionsColumn.Visibility = isSegmentMode
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        if (TimelineTranscriptColumn is not null) {
+            TimelineTranscriptColumn.IsReadOnly = !isSegmentMode;
+        }
+    }
+
     private void UpdateTranscriptRowActionsVisibility() {
         FinalizedTranscriptLineViewModel? targetLine = null;
+
+        if (_boundViewModel?.IsSegmentTranscriptViewSelected != true) {
+            SetTranscriptRowActionsLine(null);
+            return;
+        }
 
         if (FinalizedTranscriptGrid.IsKeyboardFocusWithin) {
             DataGridCellInfo currentCell = FinalizedTranscriptGrid.CurrentCell;
@@ -1766,6 +1956,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         _processLogService?.Log("SegmentBatch", message);
     }
 
+    private void LogSpeakerDiarization(string message) {
+        _processLogService?.Log("SpeakerDiarization", message);
+    }
+
     private static void PausePlaybackForPlaybackEditStop(MainViewModel vm) {
         try {
             if (vm.PauseAudioCommand.CanExecute(null)) {
@@ -2212,16 +2406,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     }
 
     private void UpdatePlaybackTimelineHighlight() {
-        if (_boundViewModel is null
-            || !_boundViewModel.IsAudioFileLoaded
-            || _boundViewModel.FinalizedTranscriptLines.Count == 0) {
+        if (_boundViewModel is null || !_boundViewModel.IsAudioFileLoaded) {
+            SetPlaybackTimelineMatch(null);
+            return;
+        }
+
+        List<FinalizedTranscriptLineViewModel> activeLines = _boundViewModel.CurrentTranscriptLines.ToList();
+        if (activeLines.Count == 0) {
             SetPlaybackTimelineMatch(null);
             return;
         }
 
         TimeSpan playbackPosition = TimeSpan.FromSeconds(Math.Max(_boundViewModel.AudioSeekPositionSeconds, 0));
         FinalizedTranscriptLineViewModel? matchedLine = FindPlaybackTimelineMatch(
-            _boundViewModel.FinalizedTranscriptLines,
+            activeLines,
             playbackPosition);
         SetPlaybackTimelineMatch(matchedLine);
     }
@@ -2239,6 +2437,82 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
 
         if (_playbackMatchedLine is not null) {
             _playbackMatchedLine.IsPlaybackTimelineMatch = true;
+            EnsurePlaybackTimelineMatchVisible(_playbackMatchedLine);
+        }
+    }
+
+    private void EnsurePlaybackTimelineMatchVisible(FinalizedTranscriptLineViewModel matchedLine) {
+        Dispatcher.BeginInvoke(new Action(() => {
+            if (!ReferenceEquals(_playbackMatchedLine, matchedLine)
+                || !FinalizedTranscriptGrid.IsLoaded
+                || !FinalizedTranscriptGrid.IsVisible) {
+                return;
+            }
+
+            ScrollViewer? scrollViewer = FindVisualChild<ScrollViewer>(FinalizedTranscriptGrid);
+            if (scrollViewer is null || scrollViewer.ViewportHeight <= 0) {
+                return;
+            }
+
+            DataGridRow? row =
+                FinalizedTranscriptGrid.ItemContainerGenerator.ContainerFromItem(matchedLine) as DataGridRow;
+            if (row is not null) {
+                RevealPlaybackTimelineRowIfNeeded(row, scrollViewer);
+                return;
+            }
+
+            int itemIndex = FinalizedTranscriptGrid.Items.IndexOf(matchedLine);
+            if (itemIndex < 0) {
+                return;
+            }
+
+            if (scrollViewer.CanContentScroll) {
+                double viewportTop = scrollViewer.VerticalOffset;
+                double viewportBottom = scrollViewer.VerticalOffset + scrollViewer.ViewportHeight;
+                if (itemIndex < viewportTop) {
+                    scrollViewer.ScrollToVerticalOffset(itemIndex);
+                }
+                else if (itemIndex >= viewportBottom) {
+                    double targetOffset = Math.Max(0, itemIndex - scrollViewer.ViewportHeight + 1);
+                    scrollViewer.ScrollToVerticalOffset(targetOffset);
+                }
+
+                return;
+            }
+
+            DataGridColumn targetColumn = TimelineTranscriptColumn ?? FinalizedTranscriptGrid.Columns[0];
+            FinalizedTranscriptGrid.ScrollIntoView(matchedLine, targetColumn);
+            FinalizedTranscriptGrid.UpdateLayout();
+
+            row = FinalizedTranscriptGrid.ItemContainerGenerator.ContainerFromItem(matchedLine) as DataGridRow;
+            if (row is not null) {
+                RevealPlaybackTimelineRowIfNeeded(row, scrollViewer);
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private void RevealPlaybackTimelineRowIfNeeded(DataGridRow row, ScrollViewer scrollViewer) {
+        try {
+            Rect rowBounds = row.TransformToAncestor(scrollViewer)
+                .TransformBounds(new Rect(new System.Windows.Point(0, 0), row.RenderSize));
+
+            if (rowBounds.Top >= 0 && rowBounds.Bottom <= scrollViewer.ViewportHeight) {
+                return;
+            }
+
+            if (rowBounds.Top < 0) {
+                row.BringIntoView(new Rect(
+                    new System.Windows.Point(0, 0),
+                    new System.Windows.Size(Math.Max(row.ActualWidth, 1), 1)));
+                return;
+            }
+
+            row.BringIntoView(new Rect(
+                new System.Windows.Point(0, Math.Max(row.ActualHeight - 1, 0)),
+                new System.Windows.Size(Math.Max(row.ActualWidth, 1), 1)));
+        }
+        catch (Exception ex) {
+            _boundViewModel?.LogHandledException("playback timeline auto-scroll", ex);
         }
     }
 

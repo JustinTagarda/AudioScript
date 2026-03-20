@@ -1,4 +1,5 @@
 using System.Text;
+using VoxTranscriber.Abstractions;
 using VoxTranscriber.Services;
 using Xunit;
 
@@ -98,6 +99,47 @@ public sealed class TranscriptSessionStoreTests {
             Assert.Equal(0, reloaded.Document.Transcript.Lines[0].StartSeconds);
             Assert.Equal(10, reloaded.Document.Transcript.Lines[0].EndSeconds);
             Assert.True(reloaded.Document.Transcript.Lines[0].IsTimestampEstimated);
+        }
+        finally {
+            DeleteDirectory(rootPath);
+            File.Delete(audioPath);
+        }
+    }
+
+    [Fact]
+    public void SaveLoadRoundTrip_PreservesSpeakerTranscriptAndEditingState() {
+        string rootPath = CreateTempDirectory();
+        string audioPath = CreateSilentWaveFile(16000);
+
+        try {
+            var store = new TranscriptSessionStore(rootPath);
+            TranscriptSessionLoadResult imported = store.ImportAudioFile(audioPath);
+
+            imported.Document.SpeakerTranscript.ModelId = OpenAiTranscriptionModelCatalog.Gpt4oTranscribeDiarize;
+            imported.Document.SpeakerTranscript.FinalText = "00:00:01 Speaker 1: hello";
+            imported.Document.SpeakerTranscript.Lines = new List<TranscriptSessionLineDocument> {
+                new() {
+                    Text = "hello",
+                    SpeakerLabel = "Speaker 1",
+                    StartSeconds = 1,
+                    EndSeconds = 2.5,
+                },
+            };
+            imported.Document.Editing.SelectedTranscriptMode = TranscriptGenerationMode.SpeakerDiarization.ToString();
+            imported.Document.Editing.SelectedTranscriptViewIndex = 1;
+
+            store.Save(imported.Document);
+
+            TranscriptSessionLoadResult reloaded = store.LoadSession(imported.Document.SessionId);
+
+            Assert.Equal(OpenAiTranscriptionModelCatalog.Gpt4oTranscribeDiarize, reloaded.Document.SpeakerTranscript.ModelId);
+            Assert.Equal("00:00:01 Speaker 1: hello", reloaded.Document.SpeakerTranscript.FinalText);
+            Assert.Single(reloaded.Document.SpeakerTranscript.Lines);
+            Assert.Equal("Speaker 1", reloaded.Document.SpeakerTranscript.Lines[0].SpeakerLabel);
+            Assert.Equal(1, reloaded.Document.SpeakerTranscript.Lines[0].StartSeconds);
+            Assert.Equal(2.5, reloaded.Document.SpeakerTranscript.Lines[0].EndSeconds);
+            Assert.Equal(TranscriptGenerationMode.SpeakerDiarization.ToString(), reloaded.Document.Editing.SelectedTranscriptMode);
+            Assert.Equal(1, reloaded.Document.Editing.SelectedTranscriptViewIndex);
         }
         finally {
             DeleteDirectory(rootPath);

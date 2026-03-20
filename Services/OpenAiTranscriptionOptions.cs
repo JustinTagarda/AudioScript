@@ -11,9 +11,13 @@ public sealed class OpenAiTranscriptionOptions {
 
     public int TimeoutSeconds { get; set; } = 180;
 
+    public int SpeakerDiarizationTimeoutSeconds { get; set; } = 600;
+
     public string Prompt { get; set; } = DefaultPrompt;
 
     public string PlaybackLanguageHint { get; set; } = "ceb";
+
+    public string DiarizationChunkingStrategy { get; set; } = "auto";
 
     public double LowConfidenceLogprobThreshold { get; set; } = -1.0;
 }
