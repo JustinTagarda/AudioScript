@@ -1,10 +1,10 @@
-using VoxTranscriber.Abstractions;
-using VoxTranscriber.Audio;
-using VoxTranscriber.Services;
+using VoxTranscribe.Abstractions;
+using VoxTranscribe.Audio;
+using VoxTranscribe.Services;
 using NAudio.Wave;
 using Xunit;
 
-namespace VoxTranscriber.Tests;
+namespace VoxTranscribe.Tests;
 
 public sealed class PlaybackTranscriptionSessionTests {
     [Fact]

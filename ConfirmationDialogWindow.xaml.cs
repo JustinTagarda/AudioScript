@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace VoxTranscriber;
+namespace VoxTranscribe;
 
 public partial class ConfirmationDialogWindow : Window {
     public ConfirmationDialogWindow(

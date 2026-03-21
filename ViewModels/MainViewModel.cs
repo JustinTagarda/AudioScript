@@ -5,11 +5,11 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows.Threading;
-using VoxTranscriber.Abstractions;
-using VoxTranscriber.Audio;
-using VoxTranscriber.Services;
+using VoxTranscribe.Abstractions;
+using VoxTranscribe.Audio;
+using VoxTranscribe.Services;
 
-namespace VoxTranscriber.ViewModels;
+namespace VoxTranscribe.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private static readonly TimeSpan PlaceholderSegmentDuration = TimeSpan.FromSeconds(10);
@@ -42,7 +42,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private readonly EngineOptionViewModel _autoTranscribeEngine;
     private readonly TranscriptModeOptionViewModel _segmentTranscriptMode;
     private readonly TranscriptModeOptionViewModel _speakerDiarizationMode;
-    private readonly ApplicationUpdateService? _applicationUpdateService;
     private EngineOptionViewModel? _selectedEngine;
     private TranscriptModeOptionViewModel? _selectedTranscriptMode;
     private TranscriptSessionSummary? _selectedRecentSession;
@@ -78,8 +77,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         ProcessLogService processLogService,
         TranscriptSessionStore sessionStore,
         AppPreferencesStore appPreferencesStore,
-        AppPreferencesSnapshot appPreferencesSnapshot,
-        ApplicationUpdateService? applicationUpdateService = null) {
+        AppPreferencesSnapshot appPreferencesSnapshot) {
         _audioPlaybackService = audioPlaybackService;
         _openAiOptions = openAiOptions;
         _openAiSettingsStore = openAiSettingsStore;
@@ -88,7 +86,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _processLogService = processLogService;
         _sessionStore = sessionStore;
         _appPreferencesStore = appPreferencesStore;
-        _applicationUpdateService = applicationUpdateService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
 
         _openAiApiKey = _openAiOptions.ApiKey;
@@ -153,11 +150,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         SelectedEngine = _autoTranscribeWithAi ? _autoTranscribeEngine : _manualEngine;
         SelectedTranscriptMode = _segmentTranscriptMode;
         SelectedTranscriptViewIndex = 0;
-        _applicationVersionStatusText = _applicationUpdateService?.FooterStatusText
-            ?? BuildInstalledVersionStatus();
-        if (_applicationUpdateService is not null) {
-            _applicationUpdateService.StatusChanged += OnApplicationUpdateStatusChanged;
-        }
+        _applicationVersionStatusText = BuildInstalledVersionStatus();
 
         AppendLogCore("Application initialized.");
         AppendLogCore($"Loaded {Engines.Count} transcription mode option(s).");
@@ -687,10 +680,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             updatedTranscriptMode: null,
             showErrorDialog: false,
             successLogMessage: string.Empty);
-
-        if (_applicationUpdateService is not null) {
-            _applicationUpdateService.StatusChanged -= OnApplicationUpdateStatusChanged;
-        }
 
         _processLogService.LogEmitted -= OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged -= OnAudioPlaybackStateChanged;
@@ -1655,13 +1644,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private void OnSpeakerTranscriptLinesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
         NotifyPropertyChanged(nameof(HasSpeakerTranscriptLines));
         NotifyCurrentTranscriptStateChanged();
-    }
-
-    private void OnApplicationUpdateStatusChanged(object? sender, EventArgs e) {
-        _uiContext.Post(_ => {
-            ApplicationVersionStatusText = _applicationUpdateService?.FooterStatusText
-                ?? BuildInstalledVersionStatus();
-        }, null);
     }
 
     private void OnAudioPlaybackStateChanged(object? sender, EventArgs e) {

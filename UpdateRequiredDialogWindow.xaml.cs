@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace VoxTranscriber;
+namespace VoxTranscribe;
 
 public partial class UpdateRequiredDialogWindow : Window {
     public UpdateRequiredDialogWindow(string message) {

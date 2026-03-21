@@ -1,4 +1,4 @@
-namespace VoxTranscriber.Abstractions;
+namespace VoxTranscribe.Abstractions;
 
 public sealed record TimeSpanRange(
     TimeSpan Start,

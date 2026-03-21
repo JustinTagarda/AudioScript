@@ -1,6 +1,6 @@
-using VoxTranscriber.Abstractions;
+using VoxTranscribe.Abstractions;
 
-namespace VoxTranscriber.ViewModels;
+namespace VoxTranscribe.ViewModels;
 
 public sealed class EngineOptionViewModel {
     public EngineOptionViewModel(TranscriptionModelOption model) {

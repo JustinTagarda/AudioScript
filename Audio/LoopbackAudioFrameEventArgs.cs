@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace VoxTranscriber.Audio;
+namespace VoxTranscribe.Audio;
 
 public sealed class LoopbackAudioFrameEventArgs : EventArgs {
     public LoopbackAudioFrameEventArgs(byte[] buffer, WaveFormat waveFormat) {

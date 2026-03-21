@@ -1,8 +1,8 @@
-using VoxTranscriber.Audio;
+using VoxTranscribe.Audio;
 using NAudio.Wave;
 using Xunit;
 
-namespace VoxTranscriber.Tests;
+namespace VoxTranscribe.Tests;
 
 public sealed class PlaybackAudioCaptureServiceTests {
     [Fact]

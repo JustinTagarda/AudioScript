@@ -1,7 +1,7 @@
-using VoxTranscriber.Services;
+using VoxTranscribe.Services;
 using Xunit;
 
-namespace VoxTranscriber.Tests;
+namespace VoxTranscribe.Tests;
 
 public sealed class OpenAiTranscriptionModelCatalogTests {
     [Fact]

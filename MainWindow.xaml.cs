@@ -13,13 +13,13 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using VoxTranscriber.Abstractions;
-using VoxTranscriber.Services;
-using VoxTranscriber.ViewModels;
+using VoxTranscribe.Abstractions;
+using VoxTranscribe.Services;
+using VoxTranscribe.ViewModels;
 using DataGridCell = System.Windows.Controls.DataGridCell;
 using DataGridCellsPresenter = System.Windows.Controls.Primitives.DataGridCellsPresenter;
 
-namespace VoxTranscriber;
+namespace VoxTranscribe;
 
 public partial class MainWindow : Window, INotifyPropertyChanged {
     private const int TimelineColumnIndex = 0;

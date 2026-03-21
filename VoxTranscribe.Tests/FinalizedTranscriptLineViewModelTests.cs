@@ -1,7 +1,7 @@
-using VoxTranscriber.ViewModels;
+using VoxTranscribe.ViewModels;
 using Xunit;
 
-namespace VoxTranscriber.Tests;
+namespace VoxTranscribe.Tests;
 
 public sealed class FinalizedTranscriptLineViewModelTests {
     [Theory]

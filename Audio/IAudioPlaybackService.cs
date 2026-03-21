@@ -1,4 +1,4 @@
-namespace VoxTranscriber.Audio;
+namespace VoxTranscribe.Audio;
 
 public interface IAudioPlaybackService : IDisposable {
     event EventHandler? PlaybackStateChanged;

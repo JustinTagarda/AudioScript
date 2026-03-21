@@ -1,8 +1,8 @@
-using VoxTranscriber.Abstractions;
-using VoxTranscriber.Audio;
+using VoxTranscribe.Abstractions;
+using VoxTranscribe.Audio;
 using Xunit;
 
-namespace VoxTranscriber.Tests;
+namespace VoxTranscribe.Tests;
 
 public sealed class SilenceAwareChunkPlannerTests {
     [Fact]

@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace VoxTranscriber.ViewModels;
+namespace VoxTranscribe.ViewModels;
 
 public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     private TimeSpan? _startOffset;

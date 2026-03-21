@@ -2,10 +2,10 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using NAudio.Wave;
-using VoxTranscriber.Abstractions;
-using VoxTranscriber.Audio;
+using VoxTranscribe.Abstractions;
+using VoxTranscribe.Audio;
 
-namespace VoxTranscriber.Services;
+namespace VoxTranscribe.Services;
 
 public sealed class ChunkedSpeakerDiarizationService {
     private const long DirectUploadLimitBytes = 25_000_000;

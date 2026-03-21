@@ -3,7 +3,7 @@ using System.IO;
 using System.Text.Json;
 using NAudio.Wave;
 
-namespace VoxTranscriber.Services;
+namespace VoxTranscribe.Services;
 
 public sealed class TranscriptSessionStore {
     public const int CurrentSchemaVersion = 1;
@@ -19,7 +19,7 @@ public sealed class TranscriptSessionStore {
         _sessionsRootPath = string.IsNullOrWhiteSpace(sessionsRootPath)
             ? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VoxTranscriber",
+                "VoxTranscribe",
                 "Sessions")
             : Path.GetFullPath(sessionsRootPath);
         _processLogService = processLogService;

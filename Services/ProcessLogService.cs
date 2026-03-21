@@ -1,4 +1,4 @@
-namespace VoxTranscriber.Services;
+namespace VoxTranscribe.Services;
 
 public sealed class ProcessLogService {
     public event EventHandler<string>? LogEmitted;

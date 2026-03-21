@@ -1,6 +1,6 @@
 using System.Windows.Input;
 
-namespace VoxTranscriber.ViewModels;
+namespace VoxTranscribe.ViewModels;
 
 public sealed class AsyncRelayCommand : ICommand {
     private readonly Func<Task> _executeAsync;

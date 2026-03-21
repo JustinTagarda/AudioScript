@@ -1,4 +1,4 @@
-namespace VoxTranscriber.ViewModels;
+namespace VoxTranscribe.ViewModels;
 
 public sealed class ProcessLogEntryViewModel {
     public ProcessLogEntryViewModel(string time, string message) {

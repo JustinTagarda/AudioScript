@@ -1,6 +1,6 @@
-using VoxTranscriber.Abstractions;
+using VoxTranscribe.Abstractions;
 
-namespace VoxTranscriber.Audio;
+namespace VoxTranscribe.Audio;
 
 public sealed record SilenceAwareChunkPlannerOptions(
     TimeSpan TargetChunkDuration,

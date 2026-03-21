@@ -7,7 +7,7 @@ using Path = System.IO.Path;
 using Directory = System.IO.Directory;
 using File = System.IO.File;
 
-namespace VoxTranscriber.Services;
+namespace VoxTranscribe.Services;
 
 public sealed class WindowPlacementService {
     private const double MinimumVisibleTitleBarWidth = 220d;
@@ -28,7 +28,7 @@ public sealed class WindowPlacementService {
         else {
             var appDataDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "VoxTranscriber");
+                "VoxTranscribe");
             _stateFilePath = Path.Combine(appDataDirectory, "window-placement.json");
         }
 

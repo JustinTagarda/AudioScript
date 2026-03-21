@@ -1,9 +1,9 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using VoxTranscriber.Abstractions;
+using VoxTranscribe.Abstractions;
 
-namespace VoxTranscriber.ViewModels;
+namespace VoxTranscribe.ViewModels;
 
 public sealed class TranscriptModeOptionViewModel : INotifyPropertyChanged {
     private readonly Action<TranscriptModeOptionViewModel>? _selectionRequested;

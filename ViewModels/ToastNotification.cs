@@ -1,4 +1,4 @@
-namespace VoxTranscriber.ViewModels;
+namespace VoxTranscribe.ViewModels;
 
 public enum ToastNotificationType {
     Info,

@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
-using VoxTranscriber.Abstractions;
+using VoxTranscribe.Abstractions;
 
-namespace VoxTranscriber.Services;
+namespace VoxTranscribe.Services;
 
 public sealed class OpenAiTranscriptionResponseParser {
     public TranscriptionResult Parse(

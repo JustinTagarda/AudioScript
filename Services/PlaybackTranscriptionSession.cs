@@ -1,9 +1,9 @@
 using System.IO;
-using VoxTranscriber.Abstractions;
-using VoxTranscriber.Audio;
+using VoxTranscribe.Abstractions;
+using VoxTranscribe.Audio;
 using NAudio.Wave;
 
-namespace VoxTranscriber.Services;
+namespace VoxTranscribe.Services;
 
 public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
     private readonly object _sync = new();

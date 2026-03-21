@@ -1,7 +1,7 @@
-using VoxTranscriber.Services;
+using VoxTranscribe.Services;
 using Xunit;
 
-namespace VoxTranscriber.Tests;
+namespace VoxTranscribe.Tests;
 
 public sealed class AppPreferencesStoreTests {
     [Fact]
@@ -66,7 +66,7 @@ public sealed class AppPreferencesStoreTests {
     }
 
     private static string CreateTempDirectory() {
-        string path = Path.Combine(Path.GetTempPath(), $"VoxTranscriber-app-prefs-tests-{Guid.NewGuid():N}");
+        string path = Path.Combine(Path.GetTempPath(), $"VoxTranscribe-app-prefs-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }

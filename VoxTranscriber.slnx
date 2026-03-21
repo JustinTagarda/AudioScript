@@ -1,6 +1,0 @@
-<Solution>
-  <Project Path="VoxTranscriber.csproj" />
-  <Project Path="VoxTranscriber.Tests/VoxTranscriber.Tests.csproj" />
-</Solution>
-
-

@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace VoxTranscriber;
+namespace VoxTranscribe;
 
 public partial class ErrorDialogWindow : Window {
     public ErrorDialogWindow(string message) {

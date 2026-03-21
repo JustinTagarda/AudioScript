@@ -1,7 +1,7 @@
 using System.IO;
 using NAudio.Wave;
 
-namespace VoxTranscriber.Audio;
+namespace VoxTranscribe.Audio;
 
 public sealed class AudioStandardizer {
     public string ConvertFileToEngineWav(string sourceFilePath) {
@@ -11,7 +11,7 @@ public sealed class AudioStandardizer {
 
         var tempPath = Path.Combine(
             Path.GetTempPath(),
-            $"VoxTranscriber-{Guid.NewGuid():N}.wav");
+            $"VoxTranscribe-{Guid.NewGuid():N}.wav");
 
         using var reader = new AudioFileReader(sourceFilePath);
         using var resampler = new MediaFoundationResampler(reader, AudioFormatConstants.EngineWaveFormat) {

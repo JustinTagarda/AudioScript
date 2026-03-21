@@ -2,26 +2,21 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using VoxTranscriber.Audio;
-using VoxTranscriber.Services;
-using VoxTranscriber.ViewModels;
-using Velopack;
+using VoxTranscribe.Audio;
+using VoxTranscribe.Services;
+using VoxTranscribe.ViewModels;
 
-namespace VoxTranscriber;
+namespace VoxTranscribe;
 
 public partial class App : System.Windows.Application {
-    private const string SingleInstanceMutexName = @"Local\VoxTranscriber_SingleInstance";
-    private const string ActivateEventName = @"Local\VoxTranscriber_Activate";
+    private const string SingleInstanceMutexName = @"Local\VoxTranscribe_SingleInstance";
+    private const string ActivateEventName = @"Local\VoxTranscribe_Activate";
 
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
     private CancellationTokenSource? _activationListenerCts;
     private Task? _activationListenerTask;
-    private CancellationTokenSource? _startupUpdateCts;
-    private Task? _startupUpdateTask;
-    private ApplicationUpdateService? _applicationUpdateService;
     private ProcessLogService? _processLogService;
-    private UpdateProgressWindow? _updateProgressWindow;
 
     private HttpClient? _httpClient;
     private MainViewModel? _mainViewModel;
@@ -32,8 +27,6 @@ public partial class App : System.Windows.Application {
 
     [STAThread]
     private static void Main(string[] args) {
-        VelopackApp.Build().Run();
-
         var app = new App();
         app.InitializeComponent();
         app.Run();
@@ -75,7 +68,6 @@ public partial class App : System.Windows.Application {
         _openAiApiKeyValidationService = new OpenAiApiKeyValidationService(_httpClient);
         var processLogService = new ProcessLogService();
         _processLogService = processLogService;
-        _applicationUpdateService = new ApplicationUpdateService(processLogService);
         var responseParser = new OpenAiTranscriptionResponseParser();
         var speakerDiarizationResponseParser = new OpenAiSpeakerDiarizationResponseParser();
         var audioStandardizer = new AudioStandardizer();
@@ -122,8 +114,7 @@ public partial class App : System.Windows.Application {
             processLogService,
             sessionStore,
             _appPreferencesStore,
-            appPreferencesSnapshot,
-            _applicationUpdateService);
+            appPreferencesSnapshot);
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
@@ -139,9 +130,6 @@ public partial class App : System.Windows.Application {
 
         MainWindow = mainWindow;
         mainWindow.Show();
-
-        _startupUpdateCts = new CancellationTokenSource();
-        _startupUpdateTask = RunStartupUpdateAsync(mainWindow, _startupUpdateCts.Token);
     }
 
     protected override void OnExit(System.Windows.ExitEventArgs e) {
@@ -149,8 +137,6 @@ public partial class App : System.Windows.Application {
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
         finally {
-            _startupUpdateCts?.Cancel();
-
             _activationListenerCts?.Cancel();
             _httpClient?.Dispose();
 
@@ -173,11 +159,6 @@ public partial class App : System.Windows.Application {
             _activationListenerTask = null;
             _activationListenerCts?.Dispose();
             _activationListenerCts = null;
-            _startupUpdateTask = null;
-            _startupUpdateCts?.Dispose();
-            _startupUpdateCts = null;
-            _updateProgressWindow = null;
-            _applicationUpdateService = null;
             _activateEvent?.Dispose();
             _activateEvent = null;
 
@@ -242,62 +223,6 @@ public partial class App : System.Windows.Application {
         MainWindow.Focus();
     }
 
-    private async Task RunStartupUpdateAsync(MainWindow mainWindow, CancellationToken cancellationToken) {
-        if (_applicationUpdateService is null) {
-            return;
-        }
-
-        try {
-            ApplicationStartupUpdateCheckResult checkResult =
-                await _applicationUpdateService.CheckForUpdateOnStartupAsync(cancellationToken);
-
-            if (cancellationToken.IsCancellationRequested
-                || !checkResult.ShouldRestartForUpdate
-                || !mainWindow.IsLoaded) {
-                return;
-            }
-
-            UpdateProgressWindow progressWindow = ShowUpdateProgressWindow(mainWindow);
-
-            if (checkResult.Update is not null) {
-                progressWindow.ShowDownloading(checkResult.TargetVersion, progressPercent: 0);
-
-                var progress = new Progress<int>(value =>
-                    progressWindow.ShowDownloading(checkResult.TargetVersion, value));
-
-                bool isReadyToRestart = await _applicationUpdateService.DownloadUpdateOnStartupAsync(
-                    checkResult.Update,
-                    progress,
-                    cancellationToken);
-
-                if (!isReadyToRestart || cancellationToken.IsCancellationRequested) {
-                    CloseUpdateProgressWindow();
-                    return;
-                }
-            }
-
-            if (cancellationToken.IsCancellationRequested || !mainWindow.IsLoaded) {
-                CloseUpdateProgressWindow();
-                return;
-            }
-
-            await mainWindow.PrepareForRequiredUpdateShutdownAsync();
-            progressWindow.ShowInstalling(checkResult.TargetVersion);
-            await Task.Delay(TimeSpan.FromMilliseconds(600), cancellationToken);
-            progressWindow.ShowCompletedAndRestarting(checkResult.TargetVersion);
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
-            progressWindow.AllowClose();
-            _applicationUpdateService.ApplyPendingUpdateAndRestart();
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-            CloseUpdateProgressWindow();
-        }
-        catch (Exception ex) {
-            _processLogService?.Log("AutoUpdate", $"Startup update flow failed unexpectedly: {ex.Message}");
-            CloseUpdateProgressWindow();
-        }
-    }
-
     private static void NotifyRunningInstance() {
         try {
             using EventWaitHandle activateEvent = EventWaitHandle.OpenExisting(ActivateEventName);
@@ -310,49 +235,4 @@ public partial class App : System.Windows.Application {
             // Ignore activation signal failures for secondary instances.
         }
     }
-
-    private UpdateProgressWindow ShowUpdateProgressWindow(MainWindow owner) {
-        if (_updateProgressWindow is not null) {
-            return _updateProgressWindow;
-        }
-
-        owner.IsEnabled = false;
-
-        _updateProgressWindow = new UpdateProgressWindow {
-            Owner = owner,
-        };
-
-        _updateProgressWindow.Closed += (_, _) => {
-            _updateProgressWindow = null;
-
-            if (owner.IsLoaded) {
-                owner.IsEnabled = true;
-            }
-        };
-
-        _updateProgressWindow.Show();
-        _updateProgressWindow.Activate();
-        return _updateProgressWindow;
-    }
-
-    private void CloseUpdateProgressWindow() {
-        if (_updateProgressWindow is null) {
-            if (MainWindow is MainWindow mainWindow && mainWindow.IsLoaded) {
-                mainWindow.IsEnabled = true;
-            }
-
-            return;
-        }
-
-        _updateProgressWindow.AllowClose();
-        _updateProgressWindow.Close();
-        _updateProgressWindow = null;
-
-        if (MainWindow is MainWindow owner && owner.IsLoaded) {
-            owner.IsEnabled = true;
-        }
-    }
 }
-
-
-

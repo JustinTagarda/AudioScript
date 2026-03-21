@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace VoxTranscriber.Abstractions;
+namespace VoxTranscribe.Abstractions;
 
 public interface IPlaybackTranscriptionService {
     Task<string> TranscribePcmChunkAsync(

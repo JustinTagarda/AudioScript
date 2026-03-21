@@ -2,7 +2,7 @@
 
 ## Objective
 
-Refactor the project VoxTranscriber to **completely replace** the current audio transcription implementation with a new OpenAI Audio Transcriptions integration optimized for the following real-world input:
+Refactor the project VoxTranscribe to **completely replace** the current audio transcription implementation with a new OpenAI Audio Transcriptions integration optimized for the following real-world input:
 
 - classroom recording captured on a **mobile phone**
 - **background student voices** and ambient noise

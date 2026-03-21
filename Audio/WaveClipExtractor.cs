@@ -1,7 +1,7 @@
 using System.IO;
 using NAudio.Wave;
 
-namespace VoxTranscriber.Audio;
+namespace VoxTranscribe.Audio;
 
 public sealed class WaveClipExtractor {
     public string ExtractTemporaryWaveFile(
@@ -26,7 +26,7 @@ public sealed class WaveClipExtractor {
 
         string tempPath = Path.Combine(
             Path.GetTempPath(),
-            $"VoxTranscriber-{SanitizeLabel(fileLabel)}-{Guid.NewGuid():N}.wav");
+            $"VoxTranscribe-{SanitizeLabel(fileLabel)}-{Guid.NewGuid():N}.wav");
 
         using var reader = new WaveFileReader(fullPath);
         long startPosition = ResolveBytePosition(reader.WaveFormat, normalizedStart, reader.Length);

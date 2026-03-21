@@ -1,7 +1,7 @@
 using System.Windows;
-using VoxTranscriber.ViewModels;
+using VoxTranscribe.ViewModels;
 
-namespace VoxTranscriber;
+namespace VoxTranscribe;
 
 public partial class OpenAiSettingsWindow : Window {
     private bool _isSaving;
