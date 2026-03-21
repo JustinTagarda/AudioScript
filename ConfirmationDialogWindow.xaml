@@ -12,8 +12,7 @@
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        ShowInTaskbar="False"
-        Background="#FFF4F7F8">
+        ShowInTaskbar="False">
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -21,10 +20,6 @@
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0"
-                Background="#CCFFFFFF"
-                BorderBrush="#55B7CAD2"
-                BorderThickness="1"
-                CornerRadius="10"
                 Padding="10">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -46,8 +41,7 @@
                     <TextBlock x:Name="DialogTitleText"
                                Grid.Row="0"
                                FontFamily="Bahnschrift"
-                               FontSize="18"
-                               Foreground="#FF15232D" />
+                               FontSize="18" />
                     <ScrollViewer Grid.Row="1"
                                   Margin="0,8,0,0"
                                   MaxHeight="180"
@@ -57,7 +51,6 @@
                         <TextBlock x:Name="DialogMessageText"
                                    FontFamily="Segoe UI Variable Text"
                                    FontSize="11"
-                                   Foreground="#FF49616F"
                                    TextWrapping="Wrap" />
                     </ScrollViewer>
                 </Grid>

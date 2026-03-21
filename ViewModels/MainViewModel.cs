@@ -234,6 +234,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             }
 
             RefreshCommandStates();
+            NotifyPropertyChanged(nameof(HasPendingSessionSelection));
+            NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
+            NotifyPropertyChanged(nameof(TranscriptEmptyStateTitle));
+            NotifyPropertyChanged(nameof(TranscriptEmptyStateMessage));
         }
     }
 
@@ -264,6 +268,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     }
 
     public bool HasCurrentSession => _currentSessionDocument is not null;
+
+    public bool HasPendingSessionSelection =>
+        SelectedRecentSession is not null && !HasCurrentSession;
+
+    public bool ShouldShowTranscriptChooseFileAction =>
+        !HasCurrentSession && !HasPendingSessionSelection;
 
     public bool HasCurrentSessionAudioIssue => !string.IsNullOrWhiteSpace(CurrentSessionAudioIssue);
 
@@ -380,7 +390,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         CurrentTranscriptLines.Any();
 
     public bool IsTranscriptEmptyStateVisible =>
-        !HasCurrentSession && !HasCurrentTranscriptLines;
+        !HasCurrentTranscriptLines;
 
     public bool CanCopyTranscript =>
         HasCurrentTranscriptLines && !IsBusy;
@@ -425,6 +435,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public string TranscriptEmptyStateTitle {
         get {
+            if (HasPendingSessionSelection) {
+                return "Session selected";
+            }
+
+            if (HasCurrentSession) {
+                return "No transcript lines";
+            }
+
             if (!IsAudioFileLoaded) {
                 return "No transcript";
             }
@@ -439,6 +457,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public string TranscriptEmptyStateMessage {
         get {
+            if (HasPendingSessionSelection) {
+                return "A recent session is selected. Click Open in Sessions to load it.";
+            }
+
+            if (HasCurrentSession) {
+                if (IsSegmentModeSelected && !AutoTranscribeWithAi) {
+                    return "No timeline rows yet. Create timeline to start editing this session.";
+                }
+
+                return "This session has no transcript lines yet. Choose a mode, then generate.";
+            }
+
             if (!IsAudioFileLoaded) {
                 return "Drop audio here, choose a file, or open a session.";
             }
@@ -474,11 +504,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 : "Off. Turn it on to fill segment text.";
         }
     }
-
-    public string SpeakerDiarizationStatusText =>
-        string.IsNullOrWhiteSpace(OpenAiApiKey)
-            ? "API key required."
-            : "Uses OpenAI diarization.";
 
     public bool AutoTranscribeWithAi {
         get => _autoTranscribeWithAi;
@@ -1054,6 +1079,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             CurrentSessionAudioIssue = string.Empty;
             IsCurrentSessionAudioMissing = false;
             NotifyPropertyChanged(nameof(HasCurrentSession));
+            NotifyPropertyChanged(nameof(HasPendingSessionSelection));
+            NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
             NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
         }
@@ -1184,7 +1211,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private void NotifyAiAssistStateChanged() {
         NotifyPropertyChanged(nameof(AutoTranscribeAssistStatusText));
-        NotifyPropertyChanged(nameof(SpeakerDiarizationStatusText));
     }
 
     private void SaveAppPreferences() {
@@ -1300,6 +1326,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 : loadResult.Document.DisplayName;
 
             NotifyPropertyChanged(nameof(HasCurrentSession));
+            NotifyPropertyChanged(nameof(HasPendingSessionSelection));
+            NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
             NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
 
@@ -1909,6 +1937,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         IsAudioPlaying = false;
         ResetAudioTimeline();
         NotifyPropertyChanged(nameof(HasCurrentSession));
+        NotifyPropertyChanged(nameof(HasPendingSessionSelection));
+        NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
         NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
         NotifyPropertyChanged(nameof(LoadedAudioFileName));
         RefreshCommandStates();

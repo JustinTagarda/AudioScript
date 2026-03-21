@@ -35,12 +35,16 @@
                 <StatusBarItem DockPanel.Dock="Right"
                                Padding="0"
 >
-                    <TextBlock Text="{Binding ApplicationVersionStatusText}"
-                               ToolTip="{Binding ApplicationVersionStatusText}"
-                               FontFamily="Segoe UI Variable Text"
-                               FontSize="12"
-                               TextTrimming="CharacterEllipsis"
-/>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding ApplicationVersionStatusText}"
+                                   ToolTip="{Binding ApplicationVersionStatusText}"
+                                   FontFamily="Segoe UI Variable Text"
+                                   FontSize="12"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="  •  © 2026 JustinTagarda"
+                                   FontFamily="Segoe UI Variable Text"
+                                   FontSize="12"/>
+                    </StackPanel>
                 </StatusBarItem>
 
                 <StatusBarItem DockPanel.Dock="Right"
@@ -93,14 +97,27 @@
                                    MaxWidth="220"/>
                     </StackPanel>
 
-                    <StackPanel Grid.Row="0"
-                                Grid.Column="1"
-                                Orientation="Horizontal"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Center">
-                        <Button>
+                    <Grid Grid.Row="1"
+                          Grid.ColumnSpan="2"
+                          Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding AudioElapsedText}"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,8,0"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+/>
+                        <Button Grid.Column="1"
+                                Margin="0,0,8,0">
                             <Button.Style>
-                                <Style TargetType="Button">
+                                <Style TargetType="Button"
+                                       BasedOn="{StaticResource {x:Type Button}}">
                                     <Setter Property="Content" Value="Play"/>
                                     <Setter Property="Command" Value="{Binding PlayAudioCommand}"/>
                                     <Style.Triggers>
@@ -113,35 +130,18 @@
                                 </Style>
                             </Button.Style>
                         </Button>
-                    </StackPanel>
-
-                    <Grid Grid.Row="1"
-                          Grid.ColumnSpan="2"
-                          Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0"
-                                   Text="{Binding AudioElapsedText}"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,8,0"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-/>
-                        <Slider Grid.Column="1"
+                        <Slider Grid.Column="2"
                                 Minimum="0"
                                 Maximum="{Binding AudioSeekMaximumSeconds}"
                                 Value="{Binding AudioSeekPositionSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 VerticalAlignment="Center"
                                 IsEnabled="{Binding IsAudioFileLoaded}"/>
-                        <TextBlock Grid.Column="2"
+                        <TextBlock Grid.Column="3"
                                    Text="{Binding AudioRemainingText}"
                                    VerticalAlignment="Center"
-                                   Margin="8,0,0,0"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
+                                    Margin="8,0,0,0"
+                                    FontFamily="Consolas"
+                                    FontSize="12"
 />
                     </Grid>
                 </Grid>
@@ -192,9 +192,6 @@
                               Margin="8,0,8,8"
                               Height="132"
                               ItemsSource="{Binding ProcessLogs}"
-
-
-                              Background="Transparent"
                               FontFamily="Segoe UI Variable Text"
                               FontSize="12"
 
@@ -323,35 +320,20 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <RadioButton GroupName="TranscriptModeGroup"
+                                                     Margin="0,0,0,8"
                                                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                             <StackPanel>
                                                 <TextBlock Text="{Binding DisplayName}"
-                                                           FontFamily="Segoe UI Variable Text"
-                                                           FontSize="13"
-                                                           FontWeight="SemiBold"
+                                                            FontFamily="Segoe UI Variable Text"
+                                                            FontSize="13"
+                                                            FontWeight="SemiBold"
 />
                                                 <TextBlock Text="{Binding Description}"
-                                                           Margin="0,3,0,0"
+                                                           Margin="0,4,0,0"
                                                            FontFamily="Segoe UI Variable Text"
                                                            FontSize="10.5"
 
                                                            TextWrapping="Wrap"/>
-                                                <TextBlock Text="{Binding DataContext.AutoTranscribeAssistStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                           Margin="0,4,0,0"
-                                                           FontFamily="Segoe UI Variable Text"
-                                                           FontSize="10.5"
-
-                                                           TextWrapping="Wrap">
-                                                    
-                                                </TextBlock>
-                                                <TextBlock Text="{Binding DataContext.SpeakerDiarizationStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                           Margin="0,4,0,0"
-                                                           FontFamily="Segoe UI Variable Text"
-                                                           FontSize="10.5"
-
-                                                           TextWrapping="Wrap">
-                                                    
-                                                </TextBlock>
                                             </StackPanel>
                                         </RadioButton>
                                     </DataTemplate>
@@ -421,9 +403,11 @@
                                 </Grid>
                             </Border>
 
-                            <Grid Margin="0,12,0,0">
+                            <Grid Margin="0,12,0,0"
+                                  HorizontalAlignment="Right">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="8"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <Button x:Name="GenerateTranscriptButton"
@@ -431,14 +415,36 @@
                                         Content="{Binding GenerateTranscriptButtonText}"
                                         IsEnabled="{Binding IsTranscriptGenerationEnabled}"
                                         Click="GenerateTranscript_Click">
-                                    
+                                    <Button.Style>
+                                        <Style TargetType="Button"
+                                               BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                             Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
                                 </Button>
                                 <Button Grid.Column="0"
                                         Content="Cancel Transcription"
                                         Click="CancelProcessing_Click">
-                                    
+                                    <Button.Style>
+                                        <Style TargetType="Button"
+                                               BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                             Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
                                 </Button>
-                                <Button Grid.Column="1"
+                                <Button Grid.Column="2"
                                         Content="Clear"
                                         Command="{Binding ClearCommand}">
                                     
@@ -477,8 +483,6 @@
                                          SelectedItem="{Binding SelectedRecentSession}"
                                          HorizontalContentAlignment="Stretch"
                                          MouseDoubleClick="RecentSessionsList_MouseDoubleClick"
-
-                                         Background="Transparent"
                                          FontFamily="Segoe UI Variable Text"
 
                                          ScrollViewer.VerticalScrollBarVisibility="Auto">
@@ -544,6 +548,7 @@
                                         Margin="0,10,0,0">
                                 <Button Content="Open"
                                         Command="{Binding OpenSelectedSessionCommand}"/>
+                                <Border Width="8"/>
                                 <Button Content="Delete"
                                         Command="{Binding DeleteSelectedSessionCommand}"/>
                             </StackPanel>
@@ -557,7 +562,6 @@
                               VerticalAlignment="Stretch"
                               ResizeDirection="Columns"
                               ResizeBehavior="PreviousAndNext"
-                              Background="Transparent"
                               ShowsPreview="True"/>
 
                 <Border Grid.Column="2"
@@ -592,25 +596,47 @@
                                 
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="8"/>
                                     <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="8"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <CheckBox Content="Copy with time"
-                                           Grid.Column="0"
-                                           IsChecked="{Binding CopyFinalizedWithTimeline, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
-                                    
+                                            Grid.Column="0"
+                                            IsChecked="{Binding CopyFinalizedWithTimeline, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox"
+                                               BasedOn="{StaticResource {x:Type CheckBox}}">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCopyWithTimelineOptionVisible}"
+                                                             Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
                                 </CheckBox>
-                                <TextBlock Grid.Column="1"
-                                           Text="Speaker copy includes labels and time."
-                                           Margin="0,0,8,0"
-                                           VerticalAlignment="Center"
-                                           FontFamily="Segoe UI Variable Text"
-                                           FontSize="10.5"
+                                <TextBlock Grid.Column="2"
+                                            Text="Speaker copy includes labels and time."
+                                            VerticalAlignment="Center"
+                                            FontFamily="Segoe UI Variable Text"
+                                            FontSize="10.5"
 >
-                                    
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSpeakerCopyFormatVisible}"
+                                                             Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
                                 </TextBlock>
                                 <Button Content="Copy"
-                                        Grid.Column="2"
+                                        Grid.Column="4"
                                         VerticalAlignment="Center"
                                         ToolTip="Copy to Clipboard"
                                         AutomationProperties.Name="Copy to Clipboard"
@@ -644,8 +670,6 @@
                                       BeginningEdit="FinalizedTranscriptGrid_BeginningEdit"
                                       CellEditEnding="FinalizedTranscriptGrid_CellEditEnding"
                                       PreviewKeyDown="FinalizedTranscriptGrid_PreviewKeyDown"
-
-                                      Background="Transparent"
 
 
                                        FontFamily="Segoe UI Variable Text"
@@ -760,6 +784,7 @@
                                                             </Grid>
                                                         </Viewbox>
                                                     </Button>
+                                                    <Border Width="6"/>
                                                     <Button Click="DeleteTranscriptRow_Click"
                                                             ToolTip="Delete this row">
                                                         <Viewbox Width="14"
@@ -811,7 +836,20 @@
                                                    TextWrapping="Wrap"/>
                                         <Button Content="Choose File"
                                                 HorizontalAlignment="Center"
-                                                Command="{Binding OpenAudioFileCommand}"/>
+                                                Command="{Binding OpenAudioFileCommand}">
+                                            <Button.Style>
+                                                <Style TargetType="Button"
+                                                       BasedOn="{StaticResource {x:Type Button}}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ShouldShowTranscriptChooseFileAction}"
+                                                                     Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                        </Button>
                                         <TextBlock Text="You can also drag audio into this window."
                                                    Margin="0,8,0,0"
                                                    FontFamily="Segoe UI Variable Text"
@@ -863,6 +901,7 @@
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <CheckBox Grid.Column="0"
@@ -872,7 +911,7 @@
                                 
                             </CheckBox>
                             <Button x:Name="SegmentBatchCancelButton"
-                                    Grid.Column="1"
+                                    Grid.Column="2"
                                     Content="Cancel"
                                     HorizontalAlignment="Right"
                                     IsEnabled="True"

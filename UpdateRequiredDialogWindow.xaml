@@ -12,8 +12,7 @@
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        ShowInTaskbar="False"
-        Background="#FFF4F7F8">
+        ShowInTaskbar="False">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -21,10 +20,6 @@
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0"
-                Background="#CCFFFFFF"
-                BorderBrush="#55B7CAD2"
-                BorderThickness="1"
-                CornerRadius="14"
                 Padding="18">
             <Grid>
                 <Grid.RowDefinitions>
@@ -60,7 +55,6 @@
                            Text="A newer version is required"
                            FontFamily="Bahnschrift"
                            FontSize="24"
-                           Foreground="#FF15232D"
                            TextWrapping="Wrap" />
 
                 <TextBlock x:Name="UpdateMessageText"
@@ -68,7 +62,6 @@
                            Margin="0,12,0,0"
                            FontFamily="Segoe UI Variable Text"
                            FontSize="13"
-                           Foreground="#FF49616F"
                            TextWrapping="Wrap" />
             </Grid>
         </Border>

@@ -12,12 +12,7 @@
         MinHeight="280"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        ShowInTaskbar="False"
-        Background="#FFF4F7F8">
-    <Window.Resources>
-        <SolidColorBrush x:Key="PrimaryTextBrush" Color="#FF15232D" />
-        <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF49616F" />
-    </Window.Resources>
+        ShowInTaskbar="False">
 
     <Grid Margin="16">
         <Grid.RowDefinitions>
@@ -26,36 +21,26 @@
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0"
-                Background="#CCFFFFFF"
-                BorderBrush="#55B7CAD2"
-                BorderThickness="1"
-                CornerRadius="10"
                 Padding="14">
             <StackPanel>
                 <TextBlock Text="OpenAI API Key"
                            FontFamily="Bahnschrift"
-                           FontSize="22"
-                           Foreground="{StaticResource PrimaryTextBrush}" />
+                           FontSize="22" />
                 <TextBlock Text="Changes apply immediately when AI transcription is turned on."
                            Margin="0,2,0,2"
                            FontFamily="Segoe UI Variable Text"
-                           FontSize="12"
-                           Foreground="{StaticResource SecondaryTextBrush}" />
+                           FontSize="12" />
 
                 <TextBlock Text="API Key" />
                 <TextBox x:Name="ApiKeyTextBox"
                          FontFamily="Consolas"
                          FontSize="13"
-                         Padding="10"
-                         BorderBrush="#FF9DB6C0"
-                         BorderThickness="1"
-                         Background="#FFFDFEFF" />
+                         Padding="10" />
 
                 <TextBlock Text="This key is used when Auto Transcribe with AI is turned on."
                            Margin="0,10,0,0"
                            FontFamily="Segoe UI Variable Text"
-                           FontSize="12"
-                           Foreground="{StaticResource SecondaryTextBrush}" />
+                           FontSize="12" />
             </StackPanel>
         </Border>
 

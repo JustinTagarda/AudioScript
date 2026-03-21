@@ -13,13 +13,8 @@
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
-        WindowStyle="None"
-        Background="#FFF4F7F8">
+        WindowStyle="None">
     <Border Margin="16"
-            Background="#CCFFFFFF"
-            BorderBrush="#55B7CAD2"
-            BorderThickness="1"
-            CornerRadius="16"
             Padding="20">
         <Grid>
             <Grid.RowDefinitions>
@@ -56,7 +51,6 @@
                        Text="Preparing update"
                        FontFamily="Bahnschrift"
                        FontSize="24"
-                       Foreground="#FF15232D"
                        TextWrapping="Wrap" />
 
             <TextBlock x:Name="StatusMessageText"
@@ -64,7 +58,6 @@
                        Margin="0,12,0,0"
                        FontFamily="Segoe UI Variable Text"
                        FontSize="13"
-                       Foreground="#FF49616F"
                        TextWrapping="Wrap"
                        Text="VoxTranscriber is downloading the latest version. The app will close automatically when the update is ready." />
 
@@ -74,14 +67,11 @@
                              Height="12"
                              Minimum="0"
                              Maximum="100"
-                             Value="0"
-                             Foreground="#FF2994BA"
-                             Background="#FFE6EEF1" />
+                             Value="0" />
                 <TextBlock x:Name="ProgressText"
                            Margin="0,8,0,0"
                            FontFamily="Segoe UI Variable Text"
                            FontSize="12"
-                           Foreground="#FF49616F"
                            Text="0%" />
             </StackPanel>
         </Grid>

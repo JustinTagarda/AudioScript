@@ -12,8 +12,7 @@
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        ShowInTaskbar="False"
-        Background="#FFF4F7F8">
+        ShowInTaskbar="False">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -21,10 +20,6 @@
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0"
-                Background="#CCFFFFFF"
-                BorderBrush="#55B7CAD2"
-                BorderThickness="1"
-                CornerRadius="10"
                 Padding="14">
             <Grid>
                 <Grid.RowDefinitions>
@@ -35,8 +30,7 @@
                 <TextBlock Text="An error occurred"
                            Grid.Row="0"
                            FontFamily="Bahnschrift"
-                           FontSize="22"
-                           Foreground="#FF15232D" />
+                           FontSize="22" />
                 <ScrollViewer Grid.Row="1"
                               Margin="0,10,0,0"
                               MaxHeight="280"
@@ -46,7 +40,6 @@
                     <TextBlock x:Name="ErrorMessageText"
                                FontFamily="Segoe UI Variable Text"
                                FontSize="13"
-                               Foreground="#FF49616F"
                                TextWrapping="Wrap" />
                 </ScrollViewer>
             </Grid>
