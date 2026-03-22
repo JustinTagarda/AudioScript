@@ -22,38 +22,23 @@
         <Border Grid.Row="0"
                 Padding="10">
             <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="6" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-                <Border Grid.Column="0"
-                        Background="#FFD7A14B"
-                        CornerRadius="3" />
-
-                <Grid Grid.Column="1"
-                      Margin="10,0,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
-                    <TextBlock x:Name="DialogTitleText"
-                               Grid.Row="0"
-                               FontFamily="Bahnschrift"
-                               FontSize="18" />
-                    <ScrollViewer Grid.Row="1"
-                                  Margin="0,8,0,0"
-                                  MaxHeight="180"
-                                  HorizontalScrollBarVisibility="Disabled"
-                                  VerticalScrollBarVisibility="Auto"
-                                  CanContentScroll="False">
-                        <TextBlock x:Name="DialogMessageText"
-                                   FontFamily="Segoe UI Variable Text"
-                                   FontSize="11"
-                                   TextWrapping="Wrap" />
-                    </ScrollViewer>
-                </Grid>
+                <TextBlock x:Name="DialogTitleText"
+                           Grid.Row="0"
+                           FontSize="18" />
+                <ScrollViewer Grid.Row="1"
+                              Margin="0,8,0,0"
+                              MaxHeight="180"
+                              HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Auto"
+                              CanContentScroll="False">
+                    <TextBlock x:Name="DialogMessageText"
+                               TextWrapping="Wrap" />
+                </ScrollViewer>
             </Grid>
         </Border>
 
@@ -64,12 +49,10 @@
             <Button x:Name="CancelButton"
                     Width="88"
                     MinHeight="28"
-                    FontSize="12"
                     Click="CancelButton_Click" />
             <Button x:Name="ProceedButton"
                     Width="88"
                     MinHeight="28"
-                    FontSize="12"
                     Click="ProceedButton_Click" />
         </StackPanel>
     </Grid>

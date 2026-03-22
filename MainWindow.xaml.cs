@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -26,13 +27,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private const int TranscriptTextColumnIndex = 2;
     private const double ToastBottomMargin = 48;
     private const double ToastHiddenOffsetY = -14;
+    public static readonly RoutedUICommand InsertRowAboveCommand =
+        new("Insert Row Above", nameof(InsertRowAboveCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand InsertRowBelowCommand =
+        new("Insert Row Below", nameof(InsertRowBelowCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand DuplicateRowCommand =
+        new("Duplicate Row", nameof(DuplicateRowCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand DeleteRowCommand =
+        new("Delete Row", nameof(DeleteRowCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand CopyTextCommand =
+        new("Copy Text", nameof(CopyTextCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand CopyTimelineAndTextCommand =
+        new("Copy Timeline + Text", nameof(CopyTimelineAndTextCommand), typeof(MainWindow));
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditSegmentDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.Zero;
-    private static readonly System.Windows.Media.Brush DefaultAudioDropZoneBackgroundBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(253, 254, 255));
-    private static readonly System.Windows.Media.Brush DefaultTranscriptEmptyStateBackgroundBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(248, 251, 252));
-    private static readonly System.Windows.Media.Brush DefaultAudioDropZoneBorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 226, 231));
-
     private bool _isOpenAiDialogOpen;
     private bool _isApplyingTranscriptEditLoopSeek;
     private bool _isTranscriptEditLoopRestartPending;
@@ -45,7 +54,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private bool _isTranscriptProcessingMuteAvailable = true;
     private string _transcriptProcessingTitle = "Generating Transcript";
     private FinalizedTranscriptLineViewModel? _playbackMatchedLine;
-    private FinalizedTranscriptLineViewModel? _rowActionsLine;
     private FinalizedTranscriptLineViewModel? _editLoopLine;
     private FinalizedTranscriptLineViewModel? _timelineEditLine;
     private PlaybackEditTranscriptionState? _activePlaybackEditTranscription;
@@ -55,6 +63,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private bool _timelineEditShouldResumePlayback;
     private FinalizedTranscriptLineViewModel? _transcriptTextEditLine;
     private string _transcriptTextEditOriginalText = string.Empty;
+    private FinalizedTranscriptLineViewModel? _lastPlaybackSyncedLine;
     private int _requiredUpdateShutdownStarted;
 
     public MainWindow(
@@ -67,6 +76,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         Closed += OnMainWindowClosed;
         PreviewMouseDown += OnWindowMouseDismissToast;
         PreviewMouseWheel += OnWindowMouseWheelDismissToast;
+        Loaded += OnMainWindowLoaded;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -116,11 +126,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             return;
         }
 
-        if (ShowOpenAiSettingsDialog()) {
-            return;
-        }
-
-        vm.AutoTranscribeWithAi = false;
+        ShowOpenAiSettingsDialog();
     }
 
     private void OpenOpenAiSettings_Click(object sender, RoutedEventArgs e) {
@@ -196,6 +202,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
                     "Timeline created",
                     "Segment timelines are ready for manual transcription.",
                     ToastNotificationType.Success);
+                _ = Dispatcher.BeginInvoke(
+                    new Action(() => FocusFirstManualSegmentRowForEditing(vm)),
+                    DispatcherPriority.Background);
             }
 
             return;
@@ -221,10 +230,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
 
         if (string.IsNullOrWhiteSpace(vm.OpenAiApiKey)) {
             LogSegmentBatch("Segment transcription aborted: OpenAI API key is not configured.");
-            ShowCopyToast(
+            ShowBlockingMessage(
                 "API key required",
-                "Configure the OpenAI API key before transcribing by segments.",
-                ToastNotificationType.Warning);
+                "Segment transcription with AI Assist was stopped because no OpenAI API key is configured.");
             return;
         }
 
@@ -379,12 +387,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             title: "Speaker Diarization",
             allowMute: false);
 
-        if (string.IsNullOrWhiteSpace(vm.OpenAiApiKey) && !ShowOpenAiSettingsDialog()) {
+        if (!EnsureOpenAiApiKey(vm, "Speaker diarization")) {
             vm.StatusMessage = "Speaker diarization requires an OpenAI API key.";
-            ShowCopyToast(
-                "API key required",
-                "Configure the OpenAI API key before running speaker diarization.",
-                ToastNotificationType.Warning);
             return;
         }
 
@@ -493,7 +497,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             _isOpenAiDialogOpen = false;
         }
 
+        if (string.IsNullOrWhiteSpace(vm.OpenAiApiKey)) {
+            vm.AutoTranscribeWithAi = false;
+        }
+
         return !string.IsNullOrWhiteSpace(vm.OpenAiApiKey);
+    }
+
+    private bool EnsureOpenAiApiKey(MainViewModel vm, string operationName) {
+        if (!string.IsNullOrWhiteSpace(vm.OpenAiApiKey)) {
+            return true;
+        }
+
+        ShowOpenAiSettingsDialog();
+        if (!string.IsNullOrWhiteSpace(vm.OpenAiApiKey)) {
+            return true;
+        }
+
+        ShowBlockingMessage(
+            "API key required",
+            $"{operationName} was stopped because no OpenAI API key is configured.");
+        return false;
+    }
+
+    private void ShowBlockingMessage(string title, string message) {
+        System.Windows.MessageBox.Show(
+            this,
+            message,
+            title,
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e) {
@@ -546,26 +579,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         e.Effects = canAccept ? System.Windows.DragDropEffects.Copy : System.Windows.DragDropEffects.None;
         e.Handled = true;
 
-        SetDropTargetVisualState(AudioDropZoneBorder, canAccept, DefaultAudioDropZoneBackgroundBrush);
-        SetDropTargetVisualState(TranscriptEmptyStateBorder, canAccept, DefaultTranscriptEmptyStateBackgroundBrush);
+        SetDropTargetVisualState(AudioDropZoneBorder);
+        SetDropTargetVisualState(TranscriptEmptyStateBorder);
     }
 
     private void ResetAudioFileDropState() {
-        SetDropTargetVisualState(AudioDropZoneBorder, false, DefaultAudioDropZoneBackgroundBrush);
-        SetDropTargetVisualState(TranscriptEmptyStateBorder, false, DefaultTranscriptEmptyStateBackgroundBrush);
+        SetDropTargetVisualState(AudioDropZoneBorder);
+        SetDropTargetVisualState(TranscriptEmptyStateBorder);
     }
 
-    private void SetDropTargetVisualState(Border border, bool isActive, System.Windows.Media.Brush defaultBackground) {
+    private static void SetDropTargetVisualState(Border border) {
         if (border is null) {
             return;
         }
 
-        border.Background = isActive
-            ? (System.Windows.Media.Brush)(FindResource("AccentSurfaceBrush") as System.Windows.Media.Brush ?? defaultBackground)
-            : defaultBackground;
-        border.BorderBrush = isActive
-            ? (System.Windows.Media.Brush)(FindResource("AccentBorderBrush") as System.Windows.Media.Brush ?? DefaultAudioDropZoneBorderBrush)
-            : DefaultAudioDropZoneBorderBrush;
+        border.ClearValue(Border.BackgroundProperty);
+        border.ClearValue(Border.BorderBrushProperty);
     }
 
     private static string? GetDroppedAudioFilePath(System.Windows.DragEventArgs e) {
@@ -604,6 +633,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     }
 
     private void OnMainWindowClosed(object? sender, EventArgs e) {
+        Loaded -= OnMainWindowLoaded;
         CancelCopyToast();
         PreviewMouseDown -= OnWindowMouseDismissToast;
         PreviewMouseWheel -= OnWindowMouseWheelDismissToast;
@@ -714,31 +744,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     private void ApplyToastVisuals(ToastNotificationType type) {
         ToastAppearance appearance = type switch {
             ToastNotificationType.Success => new ToastAppearance(
-                IconBackgroundHex: "#FFE8F6EE",
-                IconBorderHex: "#FFC4E1CF",
-                IconStrokeHex: "#FF217A43",
                 IconData: "M2.5,8.5 L6.2,12.2 L13.5,4.5"),
             ToastNotificationType.Warning => new ToastAppearance(
-                IconBackgroundHex: "#FFFFF1DE",
-                IconBorderHex: "#FFF0D3A0",
-                IconStrokeHex: "#FFB56B00",
                 IconData: "M8,1.7 L15.1,14.8 H0.9 Z M8,5.2 V9.1 M8,11.6 V12.2"),
             ToastNotificationType.Error => new ToastAppearance(
-                IconBackgroundHex: "#FFFFEBEB",
-                IconBorderHex: "#FFF1C3C3",
-                IconStrokeHex: "#FFC53D3D",
                 IconData: "M8,1.8 A6.2,6.2 0 1 1 7.99,1.8 M5.1,5.1 L10.9,10.9 M10.9,5.1 L5.1,10.9"),
             _ => new ToastAppearance(
-                IconBackgroundHex: "#FFE7F4F9",
-                IconBorderHex: "#FFC6DDE7",
-                IconStrokeHex: "#FF1B86AA",
                 IconData: "M8,1.8 A6.2,6.2 0 1 1 7.99,1.8 M8,6.2 V10.8 M8,4.2 V4.3"),
         };
 
-        CopyToastIconHost.Background = CreateBrush(appearance.IconBackgroundHex);
-        CopyToastIconHost.BorderBrush = CreateBrush(appearance.IconBorderHex);
-        CopyToastIconPath.Stroke = CreateBrush(appearance.IconStrokeHex);
+        CopyToastIconHost.ClearValue(Border.BackgroundProperty);
+        CopyToastIconHost.ClearValue(Border.BorderBrushProperty);
+        CopyToastIconPath.Stroke = CopyToastTitleText.Foreground;
         CopyToastIconPath.Data = Geometry.Parse(appearance.IconData);
+    }
+
+    private void OnMainWindowLoaded(object sender, RoutedEventArgs e) {
+        ApplyFloatingSurfaceTheme();
     }
 
     private void CancelCopyToast() {
@@ -781,6 +803,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e) {
+        if (e.PropertyName == nameof(MainViewModel.SelectedThemePreference)) {
+            // The view-model property changed event is raised before Application.ThemeMode settles.
+            // Re-apply after bindings and theme updates complete to keep floating surfaces in sync.
+            Dispatcher.BeginInvoke(new Action(ApplyFloatingSurfaceTheme), DispatcherPriority.Background);
+            return;
+        }
+
         if (e.PropertyName == nameof(MainViewModel.SelectedTranscriptMode)) {
             StopActivePlaybackEditTranscription(
                 _boundViewModel,
@@ -794,6 +823,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             UpdateTranscriptGridPresentation();
             UpdatePlaybackTimelineHighlight();
             UpdateTranscriptRowActionsVisibility();
+
+            if (_boundViewModel is not null && _boundViewModel.IsSpeakerDiarizationModeSelected) {
+                if (!string.IsNullOrWhiteSpace(_boundViewModel.OpenAiApiKey)) {
+                    if (!_boundViewModel.AutoTranscribeWithAi) {
+                        _boundViewModel.AutoTranscribeWithAi = true;
+                    }
+                }
+                else {
+                    bool hasApiKey = ShowOpenAiSettingsDialog();
+                    if (hasApiKey && !_boundViewModel.AutoTranscribeWithAi) {
+                        _boundViewModel.AutoTranscribeWithAi = true;
+                    }
+                }
+            }
+
             return;
         }
 
@@ -820,6 +864,65 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
     }
 
+    private void ApplyFloatingSurfaceTheme() {
+        System.Windows.Media.Color backgroundColor;
+        System.Windows.Media.Color borderColor;
+        bool darkTheme = IsDarkThemeActive();
+
+        if (darkTheme) {
+            backgroundColor = System.Windows.Media.Color.FromRgb(41, 33, 47);
+            borderColor = System.Windows.Media.Color.FromRgb(93, 84, 105);
+        }
+        else {
+            backgroundColor = System.Windows.Media.Color.FromRgb(255, 255, 255);
+            borderColor = System.Windows.Media.Color.FromRgb(199, 199, 204);
+        }
+
+        var backgroundBrush = new SolidColorBrush(backgroundColor);
+        var borderBrush = new SolidColorBrush(borderColor);
+        if (backgroundBrush.CanFreeze) {
+            backgroundBrush.Freeze();
+        }
+
+        if (borderBrush.CanFreeze) {
+            borderBrush.Freeze();
+        }
+
+        SegmentBatchCard.Background = backgroundBrush;
+        SegmentBatchCard.BorderBrush = borderBrush;
+        CopyToastCard.Background = backgroundBrush;
+        CopyToastCard.BorderBrush = borderBrush;
+    }
+
+    private bool IsDarkThemeActive() {
+        AppThemePreference preference = _boundViewModel?.SelectedThemePreference ?? AppThemePreference.System;
+        if (preference == AppThemePreference.Dark) {
+            return true;
+        }
+
+        if (preference == AppThemePreference.Light) {
+            return false;
+        }
+
+        return !IsSystemUsingLightTheme();
+    }
+
+    private static bool IsSystemUsingLightTheme() {
+        const string personalizeKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+        const string appsUseLightThemeValue = "AppsUseLightTheme";
+
+        try {
+            using RegistryKey? key = Registry.CurrentUser.OpenSubKey(personalizeKeyPath, writable: false);
+            object? value = key?.GetValue(appsUseLightThemeValue);
+            return value is int intValue
+                ? intValue != 0
+                : true;
+        }
+        catch {
+            return true;
+        }
+    }
+
     private void OnFinalizedTranscriptLinesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
         UpdatePlaybackTimelineHighlight();
         UpdateTranscriptRowActionsVisibility();
@@ -831,6 +934,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     }
 
     private void FinalizedTranscriptGrid_CurrentCellChanged(object sender, EventArgs e) {
+        SyncPlaybackToCurrentTranscriptRow();
         Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
     }
 
@@ -884,7 +988,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         SegmentBatchCancelButton.IsEnabled = true;
         SegmentBatchOverlay.UpdateLayout();
 
-        MainContentHost.IsEnabled = false;
         MainContentHost.IsHitTestVisible = false;
 
         try {
@@ -915,7 +1018,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         IsTranscriptProcessingMuteAvailable = true;
         TranscriptProcessingTitle = "Generating Transcript";
 
-        MainContentHost.IsEnabled = true;
         MainContentHost.IsHitTestVisible = true;
 
         _ = Dispatcher.BeginInvoke(new Action(() => {
@@ -990,17 +1092,210 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     }
 
     private void InsertTranscriptRowBelow_Click(object sender, RoutedEventArgs e) {
+        if (sender is not System.Windows.Controls.Button button
+            || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleInsertTranscriptRow(vm, currentLine, insertBelow: true, duplicateText: false);
+    }
+
+    private void TranscriptContext_InsertRowAbove_Click(object sender, RoutedEventArgs e) {
+        if (!TryGetContextMenuLine(sender, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleInsertTranscriptRow(vm, currentLine, insertBelow: false, duplicateText: false);
+    }
+
+    private void TranscriptContext_InsertRowBelow_Click(object sender, RoutedEventArgs e) {
+        if (!TryGetContextMenuLine(sender, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleInsertTranscriptRow(vm, currentLine, insertBelow: true, duplicateText: false);
+    }
+
+    private void TranscriptContext_DuplicateRow_Click(object sender, RoutedEventArgs e) {
+        if (!TryGetContextMenuLine(sender, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleInsertTranscriptRow(vm, currentLine, insertBelow: true, duplicateText: true);
+    }
+
+    private void TranscriptContext_DeleteRow_Click(object sender, RoutedEventArgs e) {
+        if (!TryGetContextMenuLine(sender, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleDeleteTranscriptRow(vm, currentLine);
+    }
+
+    private void TranscriptContext_CopyText_Click(object sender, RoutedEventArgs e) {
+        if (!TryGetContextMenuLine(sender, out FinalizedTranscriptLineViewModel currentLine)) {
+            return;
+        }
+
+        try {
+            System.Windows.Clipboard.SetText(currentLine.Text ?? string.Empty);
+            ShowCopyToast("Copied", "Row text copied.", ToastNotificationType.Success);
+        }
+        catch (Exception ex) {
+            _boundViewModel?.LogHandledException("copy row text", ex);
+            ShowCopyToast("Copy failed", "Unable to copy row text.", ToastNotificationType.Error);
+        }
+    }
+
+    private void TranscriptContext_CopyTimelineAndText_Click(object sender, RoutedEventArgs e) {
+        if (!TryGetContextMenuLine(sender, out FinalizedTranscriptLineViewModel currentLine)) {
+            return;
+        }
+
+        string lineText = string.IsNullOrWhiteSpace(currentLine.Timeline)
+            ? (currentLine.Text ?? string.Empty)
+            : $"{currentLine.Timeline} {currentLine.Text}".TrimEnd();
+
+        try {
+            System.Windows.Clipboard.SetText(lineText);
+            ShowCopyToast("Copied", "Timeline and row text copied.", ToastNotificationType.Success);
+        }
+        catch (Exception ex) {
+            _boundViewModel?.LogHandledException("copy row timeline and text", ex);
+            ShowCopyToast("Copy failed", "Unable to copy timeline and row text.", ToastNotificationType.Error);
+        }
+    }
+
+    private bool TryGetContextMenuLine(object sender, out FinalizedTranscriptLineViewModel line) {
+        line = null!;
+
+        if (sender is FinalizedTranscriptLineViewModel rowLine) {
+            line = rowLine;
+            return true;
+        }
+
+        if (sender is System.Windows.Controls.MenuItem menuItem) {
+            if (menuItem.DataContext is FinalizedTranscriptLineViewModel menuLine) {
+                line = menuLine;
+                return true;
+            }
+
+            if (menuItem.Parent is System.Windows.Controls.ContextMenu contextMenu
+                && contextMenu.DataContext is FinalizedTranscriptLineViewModel contextLine) {
+                line = contextLine;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void TranscriptContextCommand_CanExecute(object sender, CanExecuteRoutedEventArgs e) {
+        e.CanExecute = DataContext is MainViewModel;
+        e.Handled = true;
+    }
+
+    private void InsertRowAboveCommand_Executed(object sender, ExecutedRoutedEventArgs e) {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleInsertTranscriptRow(vm, currentLine, insertBelow: false, duplicateText: false);
+    }
+
+    private void InsertRowBelowCommand_Executed(object sender, ExecutedRoutedEventArgs e) {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleInsertTranscriptRow(vm, currentLine, insertBelow: true, duplicateText: false);
+    }
+
+    private void DuplicateRowCommand_Executed(object sender, ExecutedRoutedEventArgs e) {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleInsertTranscriptRow(vm, currentLine, insertBelow: true, duplicateText: true);
+    }
+
+    private void DeleteRowCommand_Executed(object sender, ExecutedRoutedEventArgs e) {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleDeleteTranscriptRow(vm, currentLine);
+    }
+
+    private void CopyTextCommand_Executed(object sender, ExecutedRoutedEventArgs e) {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)) {
+            return;
+        }
+
+        try {
+            System.Windows.Clipboard.SetText(currentLine.Text ?? string.Empty);
+            ShowCopyToast("Copied", "Row text copied.", ToastNotificationType.Success);
+        }
+        catch (Exception ex) {
+            _boundViewModel?.LogHandledException("copy row text", ex);
+            ShowCopyToast("Copy failed", "Unable to copy row text.", ToastNotificationType.Error);
+        }
+    }
+
+    private void CopyTimelineAndTextCommand_Executed(object sender, ExecutedRoutedEventArgs e) {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)) {
+            return;
+        }
+
+        string lineText = string.IsNullOrWhiteSpace(currentLine.Timeline)
+            ? (currentLine.Text ?? string.Empty)
+            : $"{currentLine.Timeline} {currentLine.Text}".TrimEnd();
+
+        try {
+            System.Windows.Clipboard.SetText(lineText);
+            ShowCopyToast("Copied", "Timeline and row text copied.", ToastNotificationType.Success);
+        }
+        catch (Exception ex) {
+            _boundViewModel?.LogHandledException("copy row timeline and text", ex);
+            ShowCopyToast("Copy failed", "Unable to copy timeline and row text.", ToastNotificationType.Error);
+        }
+    }
+
+    private bool EnsureSegmentRowActionAvailable(MainViewModel vm, string actionTitle) {
         if (IsSegmentBatchTranscribing) {
             ShowCopyToast(
                 "Segment transcription in progress",
                 "Wait for the automated row transcription to finish.",
                 ToastNotificationType.Info);
-            return;
+            return false;
         }
 
-        if (sender is not System.Windows.Controls.Button button
-            || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
-            || DataContext is not MainViewModel vm) {
+        if (!vm.IsSegmentTranscriptViewSelected) {
+            ShowCopyToast(
+                actionTitle,
+                "Switch to Segments mode to edit timeline rows.",
+                ToastNotificationType.Info);
+            return false;
+        }
+
+        return true;
+    }
+
+    private void HandleInsertTranscriptRow(
+        MainViewModel vm,
+        FinalizedTranscriptLineViewModel currentLine,
+        bool insertBelow,
+        bool duplicateText) {
+        if (!EnsureSegmentRowActionAvailable(vm, "Row action unavailable")) {
             return;
         }
 
@@ -1008,11 +1303,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             List<FinalizedTranscriptLineViewModel> displayedLines = GetDisplayedTranscriptLines();
             int currentIndex = displayedLines.IndexOf(currentLine);
 
-            if (currentIndex < 0
-                || currentIndex >= displayedLines.Count - 1
-                || !TryGetLineTimelineOffset(currentLine, out TimeSpan currentOffset)
-                || !TryGetLineTimelineOffset(displayedLines[currentIndex + 1], out TimeSpan nextOffset)
-                || nextOffset - currentOffset <= TimeSpan.FromSeconds(1)) {
+            if (currentIndex < 0 || !TryGetLineTimelineOffset(currentLine, out TimeSpan currentOffset)) {
+                ShowCopyToast(
+                    "Row not added",
+                    "Cannot add new row because of the timeline values.",
+                    ToastNotificationType.Warning);
+                return;
+            }
+
+            int neighborIndex = insertBelow ? currentIndex + 1 : currentIndex - 1;
+            if (neighborIndex < 0 || neighborIndex >= displayedLines.Count) {
+                ShowCopyToast(
+                    "Row not added",
+                    insertBelow
+                        ? "Cannot add below the last row."
+                        : "Cannot add above the first row.",
+                    ToastNotificationType.Warning);
+                return;
+            }
+
+            if (!TryGetLineTimelineOffset(displayedLines[neighborIndex], out TimeSpan neighborOffset)) {
+                ShowCopyToast(
+                    "Row not added",
+                    "Cannot add new row because of the timeline values.",
+                    ToastNotificationType.Warning);
+                return;
+            }
+
+            TimeSpan lowerOffset = insertBelow ? currentOffset : neighborOffset;
+            TimeSpan upperOffset = insertBelow ? neighborOffset : currentOffset;
+            if (upperOffset - lowerOffset <= TimeSpan.FromSeconds(1)) {
                 ShowCopyToast(
                     "Row not added",
                     "Cannot add new row because of the timeline values.",
@@ -1029,12 +1349,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
                 return;
             }
 
-            TimeSpan newOffset = currentOffset + TimeSpan.FromSeconds(1);
+            if (!insertBelow) {
+                insertIndex -= 1;
+            }
+
+            TimeSpan newOffset = insertBelow
+                ? currentOffset + TimeSpan.FromSeconds(1)
+                : currentOffset - TimeSpan.FromSeconds(1);
             var newLine = new FinalizedTranscriptLineViewModel(
                 startOffset: newOffset,
                 endOffset: newOffset,
                 isTimestampEstimated: true,
-                text: string.Empty);
+                text: duplicateText ? (currentLine.Text ?? string.Empty) : string.Empty);
 
             if (!vm.InsertFinalizedTranscriptLine(insertIndex + 1, newLine)) {
                 ShowCopyToast(
@@ -1045,7 +1371,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             }
 
             Dispatcher.BeginInvoke(new Action(() => {
-                FocusGridCell(newLine, TranscriptTextColumnIndex, beginEdit: true);
+                FocusGridCell(
+                    newLine,
+                    TranscriptTextColumnIndex,
+                    beginEdit: !duplicateText);
             }), DispatcherPriority.Background);
         }
         catch (Exception ex) {
@@ -1058,17 +1387,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
     }
 
     private void DeleteTranscriptRow_Click(object sender, RoutedEventArgs e) {
+        if (sender is not System.Windows.Controls.Button button
+            || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
+            || DataContext is not MainViewModel vm) {
+            return;
+        }
+
+        HandleDeleteTranscriptRow(vm, currentLine);
+    }
+
+    private void HandleDeleteTranscriptRow(MainViewModel vm, FinalizedTranscriptLineViewModel currentLine) {
+        if (!EnsureSegmentRowActionAvailable(vm, "Row action unavailable")) {
+            return;
+        }
+
         if (IsSegmentBatchTranscribing) {
             ShowCopyToast(
                 "Segment transcription in progress",
                 "Wait for the automated row transcription to finish.",
                 ToastNotificationType.Info);
-            return;
-        }
-
-        if (sender is not System.Windows.Controls.Button button
-            || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
-            || DataContext is not MainViewModel vm) {
             return;
         }
 
@@ -1203,10 +1540,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         }
 
         try {
+            if (!vm.AutoPlayTimelineSelection) {
+                vm.EnsureAudioPreviewPaused();
+            }
+
             vm.SeekAudioPreview(line.StartOffset.Value);
             ConfigureTranscriptEditPlaybackLoop(vm, line);
 
-            if (!vm.IsAudioPlaying && vm.PlayAudioCommand.CanExecute(null)) {
+            if (vm.AutoPlayTimelineSelection
+                && !vm.IsAudioPlaying
+                && vm.PlayAudioCommand.CanExecute(null)) {
                 vm.PlayAudioCommand.Execute(null);
             }
         }
@@ -1276,24 +1619,101 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             return;
         }
 
-        if (e.Key == Key.Enter) {
-            if (!IsCurrentGridCellEditing()) {
-                e.Handled = true;
-                EnsureCurrentGridCellFocused(beginEdit: true);
-            }
-
+        if (DataContext is MainViewModel vm
+            && IsManualSegmentKeyboardFlowEnabled(vm)
+            && HandleManualSegmentCommandShortcuts(vm, e)) {
             return;
         }
 
-        if (e.Key is Key.Up or Key.Down) {
+        if (e.Key == Key.Enter) {
+            e.Handled = true;
+
+            if (!IsCurrentGridCellEditing()) {
+                EnsureCurrentGridCellFocused(beginEdit: true);
+                return;
+            }
+
+            FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+            FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Row, true);
+
+            int activeColumnIndex = GetActiveColumnIndex(defaultColumnIndex: TranscriptTextColumnIndex);
+            if (activeColumnIndex == TranscriptTextColumnIndex) {
+                MoveCurrentGridCellFocusByRow(
+                    delta: 1,
+                    preferredColumnIndex: TranscriptTextColumnIndex,
+                    beginEdit: false);
+                return;
+            }
+
+            MoveCurrentGridCellFocusByColumn(delta: 1, beginEdit: false);
+            return;
+        }
+
+        if (e.Key is Key.Up or Key.Down or Key.Left or Key.Right) {
             e.Handled = true;
             FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Cell, true);
             FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Row, true);
-            MoveCurrentGridCellFocusByRow(e.Key == Key.Up ? -1 : 1);
+
+            if (e.Key == Key.Up) {
+                MoveCurrentGridCellFocusByRow(delta: -1, beginEdit: false);
+                return;
+            }
+
+            if (e.Key == Key.Down) {
+                MoveCurrentGridCellFocusByRow(delta: 1, beginEdit: false);
+                return;
+            }
+
+            MoveCurrentGridCellFocusByColumn(
+                delta: e.Key == Key.Left ? -1 : 1,
+                beginEdit: false);
         }
     }
 
-    private void MoveCurrentGridCellFocusByRow(int delta) {
+    private bool HandleManualSegmentCommandShortcuts(MainViewModel vm, System.Windows.Input.KeyEventArgs e) {
+        ModifierKeys modifiers = Keyboard.Modifiers;
+        bool isCtrlPressed = modifiers.HasFlag(ModifierKeys.Control);
+        bool isShiftPressed = modifiers.HasFlag(ModifierKeys.Shift);
+
+        if (isCtrlPressed && e.Key == Key.I) {
+            if (TryGetCurrentSegmentLine(vm, out FinalizedTranscriptLineViewModel currentLine)) {
+                e.Handled = true;
+                HandleInsertTranscriptRow(
+                    vm,
+                    currentLine,
+                    insertBelow: !isShiftPressed,
+                    duplicateText: false);
+            }
+
+            return e.Handled;
+        }
+
+        if (isCtrlPressed && e.Key == Key.D) {
+            if (TryGetCurrentSegmentLine(vm, out FinalizedTranscriptLineViewModel currentLine)) {
+                e.Handled = true;
+                HandleInsertTranscriptRow(
+                    vm,
+                    currentLine,
+                    insertBelow: true,
+                    duplicateText: true);
+            }
+
+            return e.Handled;
+        }
+
+        if (isCtrlPressed && e.Key == Key.Delete) {
+            if (TryGetCurrentSegmentLine(vm, out FinalizedTranscriptLineViewModel currentLine)) {
+                e.Handled = true;
+                HandleDeleteTranscriptRow(vm, currentLine);
+            }
+
+            return e.Handled;
+        }
+
+        return false;
+    }
+
+    private void MoveCurrentGridCellFocusByRow(int delta, int? preferredColumnIndex = null, bool beginEdit = false) {
         IList<object> rowItems = GetTranscriptRowItems();
         if (rowItems.Count == 0) {
             return;
@@ -1317,8 +1737,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         object targetItem = rowItems[targetIndex];
         FocusGridCell(
             targetItem,
-            GetActiveColumnIndex(defaultColumnIndex: TranscriptTextColumnIndex),
-            beginEdit: false);
+            preferredColumnIndex ?? GetActiveColumnIndex(defaultColumnIndex: TranscriptTextColumnIndex),
+            beginEdit);
     }
 
     private void EnsureCurrentGridCellFocused(bool beginEdit) {
@@ -1376,6 +1796,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
 
             if (beginEdit) {
                 FinalizedTranscriptGrid.BeginEdit();
+                Dispatcher.BeginInvoke(
+                    new Action(() => FocusCellEditor(targetItem, columnIndex)),
+                    DispatcherPriority.Input);
             }
         }
         catch (Exception ex) {
@@ -1437,6 +1860,148 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         return 0;
     }
 
+    private void FocusCurrentGridRowColumn(int targetColumnIndex, bool beginEdit) {
+        DataGridCellInfo currentCell = FinalizedTranscriptGrid.CurrentCell;
+        object? currentItem = currentCell.Item;
+
+        if (!IsDataItem(currentItem)) {
+            currentItem = FinalizedTranscriptGrid.CurrentItem ?? FinalizedTranscriptGrid.SelectedItem;
+        }
+
+        if (!IsDataItem(currentItem)) {
+            IList<object> rowItems = GetTranscriptRowItems();
+            if (rowItems.Count == 0) {
+                return;
+            }
+
+            currentItem = rowItems[0];
+        }
+
+        FocusGridCell(
+            currentItem!,
+            targetColumnIndex,
+            beginEdit);
+    }
+
+    private void MoveCurrentGridCellFocusByColumn(int delta, bool beginEdit) {
+        if (delta == 0) {
+            return;
+        }
+
+        if (!TryGetCurrentGridItem(out object currentItem)) {
+            return;
+        }
+
+        List<int> visibleColumnIndexes = GetVisibleColumnIndexes();
+        if (visibleColumnIndexes.Count == 0) {
+            return;
+        }
+
+        int activeColumnIndex = GetActiveColumnIndex(defaultColumnIndex: TranscriptTextColumnIndex);
+        int visiblePosition = visibleColumnIndexes.IndexOf(activeColumnIndex);
+        if (visiblePosition < 0) {
+            visiblePosition = 0;
+        }
+
+        int targetPosition = Math.Min(
+            Math.Max(visiblePosition + delta, 0),
+            visibleColumnIndexes.Count - 1);
+
+        FocusGridCell(
+            currentItem,
+            visibleColumnIndexes[targetPosition],
+            beginEdit);
+    }
+
+    private bool TryGetCurrentGridItem(out object item) {
+        item = null!;
+
+        object? currentItem = FinalizedTranscriptGrid.CurrentCell.Item;
+        if (!IsDataItem(currentItem)) {
+            currentItem = FinalizedTranscriptGrid.CurrentItem ?? FinalizedTranscriptGrid.SelectedItem;
+        }
+
+        if (IsDataItem(currentItem)) {
+            item = currentItem!;
+            return true;
+        }
+
+        IList<object> rowItems = GetTranscriptRowItems();
+        if (rowItems.Count == 0) {
+            return false;
+        }
+
+        item = rowItems[0];
+        return true;
+    }
+
+    private List<int> GetVisibleColumnIndexes() {
+        var indexes = new List<int>();
+
+        for (int index = 0; index < FinalizedTranscriptGrid.Columns.Count; index++) {
+            if (FinalizedTranscriptGrid.Columns[index].Visibility == Visibility.Visible) {
+                indexes.Add(index);
+            }
+        }
+
+        return indexes;
+    }
+
+    private bool IsManualSegmentKeyboardFlowEnabled(MainViewModel vm) {
+        return !IsSegmentBatchTranscribing
+            && vm.IsSegmentTranscriptViewSelected
+            && !vm.IsOpenAiEngineSelected;
+    }
+
+    private bool TryGetCurrentSegmentLine(MainViewModel vm, out FinalizedTranscriptLineViewModel line) {
+        line = null!;
+
+        if (!vm.IsSegmentTranscriptViewSelected) {
+            return false;
+        }
+
+        object? currentItem = FinalizedTranscriptGrid.CurrentCell.Item;
+        if (currentItem is FinalizedTranscriptLineViewModel currentLine) {
+            line = currentLine;
+            return true;
+        }
+
+        if (FinalizedTranscriptGrid.CurrentItem is FinalizedTranscriptLineViewModel currentItemLine) {
+            line = currentItemLine;
+            return true;
+        }
+
+        if (FinalizedTranscriptGrid.SelectedItem is FinalizedTranscriptLineViewModel selectedItemLine) {
+            line = selectedItemLine;
+            return true;
+        }
+
+        IList<object> rowItems = GetTranscriptRowItems();
+        line = rowItems.OfType<FinalizedTranscriptLineViewModel>().FirstOrDefault()!;
+        return line is not null;
+    }
+
+    private void FocusFirstManualSegmentRowForEditing(MainViewModel vm) {
+        if (!IsManualSegmentKeyboardFlowEnabled(vm)) {
+            return;
+        }
+
+        IList<object> rows = GetTranscriptRowItems();
+        if (rows.Count == 0) {
+            return;
+        }
+
+        object targetItem = rows
+            .OfType<FinalizedTranscriptLineViewModel>()
+            .FirstOrDefault(line => string.IsNullOrWhiteSpace(line.Text))
+            ?? rows[0];
+
+        FocusGridCell(
+            targetItem,
+            TranscriptTextColumnIndex,
+            beginEdit: true);
+    }
+
     private System.Windows.Controls.DataGridCell? TryGetDataCell(object item, int columnIndex) {
         if (columnIndex < 0 || columnIndex >= FinalizedTranscriptGrid.Columns.Count) {
             return null;
@@ -1476,6 +2041,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         return cell;
     }
 
+    private void FocusCellEditor(object item, int columnIndex) {
+        try {
+            DataGridCell? cell = TryGetDataCell(item, columnIndex);
+            if (cell is null) {
+                return;
+            }
+
+            if (FindVisualChild<System.Windows.Controls.TextBox>(cell) is not System.Windows.Controls.TextBox textBox) {
+                return;
+            }
+
+            if (!textBox.IsKeyboardFocusWithin) {
+                textBox.Focus();
+            }
+
+            if (!textBox.AcceptsReturn) {
+                textBox.CaretIndex = textBox.Text?.Length ?? 0;
+                textBox.SelectionLength = 0;
+            }
+        }
+        catch (Exception ex) {
+            _boundViewModel?.LogHandledException("cell editor focus", ex);
+        }
+    }
+
     private bool IsTimelineColumn(DataGridColumn? column) {
         return column is not null
             && FinalizedTranscriptGrid.Columns.IndexOf(column) == TimelineColumnIndex;
@@ -1490,65 +2080,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
                 : Visibility.Visible;
         }
 
-        if (TranscriptRowActionsColumn is not null) {
-            TranscriptRowActionsColumn.Visibility = isSegmentMode
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
-
         if (TimelineTranscriptColumn is not null) {
             TimelineTranscriptColumn.IsReadOnly = !isSegmentMode;
         }
     }
 
     private void UpdateTranscriptRowActionsVisibility() {
-        FinalizedTranscriptLineViewModel? targetLine = null;
-
-        if (_boundViewModel?.IsSegmentTranscriptViewSelected != true) {
-            SetTranscriptRowActionsLine(null);
-            return;
-        }
-
-        if (FinalizedTranscriptGrid.IsKeyboardFocusWithin) {
-            DataGridCellInfo currentCell = FinalizedTranscriptGrid.CurrentCell;
-
-            if (currentCell.IsValid
-                && currentCell.Item is FinalizedTranscriptLineViewModel line) {
-                targetLine = line;
-            }
-        }
-
-        SetTranscriptRowActionsLine(targetLine);
+        // Row actions are now provided via row context menu.
     }
 
     private void SetTranscriptRowActionsLine(FinalizedTranscriptLineViewModel? targetLine) {
-        if (IsSegmentBatchTranscribing || targetLine?.IsPlaybackEditTranscribing == true) {
-            targetLine = null;
-        }
-
-        if (ReferenceEquals(_rowActionsLine, targetLine)) {
-            return;
-        }
-
-        if (_rowActionsLine is not null) {
-            _rowActionsLine.AreRowActionsVisible = false;
-        }
-
-        _rowActionsLine = targetLine;
-
-        if (_rowActionsLine is not null) {
-            _rowActionsLine.AreRowActionsVisible = true;
-        }
+        // Row actions are now provided via row context menu.
     }
 
     private void BeginTimelineEdit(MainViewModel vm, FinalizedTranscriptLineViewModel line) {
         ClearTranscriptEditPlaybackLoop();
         _timelineEditLine = line;
         _timelineEditOriginalTimeline = line.Timeline ?? string.Empty;
-        _timelineEditShouldResumePlayback = vm.IsAudioPlaying;
+        _timelineEditShouldResumePlayback = vm.AutoPlayTimelineSelection && vm.IsAudioPlaying;
 
-        if (_timelineEditShouldResumePlayback && vm.PauseAudioCommand.CanExecute(null)) {
-            vm.PauseAudioCommand.Execute(null);
+        if (vm.IsAudioPlaying) {
+            vm.EnsureAudioPreviewPaused();
         }
     }
 
@@ -2674,6 +3226,69 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
         _isTranscriptEditLoopRestartPending = false;
     }
 
+    private void SyncPlaybackToCurrentTranscriptRow() {
+        if (DataContext is not MainViewModel vm
+            || !vm.IsSegmentTranscriptViewSelected
+            || !vm.IsAudioFileLoaded
+            || IsSegmentBatchTranscribing
+            || _activePlaybackEditTranscription is not null) {
+            _lastPlaybackSyncedLine = null;
+            return;
+        }
+
+        if (!TryGetCurrentTranscriptGridLine(out FinalizedTranscriptLineViewModel currentLine)
+            || currentLine.StartOffset is not TimeSpan rowStartOffset) {
+            _lastPlaybackSyncedLine = null;
+            return;
+        }
+
+        if (ReferenceEquals(_lastPlaybackSyncedLine, currentLine)) {
+            return;
+        }
+
+        try {
+            _lastPlaybackSyncedLine = currentLine;
+            if (!vm.AutoPlayTimelineSelection) {
+                vm.EnsureAudioPreviewPaused();
+            }
+
+            vm.SeekAudioPreview(rowStartOffset);
+            ConfigureTranscriptEditPlaybackLoop(vm, currentLine);
+
+            bool shouldAutoPlay = vm.AutoPlayTimelineSelection;
+            if (shouldAutoPlay && !vm.IsAudioPlaying && vm.PlayAudioCommand.CanExecute(null)) {
+                vm.PlayAudioCommand.Execute(null);
+            }
+            else if (!shouldAutoPlay) {
+                vm.EnsureAudioPreviewPaused();
+            }
+        }
+        catch (Exception ex) {
+            vm.LogHandledException("row transfer playback sync", ex);
+        }
+    }
+
+    private bool TryGetCurrentTranscriptGridLine(out FinalizedTranscriptLineViewModel line) {
+        line = null!;
+
+        if (FinalizedTranscriptGrid.CurrentCell.Item is FinalizedTranscriptLineViewModel currentCellLine) {
+            line = currentCellLine;
+            return true;
+        }
+
+        if (FinalizedTranscriptGrid.CurrentItem is FinalizedTranscriptLineViewModel currentItemLine) {
+            line = currentItemLine;
+            return true;
+        }
+
+        if (FinalizedTranscriptGrid.SelectedItem is FinalizedTranscriptLineViewModel selectedItemLine) {
+            line = selectedItemLine;
+            return true;
+        }
+
+        return false;
+    }
+
     private void PausePlaybackAfterTranscriptEdit(MainViewModel vm) {
         ClearTranscriptEditPlaybackLoop();
 
@@ -2694,6 +3309,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             || _editLoopStartOffset is null
             || _editLoopRepeatOffset is null
             || !_boundViewModel.IsAudioFileLoaded) {
+            return;
+        }
+
+        if (!_boundViewModel.AutoPlayTimelineSelection || !_boundViewModel.IsAudioPlaying) {
+            _isTranscriptEditLoopRestartPending = false;
             return;
         }
 
@@ -2729,6 +3349,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             return;
         }
 
+        if (!_boundViewModel.AutoPlayTimelineSelection || !_boundViewModel.IsAudioPlaying) {
+            _isTranscriptEditLoopRestartPending = false;
+            return;
+        }
+
         try {
             _isApplyingTranscriptEditLoopSeek = true;
             _boundViewModel.RestartAudioPreviewSegment(_editLoopStartOffset.Value);
@@ -2750,14 +3375,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged {
             && !ReferenceEquals(item, DependencyProperty.UnsetValue);
     }
 
-    private static SolidColorBrush CreateBrush(string colorHex) {
-        return (SolidColorBrush)new BrushConverter().ConvertFromString(colorHex)!;
-    }
-
     private sealed record ToastAppearance(
-        string IconBackgroundHex,
-        string IconBorderHex,
-        string IconStrokeHex,
         string IconData
     );
 

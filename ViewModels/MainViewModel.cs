@@ -33,6 +33,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private readonly ProcessLogService _processLogService;
     private readonly TranscriptSessionStore _sessionStore;
     private readonly AppPreferencesStore _appPreferencesStore;
+    private readonly AppThemeService _appThemeService;
     private readonly SynchronizationContext _uiContext;
     private readonly DispatcherTimer _audioTimelineTimer;
     private readonly DispatcherTimer _sessionAutosaveTimer;
@@ -62,10 +63,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private string _audioRemainingText = "-00:00";
     private bool _copyFinalizedWithTimeline;
     private bool _autoTranscribeWithAi;
+    private bool _autoPlayTimelineSelection;
+    private AppThemePreference _selectedThemePreference;
     private bool _isUpdatingSeekFromPlayback;
     private bool _suppressSessionAutosave;
     private string _applicationVersionStatusText = string.Empty;
     private int _selectedTranscriptViewIndex;
+    private string _pendingImportedAudioFilePath = string.Empty;
 
     public MainViewModel(
         IEnumerable<TranscriptionModelOption> models,
@@ -77,6 +81,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         ProcessLogService processLogService,
         TranscriptSessionStore sessionStore,
         AppPreferencesStore appPreferencesStore,
+        AppThemeService appThemeService,
         AppPreferencesSnapshot appPreferencesSnapshot) {
         _audioPlaybackService = audioPlaybackService;
         _openAiOptions = openAiOptions;
@@ -86,11 +91,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _processLogService = processLogService;
         _sessionStore = sessionStore;
         _appPreferencesStore = appPreferencesStore;
+        _appThemeService = appThemeService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
 
         _openAiApiKey = _openAiOptions.ApiKey;
         _copyFinalizedWithTimeline = appPreferencesSnapshot.CopyFinalizedWithTimeline;
         _autoTranscribeWithAi = appPreferencesSnapshot.AutoTranscribeWithAi;
+        _autoPlayTimelineSelection = appPreferencesSnapshot.AutoPlayTimelineSelection;
+        _selectedThemePreference = appPreferencesSnapshot.ThemePreference;
 
         Engines = new ObservableCollection<EngineOptionViewModel>(
             models.Select(model => new EngineOptionViewModel(model)));
@@ -120,6 +128,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         FinalizedTranscriptLines = new ObservableCollection<FinalizedTranscriptLineViewModel>();
         SpeakerTranscriptLines = new ObservableCollection<FinalizedTranscriptLineViewModel>();
         RecentSessions = new ObservableCollection<TranscriptSessionSummary>();
+        ThemeOptions = AppThemeService.ThemeOptions;
         ProcessLogs.CollectionChanged += OnProcessLogsCollectionChanged;
         FinalizedTranscriptLines.CollectionChanged += OnFinalizedTranscriptLinesCollectionChanged;
         SpeakerTranscriptLines.CollectionChanged += OnSpeakerTranscriptLinesCollectionChanged;
@@ -164,6 +173,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         AppendLogCore("Auto Transcribe with AI uses the fixed OpenAI gpt-4o-transcribe engine.");
         AppendLogCore($"Auto Transcribe with AI: {(_autoTranscribeWithAi ? "ON" : "OFF")}.");
+        AppendLogCore($"Theme preference: {AppThemeService.GetDisplayName(_selectedThemePreference)}.");
         AppendLogCore($"Startup mode: {SelectedEngine?.DisplayName ?? "Unavailable"}.");
         AppendLogCore($"Transcript mode: {SelectedTranscriptMode?.DisplayName ?? "Unavailable"}.");
 
@@ -184,6 +194,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public ObservableCollection<ProcessLogEntryViewModel> ProcessLogs { get; }
     public ObservableCollection<FinalizedTranscriptLineViewModel> FinalizedTranscriptLines { get; }
     public ObservableCollection<FinalizedTranscriptLineViewModel> SpeakerTranscriptLines { get; }
+    public IReadOnlyList<AppThemeOption> ThemeOptions { get; }
 
     public IEnumerable<FinalizedTranscriptLineViewModel> CurrentTranscriptLines =>
         IsSpeakerTranscriptViewSelected
@@ -197,6 +208,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
+
+    public AppThemePreference SelectedThemePreference {
+        get => _selectedThemePreference;
+        set {
+            if (!SetProperty(ref _selectedThemePreference, value)) {
+                return;
+            }
+
+            _appThemeService.Apply(value);
+            SaveAppPreferences();
+            AppendLog($"Theme preference: {AppThemeService.GetDisplayName(value)}.");
+        }
+    }
 
     public EngineOptionViewModel? SelectedEngine {
         get => _selectedEngine;
@@ -350,7 +374,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         SelectedTranscriptMode?.Mode == TranscriptGenerationMode.SpeakerDiarization;
 
     public bool IsAutoTranscribeSettingVisible =>
-        IsSegmentModeSelected;
+        true;
 
     public bool IsSpeakerDiarizationNoticeVisible =>
         IsSpeakerDiarizationModeSelected;
@@ -486,6 +510,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public string AutoTranscribeAssistStatusText {
         get {
+            if (IsSpeakerDiarizationModeSelected) {
+                if (AutoTranscribeWithAi) {
+                    return string.IsNullOrWhiteSpace(OpenAiApiKey)
+                        ? "On, but an API key is still required."
+                        : "On and ready for speaker diarization.";
+                }
+
+                return string.IsNullOrWhiteSpace(OpenAiApiKey)
+                    ? "Off. Add an API key to enable it."
+                    : "Off. Turn it on for speaker diarization.";
+            }
+
             if (AutoTranscribeWithAi) {
                 return string.IsNullOrWhiteSpace(OpenAiApiKey)
                     ? "On, but an API key is still required."
@@ -496,6 +532,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
                 ? "Off. Add an API key to enable it."
                 : "Off. Turn it on to fill segment text.";
         }
+    }
+
+    public string AutoTranscribeAssistModeDescriptionText =>
+        IsSpeakerDiarizationModeSelected
+            ? "Enable OpenAI processing for speaker diarization."
+            : "Fill segment text automatically.";
+
+    public bool IsAiAssistChecked {
+        get => AutoTranscribeWithAi;
+        set => AutoTranscribeWithAi = value;
     }
 
     public bool AutoTranscribeWithAi {
@@ -509,6 +555,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             SaveAppPreferences();
             NotifyAiAssistStateChanged();
             NotifyCurrentTranscriptStateChanged();
+            NotifyPropertyChanged(nameof(IsAiAssistChecked));
             AppendLog($"Auto Transcribe with AI: {(value ? "ON" : "OFF")}.");
         }
     }
@@ -522,6 +569,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
             SaveAppPreferences();
             AppendLog($"Copy finalized transcript with timeline: {(value ? "ON" : "OFF")}.");
+        }
+    }
+
+    public bool AutoPlayTimelineSelection {
+        get => _autoPlayTimelineSelection;
+        set {
+            if (!SetProperty(ref _autoPlayTimelineSelection, value)) {
+                return;
+            }
+
+            SaveAppPreferences();
+            AppendLog($"Auto play selected timeline: {(value ? "ON" : "OFF")}.");
         }
     }
 
@@ -657,18 +716,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public string OpenAiApiKey {
         get => _openAiApiKey;
-        set {
-            if (!SetProperty(ref _openAiApiKey, value)) {
-                return;
-            }
-
-            _openAiOptions.ApiKey = value.Trim();
-            _openAiSettingsStore.Save(_openAiOptions.ApiKey);
-            NotifyAiAssistStateChanged();
-            NotifyCurrentTranscriptStateChanged();
-            AppendLog($"OpenAI API key updated ({MaskApiKey(_openAiOptions.ApiKey)}).");
-            RefreshCommandStates();
-        }
+        set => SetOpenAiApiKey(value, persistToStore: true, removePersistedRecord: false);
     }
 
     public ValueTask DisposeAsync() {
@@ -711,8 +759,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     public void ApplyOpenAiSettings(string apiKey) {
         AppendLog("Applying OpenAI settings.");
-        OpenAiApiKey = apiKey;
+        SetOpenAiApiKey(apiKey, persistToStore: true, removePersistedRecord: false);
         AppendLog("OpenAI settings applied.");
+    }
+
+    public void RemoveOpenAiSettings() {
+        SetOpenAiApiKey(string.Empty, persistToStore: false, removePersistedRecord: true);
+        AppendLog("OpenAI API key removed.");
     }
 
     public void SeekAudioPreview(TimeSpan position) {
@@ -756,6 +809,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         _audioPlaybackService.Seek(clamped);
         _audioPlaybackService.Play();
+        IsAudioPlaying = _audioPlaybackService.IsPlaying;
+        UpdateAudioTimelineFromPlayback();
+    }
+
+    public void EnsureAudioPreviewPaused() {
+        if (!IsAudioFileLoaded) {
+            return;
+        }
+
+        _audioPlaybackService.Pause();
         IsAudioPlaying = _audioPlaybackService.IsPlaying;
         UpdateAudioTimelineFromPlayback();
     }
@@ -942,7 +1005,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             return Task.CompletedTask;
         }
 
-        LoadSessionFromImportedAudio(selectedFilePath);
+        if (!IsSupportedAudioFilePath(selectedFilePath)) {
+            string extension = Path.GetExtension(selectedFilePath);
+            AppendLog($"Open preview canceled: unsupported audio type '{extension}'.");
+            RaiseError("Unsupported audio file. Use WAV, MP3, FLAC, AAC, M4A, OGG, WMA, or MP4.");
+            return Task.CompletedTask;
+        }
+
+        HandleSelectedAudioFile(selectedFilePath);
         return Task.CompletedTask;
     }
 
@@ -960,7 +1030,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         AppendLog($"Audio file dropped: {Path.GetFileName(filePath)}");
-        LoadSessionFromImportedAudio(filePath);
+        HandleSelectedAudioFile(filePath);
         return true;
     }
 
@@ -1064,6 +1134,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
         if (clearSessionContext) {
             _currentSessionDocument = null;
+            ClearPendingImportedAudioSelection();
             CurrentSessionDisplayName = "No session loaded.";
             CurrentSessionAudioIssue = string.Empty;
             IsCurrentSessionAudioMissing = false;
@@ -1200,12 +1271,51 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private void NotifyAiAssistStateChanged() {
         NotifyPropertyChanged(nameof(AutoTranscribeAssistStatusText));
+        NotifyPropertyChanged(nameof(AutoTranscribeAssistModeDescriptionText));
+        NotifyPropertyChanged(nameof(IsAiAssistChecked));
     }
 
     private void SaveAppPreferences() {
         _appPreferencesStore.Save(new AppPreferencesSnapshot(
             CopyFinalizedWithTimeline: _copyFinalizedWithTimeline,
-            AutoTranscribeWithAi: _autoTranscribeWithAi));
+            AutoTranscribeWithAi: _autoTranscribeWithAi,
+            ThemePreference: _selectedThemePreference,
+            AutoPlayTimelineSelection: _autoPlayTimelineSelection));
+    }
+
+    private void SetOpenAiApiKey(string apiKey, bool persistToStore, bool removePersistedRecord) {
+        string normalized = apiKey?.Trim() ?? string.Empty;
+
+        if (!SetProperty(ref _openAiApiKey, normalized)) {
+            if (removePersistedRecord) {
+                _openAiSettingsStore.Clear();
+            }
+            else if (persistToStore) {
+                _openAiSettingsStore.Save(normalized);
+            }
+
+            return;
+        }
+
+        _openAiOptions.ApiKey = normalized;
+
+        if (removePersistedRecord) {
+            _openAiSettingsStore.Clear();
+        }
+        else if (persistToStore) {
+            _openAiSettingsStore.Save(normalized);
+        }
+
+        NotifyAiAssistStateChanged();
+        NotifyCurrentTranscriptStateChanged();
+        RefreshCommandStates();
+
+        if (string.IsNullOrWhiteSpace(normalized)) {
+            AppendLog("OpenAI API key cleared.");
+        }
+        else {
+            AppendLog($"OpenAI API key updated ({MaskApiKey(normalized)}).");
+        }
     }
 
     private bool EnsureSelectedModelConfigured() {
@@ -1243,6 +1353,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
     private void LoadSessionFromImportedAudio(string sourceFilePath) {
         try {
+            ClearPendingImportedAudioSelection();
             _sessionAutosaveTimer.Stop();
             TrySaveCurrentSession(
                 updatedTranscriptMode: null,
@@ -1259,8 +1370,43 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
     }
 
+    private void HandleSelectedAudioFile(string sourceFilePath) {
+        try {
+            _sessionAutosaveTimer.Stop();
+            TrySaveCurrentSession(
+                updatedTranscriptMode: null,
+                showErrorDialog: false,
+                successLogMessage: string.Empty);
+
+            if (_sessionStore.TryLoadExistingSessionForAudio(sourceFilePath, out TranscriptSessionLoadResult? loadResult)
+                && loadResult is not null) {
+                ClearPendingImportedAudioSelection();
+                LoadSessionResult(loadResult, showAudioIssueDialog: true);
+                LoadRecentSessions(loadResult.Document.SessionId);
+                StatusMessage = $"Session loaded: {CurrentSessionDisplayName}.";
+                AppendLog("Selected audio matched an existing session and was loaded.");
+                return;
+            }
+
+            ClearOutputCore(unloadAudioPreview: true, clearSessionContext: true);
+            if (!TryLoadAudioPreview(sourceFilePath)) {
+                RaiseError("Unable to load the selected audio file for preview.");
+                AppendLog("Selected audio could not be staged because preview loading failed.");
+                return;
+            }
+
+            _pendingImportedAudioFilePath = sourceFilePath;
+            StatusMessage = "Audio selected. Click Generate to initialize a new session.";
+            AppendLog("Selected audio does not have an existing session. Preview loaded and session creation is deferred until Generate is clicked.");
+        }
+        catch (Exception ex) {
+            RaiseError($"Unable to process selected audio file: {ex.Message}");
+        }
+    }
+
     private bool EnsureCurrentSessionForLoadedAudio() {
         if (_currentSessionDocument is not null) {
+            ClearPendingImportedAudioSelection();
             return true;
         }
 
@@ -1268,10 +1414,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
             return false;
         }
 
+        string sourcePathForSessionImport = string.IsNullOrWhiteSpace(_pendingImportedAudioFilePath)
+            ? LoadedAudioFilePath
+            : _pendingImportedAudioFilePath;
+
         try {
-            TranscriptSessionLoadResult loadResult = _sessionStore.ImportAudioFile(LoadedAudioFilePath);
+            TranscriptSessionLoadResult loadResult = _sessionStore.ImportAudioFile(sourcePathForSessionImport);
             LoadSessionResult(loadResult, showAudioIssueDialog: true);
             LoadRecentSessions(loadResult.Document.SessionId);
+            ClearPendingImportedAudioSelection();
             return true;
         }
         catch (Exception ex) {
@@ -1309,6 +1460,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         _suppressSessionAutosave = true;
 
         try {
+            ClearPendingImportedAudioSelection();
             _currentSessionDocument = loadResult.Document;
             CurrentSessionDisplayName = string.IsNullOrWhiteSpace(loadResult.Document.DisplayName)
                 ? loadResult.Document.Audio.OriginalFileName
@@ -1912,6 +2064,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         }
 
         _currentSessionDocument = null;
+        ClearPendingImportedAudioSelection();
         CurrentSessionDisplayName = "No session loaded.";
         CurrentSessionAudioIssue = string.Empty;
         IsCurrentSessionAudioMissing = false;
@@ -1966,6 +2119,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
 
             return false;
         }
+    }
+
+    private void ClearPendingImportedAudioSelection() {
+        _pendingImportedAudioFilePath = string.Empty;
     }
 
     private TranscriptSessionDocument? CreateSessionSaveSnapshot(TranscriptGenerationMode? updatedTranscriptMode) {

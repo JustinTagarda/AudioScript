@@ -16,6 +16,8 @@ public sealed class AppPreferencesStoreTests {
 
             Assert.False(snapshot.CopyFinalizedWithTimeline);
             Assert.False(snapshot.AutoTranscribeWithAi);
+            Assert.Equal(AppThemePreference.System, snapshot.ThemePreference);
+            Assert.True(snapshot.AutoPlayTimelineSelection);
         }
         finally {
             DeleteDirectory(rootPath);
@@ -32,10 +34,13 @@ public sealed class AppPreferencesStoreTests {
 
             store.Save(new AppPreferencesSnapshot(
                 CopyFinalizedWithTimeline: true,
-                AutoTranscribeWithAi: false));
+                AutoTranscribeWithAi: false,
+                ThemePreference: AppThemePreference.System,
+                AutoPlayTimelineSelection: true));
             AppPreferencesSnapshot snapshot = store.Load();
 
             Assert.True(snapshot.CopyFinalizedWithTimeline);
+            Assert.Equal(AppThemePreference.System, snapshot.ThemePreference);
             Assert.Empty(Directory.EnumerateFiles(rootPath, "*.tmp", SearchOption.AllDirectories));
         }
         finally {
@@ -53,11 +58,37 @@ public sealed class AppPreferencesStoreTests {
 
             store.Save(new AppPreferencesSnapshot(
                 CopyFinalizedWithTimeline: false,
-                AutoTranscribeWithAi: true));
+                AutoTranscribeWithAi: true,
+                ThemePreference: AppThemePreference.System,
+                AutoPlayTimelineSelection: true));
             AppPreferencesSnapshot snapshot = store.Load();
 
             Assert.False(snapshot.CopyFinalizedWithTimeline);
             Assert.True(snapshot.AutoTranscribeWithAi);
+            Assert.Empty(Directory.EnumerateFiles(rootPath, "*.tmp", SearchOption.AllDirectories));
+        }
+        finally {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public void Save_AndLoad_RoundTripThemePreference() {
+        string rootPath = CreateTempDirectory();
+        string settingsPath = Path.Combine(rootPath, "app-preferences.json");
+
+        try {
+            var store = new AppPreferencesStore(settingsPath);
+
+            store.Save(new AppPreferencesSnapshot(
+                CopyFinalizedWithTimeline: false,
+                AutoTranscribeWithAi: false,
+                ThemePreference: AppThemePreference.Dark,
+                AutoPlayTimelineSelection: false));
+            AppPreferencesSnapshot snapshot = store.Load();
+
+            Assert.Equal(AppThemePreference.Dark, snapshot.ThemePreference);
+            Assert.False(snapshot.AutoPlayTimelineSelection);
             Assert.Empty(Directory.EnumerateFiles(rootPath, "*.tmp", SearchOption.AllDirectories));
         }
         finally {

@@ -51,8 +51,31 @@ public partial class OpenAiSettingsWindow : Window {
 
     private void SetSavingState(bool isSaving) {
         _isSaving = isSaving;
+        RemoveButton.IsEnabled = !isSaving;
         SaveButton.IsEnabled = !isSaving;
         SaveButton.Content = isSaving ? "Validating..." : "Save";
+    }
+
+    private void RemoveButton_Click(object sender, RoutedEventArgs e) {
+        if (_isSaving || DataContext is not MainViewModel viewModel) {
+            return;
+        }
+
+        var confirmation = new ConfirmationDialogWindow(
+            title: "Remove API key?",
+            message: "This removes the stored OpenAI API key from this device and clears it from memory.",
+            confirmButtonText: "Remove",
+            cancelButtonText: "Cancel") {
+            Owner = this,
+        };
+
+        if (confirmation.ShowDialog() != true) {
+            return;
+        }
+
+        ApiKeyTextBox.Text = string.Empty;
+        viewModel.RemoveOpenAiSettings();
+        DialogResult = true;
     }
 
     private void ShowError(string message) {

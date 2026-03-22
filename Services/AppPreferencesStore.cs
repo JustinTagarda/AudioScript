@@ -26,7 +26,9 @@ public sealed class AppPreferencesStore {
         if (!File.Exists(_settingsFilePath)) {
             return new AppPreferencesSnapshot(
                 CopyFinalizedWithTimeline: false,
-                AutoTranscribeWithAi: false);
+                AutoTranscribeWithAi: false,
+                ThemePreference: AppThemePreference.System,
+                AutoPlayTimelineSelection: true);
         }
 
         try {
@@ -36,17 +38,23 @@ public sealed class AppPreferencesStore {
             if (persisted is null) {
                 return new AppPreferencesSnapshot(
                     CopyFinalizedWithTimeline: false,
-                    AutoTranscribeWithAi: false);
+                    AutoTranscribeWithAi: false,
+                    ThemePreference: AppThemePreference.System,
+                    AutoPlayTimelineSelection: true);
             }
 
             return new AppPreferencesSnapshot(
                 CopyFinalizedWithTimeline: persisted.CopyFinalizedWithTimeline,
-                AutoTranscribeWithAi: persisted.AutoTranscribeWithAi);
+                AutoTranscribeWithAi: persisted.AutoTranscribeWithAi,
+                ThemePreference: ParseThemePreference(persisted.ThemePreference),
+                AutoPlayTimelineSelection: persisted.AutoPlayTimelineSelection ?? true);
         }
         catch {
             return new AppPreferencesSnapshot(
                 CopyFinalizedWithTimeline: false,
-                AutoTranscribeWithAi: false);
+                AutoTranscribeWithAi: false,
+                ThemePreference: AppThemePreference.System,
+                AutoPlayTimelineSelection: true);
         }
     }
 
@@ -58,6 +66,8 @@ public sealed class AppPreferencesStore {
             var persisted = new PersistedAppPreferences {
                 CopyFinalizedWithTimeline = snapshot.CopyFinalizedWithTimeline,
                 AutoTranscribeWithAi = snapshot.AutoTranscribeWithAi,
+                ThemePreference = snapshot.ThemePreference.ToString(),
+                AutoPlayTimelineSelection = snapshot.AutoPlayTimelineSelection,
             };
 
             string json = JsonSerializer.Serialize(persisted, JsonOptions);
@@ -90,15 +100,27 @@ public sealed class AppPreferencesStore {
         }
     }
 
+    private static AppThemePreference ParseThemePreference(string? value) {
+        return Enum.TryParse(value, ignoreCase: true, out AppThemePreference preference)
+            ? preference
+            : AppThemePreference.System;
+    }
+
     private sealed class PersistedAppPreferences {
         public bool CopyFinalizedWithTimeline { get; init; }
 
         public bool AutoTranscribeWithAi { get; init; }
+
+        public string? ThemePreference { get; init; }
+
+        public bool? AutoPlayTimelineSelection { get; init; }
     }
 }
 
 public sealed record AppPreferencesSnapshot(
     bool CopyFinalizedWithTimeline,
-    bool AutoTranscribeWithAi);
+    bool AutoTranscribeWithAi,
+    AppThemePreference ThemePreference,
+    bool AutoPlayTimelineSelection);
 
 

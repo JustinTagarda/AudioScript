@@ -25,43 +25,16 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <Border Grid.Row="0"
-                        Width="52"
-                        Height="52"
-                        HorizontalAlignment="Left"
-                        Background="#FFF3E4D4"
-                        BorderBrush="#FFE4BE8C"
-                        BorderThickness="1"
-                        CornerRadius="26">
-                    <Viewbox Width="24"
-                             Height="24"
-                             HorizontalAlignment="Center"
-                             VerticalAlignment="Center">
-                        <Grid Width="24"
-                              Height="24">
-                            <Path Fill="#FFBE7E2A"
-                                  Data="M12,2.4 C6.7,2.4 2.4,6.7 2.4,12 C2.4,17.3 6.7,21.6 12,21.6 C17.3,21.6 21.6,17.3 21.6,12 C21.6,6.7 17.3,2.4 12,2.4 Z"/>
-                            <Path Fill="#FFFFFFFF"
-                                  Data="M11.15,6.7 H12.85 V13.55 H11.15 Z M11.15,15.5 H12.85 V17.3 H11.15 Z"/>
-                        </Grid>
-                    </Viewbox>
-                </Border>
-
-                <TextBlock Grid.Row="1"
-                           Margin="0,16,0,0"
+                <TextBlock Grid.Row="0"
                            Text="A newer version is required"
-                           FontFamily="Bahnschrift"
                            FontSize="24"
                            TextWrapping="Wrap" />
 
                 <TextBlock x:Name="UpdateMessageText"
-                           Grid.Row="2"
+                           Grid.Row="1"
                            Margin="0,12,0,0"
-                           FontFamily="Segoe UI Variable Text"
-                           FontSize="13"
                            TextWrapping="Wrap" />
             </Grid>
         </Border>

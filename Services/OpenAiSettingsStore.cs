@@ -12,15 +12,20 @@ public sealed class OpenAiSettingsStore {
 
     private readonly string _settingsFilePath;
 
-    public OpenAiSettingsStore() {
+    public OpenAiSettingsStore(string? settingsFilePath = null) {
+        if (!string.IsNullOrWhiteSpace(settingsFilePath)) {
+            _settingsFilePath = settingsFilePath;
+            return;
+        }
+
         string appDataDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "VoxTranscribe");
         _settingsFilePath = Path.Combine(appDataDirectory, "openai-settings.json");
     }
 
-    public OpenAiSettingsSnapshot Load(string fallbackApiKey) {
-        string apiKey = fallbackApiKey ?? string.Empty;
+    public OpenAiSettingsSnapshot Load() {
+        string apiKey = string.Empty;
 
         if (!File.Exists(_settingsFilePath)) {
             return new OpenAiSettingsSnapshot(apiKey);
@@ -41,7 +46,7 @@ public sealed class OpenAiSettingsStore {
 
         }
         catch {
-            // Fall back to environment/default values when reading fails.
+            // Fall back to empty when reading fails.
         }
 
         return new OpenAiSettingsSnapshot(apiKey);
@@ -61,6 +66,45 @@ public sealed class OpenAiSettingsStore {
         }
         catch {
             // Keep settings UI responsive if persistence fails.
+        }
+    }
+
+    public void Clear() {
+        try {
+            if (File.Exists(_settingsFilePath)) {
+                File.Delete(_settingsFilePath);
+            }
+        }
+        catch {
+            // Keep settings UI responsive if cleanup fails.
+        }
+
+        // Remove environment-level key sources so restart cannot repopulate from OPENAI_API_KEY.
+        ClearOpenAiApiKeyEnvironmentVariables();
+    }
+
+    private static void ClearOpenAiApiKeyEnvironmentVariables() {
+        const string keyName = "OPENAI_API_KEY";
+
+        try {
+            Environment.SetEnvironmentVariable(keyName, null, EnvironmentVariableTarget.Process);
+        }
+        catch {
+            // Ignore process-scoped cleanup failures.
+        }
+
+        try {
+            Environment.SetEnvironmentVariable(keyName, null, EnvironmentVariableTarget.User);
+        }
+        catch {
+            // Ignore user-scoped cleanup failures.
+        }
+
+        try {
+            Environment.SetEnvironmentVariable(keyName, null, EnvironmentVariableTarget.Machine);
+        }
+        catch {
+            // Ignore machine-scoped cleanup failures (may require elevation).
         }
     }
 

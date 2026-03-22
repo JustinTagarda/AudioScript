@@ -71,6 +71,21 @@ public sealed class TranscriptSessionStore {
         return LoadSession(sessionId);
     }
 
+    public bool TryLoadExistingSessionForAudio(string sourceFilePath, out TranscriptSessionLoadResult? loadResult) {
+        string fullPath = ValidateAudioFilePath(sourceFilePath);
+        string fileHash = ComputeSha256(fullPath);
+        string sessionId = BuildSessionId(fileHash);
+        string sessionFilePath = GetSessionFilePath(sessionId);
+
+        if (!File.Exists(sessionFilePath)) {
+            loadResult = null;
+            return false;
+        }
+
+        loadResult = LoadSession(sessionId);
+        return true;
+    }
+
     public TranscriptSessionLoadResult LoadSession(string sessionId) {
         if (string.IsNullOrWhiteSpace(sessionId)) {
             throw new ArgumentException("Session id is required.", nameof(sessionId));

@@ -24,6 +24,7 @@ public partial class App : System.Windows.Application {
     private OpenAiSettingsStore? _openAiSettingsStore;
     private OpenAiApiKeyValidationService? _openAiApiKeyValidationService;
     private AppPreferencesStore? _appPreferencesStore;
+    private AppThemeService? _appThemeService;
 
     [STAThread]
     private static void Main(string[] args) {
@@ -55,10 +56,12 @@ public partial class App : System.Windows.Application {
         var openAiOptions = new OpenAiTranscriptionOptions();
         _openAiSettingsStore = new OpenAiSettingsStore();
         _appPreferencesStore = new AppPreferencesStore();
+        _appThemeService = new AppThemeService();
 
-        OpenAiSettingsSnapshot openAiSnapshot = _openAiSettingsStore.Load(openAiOptions.ApiKey);
+        OpenAiSettingsSnapshot openAiSnapshot = _openAiSettingsStore.Load();
         AppPreferencesSnapshot appPreferencesSnapshot = _appPreferencesStore.Load();
         openAiOptions.ApiKey = openAiSnapshot.ApiKey;
+        _appThemeService.Apply(appPreferencesSnapshot.ThemePreference);
 
         _httpClient = new HttpClient {
             // Long transcription and diarization uploads use service-level cancellation tokens.
@@ -114,6 +117,7 @@ public partial class App : System.Windows.Application {
             processLogService,
             sessionStore,
             _appPreferencesStore,
+            _appThemeService,
             appPreferencesSnapshot);
 
         var mainWindow = new MainWindow(
