@@ -1,4 +1,4 @@
-namespace VoxTranscribe.Abstractions;
+namespace AudioScript.Abstractions;
 
 public sealed record DiarizationChunkPlan(
     int Index,
@@ -11,3 +11,4 @@ public sealed record DiarizationChunkPlan(
 
     public TimeSpan KeepDuration => KeepEnd - KeepStart;
 }
+

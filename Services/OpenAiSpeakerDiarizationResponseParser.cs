@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
-using VoxTranscribe.Abstractions;
+using AudioScript.Abstractions;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed class OpenAiSpeakerDiarizationResponseParser {
     public SpeakerDiarizationResult Parse(string responseBody, string model) {
@@ -167,3 +167,4 @@ public sealed class OpenAiSpeakerDiarizationResponseParser {
         return false;
     }
 }
+

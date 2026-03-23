@@ -7,9 +7,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <StartupObject>VoxTranscribe.App</StartupObject>
+    <StartupObject>AudioScript.App</StartupObject>
     <Version>0.1.6</Version>
-    <ApplicationIcon>Assets\VoxTranscribe.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\AudioScript.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,9 +17,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="VoxTranscribe.Tests\\**\\*.cs" />
-    <EmbeddedResource Remove="VoxTranscribe.Tests\\**\\*" />
-    <Page Remove="VoxTranscribe.Tests\\**\\*" />
+    <Compile Remove="AudioScript.Tests\\**\\*.cs" />
+    <EmbeddedResource Remove="AudioScript.Tests\\**\\*" />
+    <Page Remove="AudioScript.Tests\\**\\*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,9 +28,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\VoxTranscribe.ico" />
+    <Resource Include="Assets\AudioScript.ico" />
   </ItemGroup>
 
 </Project>
+
 
 

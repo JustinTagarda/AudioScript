@@ -1,4 +1,4 @@
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed record PlaybackTranscriptionSessionOptions(
     TimeSpan MinimumSegmentDuration,
@@ -37,5 +37,6 @@ public sealed record PlaybackTranscriptionSessionOptions(
         return this;
     }
 }
+
 
 

@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed class OpenAiSettingsStore {
     private static readonly JsonSerializerOptions JsonOptions = new() {
@@ -20,7 +20,7 @@ public sealed class OpenAiSettingsStore {
 
         string appDataDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "VoxTranscribe");
+            "AudioScript");
         _settingsFilePath = Path.Combine(appDataDirectory, "openai-settings.json");
     }
 
@@ -139,5 +139,6 @@ public sealed class OpenAiSettingsStore {
 }
 
 public sealed record OpenAiSettingsSnapshot(string ApiKey);
+
 
 

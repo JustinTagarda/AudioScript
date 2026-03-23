@@ -1,7 +1,7 @@
-using VoxTranscribe.Services;
+using AudioScript.Services;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class OpenAiTranscriptionModelCatalogTests {
     [Fact]
@@ -35,5 +35,6 @@ public sealed class OpenAiTranscriptionModelCatalogTests {
         Assert.False(OpenAiTranscriptionModelCatalog.IsSupported(OpenAiTranscriptionModelCatalog.ManualTranscription));
     }
 }
+
 
 

@@ -2,15 +2,15 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using VoxTranscribe.Audio;
-using VoxTranscribe.Services;
-using VoxTranscribe.ViewModels;
+using AudioScript.Audio;
+using AudioScript.Services;
+using AudioScript.ViewModels;
 
-namespace VoxTranscribe;
+namespace AudioScript;
 
 public partial class App : System.Windows.Application {
-    private const string SingleInstanceMutexName = @"Local\VoxTranscribe_SingleInstance";
-    private const string ActivateEventName = @"Local\VoxTranscribe_Activate";
+    private const string SingleInstanceMutexName = @"Local\AudioScript_SingleInstance";
+    private const string ActivateEventName = @"Local\AudioScript_Activate";
 
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
@@ -240,3 +240,4 @@ public partial class App : System.Windows.Application {
         }
     }
 }
+

@@ -5,11 +5,11 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text.Json;
-using VoxTranscribe.Abstractions;
-using VoxTranscribe.Audio;
+using AudioScript.Abstractions;
+using AudioScript.Audio;
 using NAudio.Wave;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed class PlaybackTranscriptionService : IPlaybackTranscriptionService {
     private const string ResponseFormat = "json";
@@ -284,6 +284,7 @@ public sealed class PlaybackTranscriptionService : IPlaybackTranscriptionService
         TranscriptionResult? Result
     );
 }
+
 
 
 

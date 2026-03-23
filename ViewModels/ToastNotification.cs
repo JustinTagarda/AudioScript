@@ -1,4 +1,4 @@
-namespace VoxTranscribe.ViewModels;
+namespace AudioScript.ViewModels;
 
 public enum ToastNotificationType {
     Info,
@@ -12,5 +12,6 @@ public sealed record ToastNotification(
     string Message,
     ToastNotificationType Type = ToastNotificationType.Info
 );
+
 
 

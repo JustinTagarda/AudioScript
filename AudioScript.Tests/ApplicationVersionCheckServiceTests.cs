@@ -1,8 +1,8 @@
 using System.Net;
-using VoxTranscribe.Services;
+using AudioScript.Services;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class ApplicationVersionCheckServiceTests {
     [Fact]
@@ -76,5 +76,6 @@ public sealed class ApplicationVersionCheckServiceTests {
         }
     }
 }
+
 
 

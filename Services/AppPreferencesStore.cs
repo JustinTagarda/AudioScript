@@ -1,7 +1,7 @@
 using System.IO;
 using System.Text.Json;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed class AppPreferencesStore {
     private static readonly JsonSerializerOptions JsonOptions = new() {
@@ -18,7 +18,7 @@ public sealed class AppPreferencesStore {
 
         string appDataDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "VoxTranscribe");
+            "AudioScript");
         _settingsFilePath = Path.Combine(appDataDirectory, "app-preferences.json");
     }
 
@@ -122,5 +122,6 @@ public sealed record AppPreferencesSnapshot(
     bool AutoTranscribeWithAi,
     AppThemePreference ThemePreference,
     bool AutoPlayTimelineSelection);
+
 
 

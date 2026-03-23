@@ -1,3 +1,4 @@
 using System.Runtime.CompilerServices;
 
-[assembly: InternalsVisibleTo("VoxTranscribe.Tests")]
+[assembly: InternalsVisibleTo("AudioScript.Tests")]
+

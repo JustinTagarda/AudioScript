@@ -5,9 +5,9 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text.Json;
-using VoxTranscribe.Abstractions;
+using AudioScript.Abstractions;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed class OpenAiSpeakerDiarizationService {
     private const string ResponseFormat = "diarized_json";
@@ -243,3 +243,4 @@ public sealed class OpenAiSpeakerDiarizationService {
         };
     }
 }
+

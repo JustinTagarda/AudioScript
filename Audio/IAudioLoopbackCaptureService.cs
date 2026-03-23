@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace VoxTranscribe.Audio;
+namespace AudioScript.Audio;
 
 public interface IAudioLoopbackCaptureService : IDisposable {
     event EventHandler<LoopbackAudioFrameEventArgs>? AudioFrameCaptured;
@@ -15,5 +15,6 @@ public interface IAudioLoopbackCaptureService : IDisposable {
 
     void StopCapture();
 }
+
 
 

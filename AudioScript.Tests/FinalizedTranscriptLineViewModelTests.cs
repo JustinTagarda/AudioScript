@@ -1,7 +1,7 @@
-using VoxTranscribe.ViewModels;
+using AudioScript.ViewModels;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class FinalizedTranscriptLineViewModelTests {
     [Theory]
@@ -58,5 +58,6 @@ public sealed class FinalizedTranscriptLineViewModelTests {
         Assert.Equal("00:53", line.Timeline);
     }
 }
+
 
 

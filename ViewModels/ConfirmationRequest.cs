@@ -1,4 +1,4 @@
-namespace VoxTranscribe.ViewModels;
+namespace AudioScript.ViewModels;
 
 public sealed class ConfirmationRequest {
     public ConfirmationRequest(
@@ -22,5 +22,6 @@ public sealed class ConfirmationRequest {
 
     public bool IsConfirmed { get; set; }
 }
+
 
 

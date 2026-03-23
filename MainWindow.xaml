@@ -1,13 +1,13 @@
-<Window x:Class="VoxTranscribe.MainWindow"
+<Window x:Class="AudioScript.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:VoxTranscribe"
-        xmlns:abstractions="clr-namespace:VoxTranscribe.Abstractions"
+        xmlns:local="clr-namespace:AudioScript"
+        xmlns:abstractions="clr-namespace:AudioScript.Abstractions"
         mc:Ignorable="d"
-        Title="VoxTranscribe"
-        Icon="pack://application:,,,/Assets/VoxTranscribe.ico"
+        Title="AudioScript"
+        Icon="pack://application:,,,/Assets/AudioScript.ico"
         Height="670"
         Width="1080"
         MinHeight="600"
@@ -1074,6 +1074,7 @@
         </Border>
     </Grid>
 </Window>
+
 
 
 

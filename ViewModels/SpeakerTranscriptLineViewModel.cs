@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace VoxTranscribe.ViewModels;
+namespace AudioScript.ViewModels;
 
 public sealed class SpeakerTranscriptLineViewModel : INotifyPropertyChanged {
     private string _speakerLabel;
@@ -66,3 +66,4 @@ public sealed class SpeakerTranscriptLineViewModel : INotifyPropertyChanged {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
+

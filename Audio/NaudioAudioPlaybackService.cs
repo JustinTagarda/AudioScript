@@ -1,7 +1,7 @@
 using System.IO;
 using NAudio.Wave;
 
-namespace VoxTranscribe.Audio;
+namespace AudioScript.Audio;
 
 public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybackAudioTapSource {
     private readonly object _sync = new();
@@ -309,5 +309,6 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         }
     }
 }
+
 
 

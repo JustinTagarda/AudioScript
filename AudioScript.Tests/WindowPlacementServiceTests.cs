@@ -1,8 +1,8 @@
 using System.Windows;
-using VoxTranscribe.Services;
+using AudioScript.Services;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class WindowPlacementServiceTests {
     [Fact]
@@ -55,3 +55,4 @@ public sealed class WindowPlacementServiceTests {
         Assert.Equal(760, adjustedBounds.Height);
     }
 }
+

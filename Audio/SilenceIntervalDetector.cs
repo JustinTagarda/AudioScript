@@ -1,9 +1,9 @@
 using System.Buffers.Binary;
 using System.IO;
 using NAudio.Wave;
-using VoxTranscribe.Abstractions;
+using AudioScript.Abstractions;
 
-namespace VoxTranscribe.Audio;
+namespace AudioScript.Audio;
 
 public sealed record SilenceIntervalDetectorOptions(
     TimeSpan AnalysisFrameDuration,
@@ -205,3 +205,4 @@ public sealed class SilenceIntervalDetector {
         double Decibels
     );
 }
+

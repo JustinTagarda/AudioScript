@@ -1,10 +1,10 @@
-using VoxTranscribe.Abstractions;
-using VoxTranscribe.Audio;
-using VoxTranscribe.Services;
+using AudioScript.Abstractions;
+using AudioScript.Audio;
+using AudioScript.Services;
 using NAudio.Wave;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class PlaybackTranscriptionSessionTests {
     [Fact]
@@ -182,6 +182,7 @@ public sealed class PlaybackTranscriptionSessionTests {
         }
     }
 }
+
 
 
 

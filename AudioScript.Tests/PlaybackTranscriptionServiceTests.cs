@@ -1,12 +1,12 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
-using VoxTranscribe.Audio;
-using VoxTranscribe.Services;
+using AudioScript.Audio;
+using AudioScript.Services;
 using NAudio.Wave;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class PlaybackTranscriptionServiceTests {
     [Fact]
@@ -151,6 +151,7 @@ public sealed class PlaybackTranscriptionServiceTests {
         }
     }
 }
+
 
 
 

@@ -1,4 +1,4 @@
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public enum AppThemePreference {
     System,
@@ -34,3 +34,4 @@ public sealed class AppThemeService {
     }
 #pragma warning restore WPF0001
 }
+

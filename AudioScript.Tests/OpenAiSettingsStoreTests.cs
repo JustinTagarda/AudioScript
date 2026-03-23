@@ -1,16 +1,56 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
-using VoxTranscribe.Audio;
-using VoxTranscribe.Services;
-using VoxTranscribe.ViewModels;
+using AudioScript.Audio;
+using AudioScript.Services;
+using AudioScript.ViewModels;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
-public sealed class MainViewModelTests {
+public sealed class OpenAiSettingsStoreTests {
     [Fact]
-    public async Task TryImportAudioFileFromPath_NewAudio_LoadsPreviewAndKeepsTranscriptGenerationEnabled() {
+    public void Clear_RemovesSettingsFile() {
+        string rootPath = CreateTempDirectory();
+        try {
+            string settingsPath = Path.Combine(rootPath, "openai-settings.json");
+            var store = new OpenAiSettingsStore(settingsPath);
+            store.Save("sk-test-key-1234");
+
+            Assert.True(File.Exists(settingsPath));
+
+            store.Clear();
+
+            Assert.False(File.Exists(settingsPath));
+        }
+        finally {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public void Clear_RemovesOpenAiApiKeyFromProcessEnvironment() {
+        const string envName = "OPENAI_API_KEY";
+        string? previous = Environment.GetEnvironmentVariable(envName, EnvironmentVariableTarget.Process);
+        string rootPath = CreateTempDirectory();
+        try {
+            Environment.SetEnvironmentVariable(envName, "sk-test-process-env");
+            string settingsPath = Path.Combine(rootPath, "openai-settings.json");
+            var store = new OpenAiSettingsStore(settingsPath);
+            store.Save("sk-test-key-1234");
+
+            store.Clear();
+
+            Assert.True(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(envName, EnvironmentVariableTarget.Process)));
+        }
+        finally {
+            Environment.SetEnvironmentVariable(envName, previous, EnvironmentVariableTarget.Process);
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task RemoveOpenAiSettings_ClearsRuntimeAndPersistenceImmediately() {
         await RunInStaAsync(async () => {
             string rootPath = CreateTempDirectory();
             string audioPath = CreateSilentWaveFile(16000);
@@ -19,16 +59,23 @@ public sealed class MainViewModelTests {
             SynchronizationContext.SetSynchronizationContext(queuedContext);
 
             try {
+                string settingsPath = Path.Combine(rootPath, "openai-settings.json");
+                var settingsStore = new OpenAiSettingsStore(settingsPath);
+                settingsStore.Save("sk-test-key-1234");
+
                 using var validationHttpClient = new HttpClient(new StubHttpMessageHandler());
                 using var diarizationHttpClient = new HttpClient(new StubHttpMessageHandler());
                 var playbackService = new FakeAudioPlaybackService();
                 var processLogService = new ProcessLogService();
-                var options = new OpenAiTranscriptionOptions();
+                var options = new OpenAiTranscriptionOptions {
+                    ApiKey = "sk-test-key-1234",
+                };
+
                 var viewModel = new MainViewModel(
                     OpenAiTranscriptionModelCatalog.Models,
                     playbackService,
                     options,
-                    new OpenAiSettingsStore(),
+                    settingsStore,
                     new OpenAiApiKeyValidationService(validationHttpClient),
                     new ChunkedSpeakerDiarizationService(
                         new AudioStandardizer(),
@@ -47,24 +94,20 @@ public sealed class MainViewModelTests {
                     new AppThemeService(),
                     new AppPreferencesSnapshot(
                         CopyFinalizedWithTimeline: false,
-                        AutoTranscribeWithAi: false,
+                        AutoTranscribeWithAi: true,
                         ThemePreference: AppThemePreference.System,
                         AutoPlayTimelineSelection: true));
 
                 try {
-                    bool imported = viewModel.TryImportAudioFileFromPath(audioPath);
+                    Assert.False(string.IsNullOrWhiteSpace(viewModel.OpenAiApiKey));
 
-                    Assert.True(imported);
-                    Assert.Equal(1, playbackService.LoadFileCallCount);
-                    Assert.Equal(Path.GetFullPath(audioPath), viewModel.LoadedAudioFilePath);
-                    Assert.True(viewModel.IsAudioFileLoaded);
-                    Assert.True(viewModel.IsTranscriptGenerationEnabled);
-
+                    viewModel.RemoveOpenAiSettings();
                     queuedContext.Drain();
 
-                    Assert.Equal(Path.GetFullPath(audioPath), viewModel.LoadedAudioFilePath);
-                    Assert.True(viewModel.IsAudioFileLoaded);
-                    Assert.True(viewModel.IsTranscriptGenerationEnabled);
+                    Assert.Equal(string.Empty, viewModel.OpenAiApiKey);
+                    Assert.Equal(string.Empty, options.ApiKey);
+                    Assert.False(File.Exists(settingsPath));
+                    Assert.Contains("required", viewModel.AutoTranscribeAssistStatusText, StringComparison.OrdinalIgnoreCase);
                 }
                 finally {
                     await viewModel.DisposeAsync();
@@ -96,13 +139,13 @@ public sealed class MainViewModelTests {
     }
 
     private static string CreateTempDirectory() {
-        string path = Path.Combine(Path.GetTempPath(), $"VoxTranscribe-mainvm-tests-{Guid.NewGuid():N}");
+        string path = Path.Combine(Path.GetTempPath(), $"AudioScript-openai-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }
 
     private static string CreateSilentWaveFile(long dataBytes) {
-        string path = Path.Combine(Path.GetTempPath(), $"VoxTranscribe-mainvm-audio-{Guid.NewGuid():N}.wav");
+        string path = Path.Combine(Path.GetTempPath(), $"AudioScript-openai-audio-{Guid.NewGuid():N}.wav");
         int sampleRate = 16000;
         short channels = 1;
         short bitsPerSample = 16;
@@ -166,8 +209,6 @@ public sealed class MainViewModelTests {
 
         public event EventHandler? PlaybackStateChanged;
 
-        public int LoadFileCallCount { get; private set; }
-
         public string? LoadedFilePath => _loadedFilePath;
 
         public bool IsLoaded => !string.IsNullOrWhiteSpace(_loadedFilePath);
@@ -187,7 +228,6 @@ public sealed class MainViewModelTests {
             _loadedFilePath = Path.GetFullPath(filePath);
             _position = TimeSpan.Zero;
             _isPlaying = false;
-            LoadFileCallCount++;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
@@ -232,3 +272,4 @@ public sealed class MainViewModelTests {
         }
     }
 }
+

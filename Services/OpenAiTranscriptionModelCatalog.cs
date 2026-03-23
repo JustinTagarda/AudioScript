@@ -1,6 +1,6 @@
-using VoxTranscribe.Abstractions;
+using AudioScript.Abstractions;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public static class OpenAiTranscriptionModelCatalog {
     public const string ManualTranscription = "manual-transcription";
@@ -38,5 +38,6 @@ public static class OpenAiTranscriptionModelCatalog {
         return IsSupported(model);
     }
 }
+
 
 

@@ -18,9 +18,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\\VoxTranscribe.csproj" />
+    <ProjectReference Include="..\\AudioScript.csproj" />
   </ItemGroup>
 
 </Project>
+
 
 

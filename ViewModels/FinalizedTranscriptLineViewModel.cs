@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace VoxTranscribe.ViewModels;
+namespace AudioScript.ViewModels;
 
 public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     private TimeSpan? _startOffset;
@@ -229,5 +229,6 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         return $"{totalMinutes:00}:{offset.Seconds:00}";
     }
 }
+
 
 

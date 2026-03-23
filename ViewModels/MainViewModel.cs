@@ -5,11 +5,11 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows.Threading;
-using VoxTranscribe.Abstractions;
-using VoxTranscribe.Audio;
-using VoxTranscribe.Services;
+using AudioScript.Abstractions;
+using AudioScript.Audio;
+using AudioScript.Services;
 
-namespace VoxTranscribe.ViewModels;
+namespace AudioScript.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
     private static readonly TimeSpan PlaceholderSegmentDuration = TimeSpan.FromSeconds(10);
@@ -2454,5 +2454,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable {
         return new EngineOptionViewModel(new TranscriptionModelOption(id, fallbackDisplayName));
     }
 }
+
 
 

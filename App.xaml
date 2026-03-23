@@ -1,4 +1,4 @@
-<Application x:Class="VoxTranscribe.App"
+<Application x:Class="AudioScript.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ThemeMode="System">
@@ -10,5 +10,6 @@
         </ResourceDictionary>
     </Application.Resources>
 </Application>
+
 
 

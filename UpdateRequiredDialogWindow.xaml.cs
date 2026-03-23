@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace VoxTranscribe;
+namespace AudioScript;
 
 public partial class UpdateRequiredDialogWindow : Window {
     public UpdateRequiredDialogWindow(string message) {
@@ -12,5 +12,6 @@ public partial class UpdateRequiredDialogWindow : Window {
         DialogResult = true;
     }
 }
+
 
 

@@ -1,6 +1,7 @@
-namespace VoxTranscribe.Abstractions;
+namespace AudioScript.Abstractions;
 
 public enum TranscriptGenerationMode {
     Segments = 0,
     SpeakerDiarization = 1,
 }
+

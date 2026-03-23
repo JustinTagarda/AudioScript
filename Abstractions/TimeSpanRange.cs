@@ -1,4 +1,4 @@
-namespace VoxTranscribe.Abstractions;
+namespace AudioScript.Abstractions;
 
 public sealed record TimeSpanRange(
     TimeSpan Start,
@@ -14,3 +14,4 @@ public sealed record TimeSpanRange(
 
     public TimeSpan Midpoint => Start + TimeSpan.FromTicks(Duration.Ticks / 2);
 }
+

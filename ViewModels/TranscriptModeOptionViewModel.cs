@@ -1,9 +1,9 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using VoxTranscribe.Abstractions;
+using AudioScript.Abstractions;
 
-namespace VoxTranscribe.ViewModels;
+namespace AudioScript.ViewModels;
 
 public sealed class TranscriptModeOptionViewModel : INotifyPropertyChanged {
     private readonly Action<TranscriptModeOptionViewModel>? _selectionRequested;
@@ -48,3 +48,4 @@ public sealed class TranscriptModeOptionViewModel : INotifyPropertyChanged {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
+

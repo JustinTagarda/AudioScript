@@ -1,9 +1,9 @@
 using System.IO;
-using VoxTranscribe.Abstractions;
-using VoxTranscribe.Audio;
+using AudioScript.Abstractions;
+using AudioScript.Audio;
 using NAudio.Wave;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
     private readonly object _sync = new();
@@ -467,6 +467,7 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
         WaveFormat SourceFormat
     );
 }
+
 
 
 

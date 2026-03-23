@@ -1,6 +1,6 @@
 using System.Windows.Input;
 
-namespace VoxTranscribe.ViewModels;
+namespace AudioScript.ViewModels;
 
 public sealed class AsyncRelayCommand : ICommand {
     private readonly Func<Task> _executeAsync;
@@ -38,4 +38,5 @@ public sealed class AsyncRelayCommand : ICommand {
         CanExecuteChanged?.Invoke(this, EventArgs.Empty);
     }
 }
+
 

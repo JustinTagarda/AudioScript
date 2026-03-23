@@ -1,8 +1,8 @@
-using VoxTranscribe.Abstractions;
-using VoxTranscribe.Audio;
+using AudioScript.Abstractions;
+using AudioScript.Audio;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class SilenceAwareChunkPlannerTests {
     [Fact]
@@ -63,3 +63,4 @@ public sealed class SilenceAwareChunkPlannerTests {
         Assert.Equal(TimeSpan.FromMinutes(25), chunks[2].KeepEnd);
     }
 }
+

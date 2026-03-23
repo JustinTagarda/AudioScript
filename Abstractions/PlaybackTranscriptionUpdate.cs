@@ -1,9 +1,10 @@
-namespace VoxTranscribe.Abstractions;
+namespace AudioScript.Abstractions;
 
 public sealed record PlaybackTranscriptionUpdate(
     string SessionId,
     string Text,
     int? SequenceIndex = null
 );
+
 
 

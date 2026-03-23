@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
-using VoxTranscribe.Abstractions;
+using AudioScript.Abstractions;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed class OpenAiTranscriptionResponseParser {
     public TranscriptionResult Parse(
@@ -284,5 +284,6 @@ public sealed class OpenAiTranscriptionResponseParser {
         return true;
     }
 }
+
 
 

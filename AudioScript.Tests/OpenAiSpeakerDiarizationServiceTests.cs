@@ -1,11 +1,11 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
-using VoxTranscribe.Abstractions;
-using VoxTranscribe.Services;
+using AudioScript.Abstractions;
+using AudioScript.Services;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class OpenAiSpeakerDiarizationServiceTests {
     [Fact]
@@ -155,7 +155,7 @@ public sealed class OpenAiSpeakerDiarizationServiceTests {
     }
 
     private static string CreateSilentWaveFile(long dataBytes) {
-        string path = Path.Combine(Path.GetTempPath(), $"VoxTranscribe-diarize-audio-{Guid.NewGuid():N}.wav");
+        string path = Path.Combine(Path.GetTempPath(), $"AudioScript-diarize-audio-{Guid.NewGuid():N}.wav");
         int sampleRate = 16000;
         short channels = 1;
         short bitsPerSample = 16;
@@ -211,3 +211,4 @@ public sealed class OpenAiSpeakerDiarizationServiceTests {
         }
     }
 }
+

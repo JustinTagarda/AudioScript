@@ -1,4 +1,4 @@
-namespace VoxTranscribe.Abstractions;
+namespace AudioScript.Abstractions;
 
 public sealed record SpeakerDiarizationSegment(
     string Speaker,
@@ -6,3 +6,4 @@ public sealed record SpeakerDiarizationSegment(
     TimeSpan StartOffset,
     TimeSpan? EndOffset = null
 );
+

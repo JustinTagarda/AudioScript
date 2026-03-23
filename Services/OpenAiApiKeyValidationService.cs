@@ -4,7 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text.Json;
 
-namespace VoxTranscribe.Services;
+namespace AudioScript.Services;
 
 public sealed class OpenAiApiKeyValidationService {
     private static readonly TimeSpan ValidationTimeout = TimeSpan.FromSeconds(15);
@@ -116,5 +116,6 @@ public sealed record OpenAiApiKeyValidationResult(bool IsValid, string Message) 
     public static OpenAiApiKeyValidationResult Invalid(string message) =>
         new(false, message);
 }
+
 
 

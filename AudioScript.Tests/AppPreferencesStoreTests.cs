@@ -1,7 +1,7 @@
-using VoxTranscribe.Services;
+using AudioScript.Services;
 using Xunit;
 
-namespace VoxTranscribe.Tests;
+namespace AudioScript.Tests;
 
 public sealed class AppPreferencesStoreTests {
     [Fact]
@@ -97,7 +97,7 @@ public sealed class AppPreferencesStoreTests {
     }
 
     private static string CreateTempDirectory() {
-        string path = Path.Combine(Path.GetTempPath(), $"VoxTranscribe-app-prefs-tests-{Guid.NewGuid():N}");
+        string path = Path.Combine(Path.GetTempPath(), $"AudioScript-app-prefs-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }
@@ -110,5 +110,6 @@ public sealed class AppPreferencesStoreTests {
         Directory.Delete(path, recursive: true);
     }
 }
+
 
 

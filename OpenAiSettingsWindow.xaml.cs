@@ -1,7 +1,7 @@
 using System.Windows;
-using VoxTranscribe.ViewModels;
+using AudioScript.ViewModels;
 
-namespace VoxTranscribe;
+namespace AudioScript;
 
 public partial class OpenAiSettingsWindow : Window {
     private bool _isSaving;
@@ -85,5 +85,6 @@ public partial class OpenAiSettingsWindow : Window {
         dialog.ShowDialog();
     }
 }
+
 
 
