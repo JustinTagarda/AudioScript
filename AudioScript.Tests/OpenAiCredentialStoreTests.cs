@@ -8,66 +8,56 @@ using Xunit;
 
 namespace AudioScript.Tests;
 
-public sealed class OpenAiSettingsStoreTests {
+public sealed class OpenAiCredentialStoreTests
+{
     [Fact]
-    public void Clear_RemovesSettingsFile() {
-        string rootPath = CreateTempDirectory();
-        try {
-            string settingsPath = Path.Combine(rootPath, "openai-settings.json");
-            var store = new OpenAiSettingsStore(settingsPath);
-            store.Save("sk-test-key-1234");
+    public void Save_ThenLoad_RoundTripsApiKeyThroughCredentialStore()
+    {
+        var credentialStore = new InMemoryCredentialStore();
+        var store = new OpenAiCredentialStore("AudioScript.Tests.OpenAI.RoundTrip", credentialStore);
 
-            Assert.True(File.Exists(settingsPath));
+        store.Save("sk-test-key-1234");
 
-            store.Clear();
-
-            Assert.False(File.Exists(settingsPath));
-        }
-        finally {
-            DeleteDirectory(rootPath);
-        }
+        OpenAiCredentialSnapshot snapshot = store.Load();
+        Assert.Equal("sk-test-key-1234", snapshot.ApiKey);
     }
 
     [Fact]
-    public void Clear_RemovesOpenAiApiKeyFromProcessEnvironment() {
-        const string envName = "OPENAI_API_KEY";
-        string? previous = Environment.GetEnvironmentVariable(envName, EnvironmentVariableTarget.Process);
-        string rootPath = CreateTempDirectory();
-        try {
-            Environment.SetEnvironmentVariable(envName, "sk-test-process-env");
-            string settingsPath = Path.Combine(rootPath, "openai-settings.json");
-            var store = new OpenAiSettingsStore(settingsPath);
-            store.Save("sk-test-key-1234");
+    public void Clear_RemovesStoredCredential()
+    {
+        var credentialStore = new InMemoryCredentialStore();
+        var store = new OpenAiCredentialStore("AudioScript.Tests.OpenAI.Clear", credentialStore);
+        store.Save("sk-test-key-1234");
 
-            store.Clear();
+        store.Clear();
 
-            Assert.True(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(envName, EnvironmentVariableTarget.Process)));
-        }
-        finally {
-            Environment.SetEnvironmentVariable(envName, previous, EnvironmentVariableTarget.Process);
-            DeleteDirectory(rootPath);
-        }
+        OpenAiCredentialSnapshot snapshot = store.Load();
+        Assert.Equal(string.Empty, snapshot.ApiKey);
     }
 
     [Fact]
-    public async Task RemoveOpenAiSettings_ClearsRuntimeAndPersistenceImmediately() {
-        await RunInStaAsync(async () => {
+    public async Task RemoveOpenAiSettings_ClearsRuntimeAndCredentialStorageImmediately()
+    {
+        await RunInStaAsync(async () =>
+        {
             string rootPath = CreateTempDirectory();
             string audioPath = CreateSilentWaveFile(16000);
             var queuedContext = new QueuedSynchronizationContext();
             SynchronizationContext? previousContext = SynchronizationContext.Current;
             SynchronizationContext.SetSynchronizationContext(queuedContext);
 
-            try {
-                string settingsPath = Path.Combine(rootPath, "openai-settings.json");
-                var settingsStore = new OpenAiSettingsStore(settingsPath);
+            try
+            {
+                var credentialStore = new InMemoryCredentialStore();
+                var settingsStore = new OpenAiCredentialStore("AudioScript.Tests.OpenAI.ViewModel", credentialStore);
                 settingsStore.Save("sk-test-key-1234");
 
                 using var validationHttpClient = new HttpClient(new StubHttpMessageHandler());
                 using var diarizationHttpClient = new HttpClient(new StubHttpMessageHandler());
                 var playbackService = new FakeAudioPlaybackService();
                 var processLogService = new ProcessLogService();
-                var options = new OpenAiTranscriptionOptions {
+                var options = new OpenAiTranscriptionOptions
+                {
                     ApiKey = "sk-test-key-1234",
                 };
 
@@ -98,7 +88,8 @@ public sealed class OpenAiSettingsStoreTests {
                         ThemePreference: AppThemePreference.System,
                         AutoPlayTimelineSelection: true));
 
-                try {
+                try
+                {
                     Assert.False(string.IsNullOrWhiteSpace(viewModel.OpenAiApiKey));
 
                     viewModel.RemoveOpenAiSettings();
@@ -106,14 +97,16 @@ public sealed class OpenAiSettingsStoreTests {
 
                     Assert.Equal(string.Empty, viewModel.OpenAiApiKey);
                     Assert.Equal(string.Empty, options.ApiKey);
-                    Assert.False(File.Exists(settingsPath));
                     Assert.Contains("required", viewModel.AutoTranscribeAssistStatusText, StringComparison.OrdinalIgnoreCase);
+                    Assert.False(credentialStore.HasEntry("AudioScript.Tests.OpenAI.ViewModel"));
                 }
-                finally {
+                finally
+                {
                     await viewModel.DisposeAsync();
                 }
             }
-            finally {
+            finally
+            {
                 SynchronizationContext.SetSynchronizationContext(previousContext);
                 DeleteDirectory(rootPath);
                 File.Delete(audioPath);
@@ -121,14 +114,18 @@ public sealed class OpenAiSettingsStoreTests {
         });
     }
 
-    private static Task RunInStaAsync(Func<Task> action) {
+    private static Task RunInStaAsync(Func<Task> action)
+    {
         var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() => {
-            try {
+        var thread = new Thread(() =>
+        {
+            try
+            {
                 action().GetAwaiter().GetResult();
                 completionSource.SetResult();
             }
-            catch (Exception ex) {
+            catch (Exception ex)
+            {
                 completionSource.SetException(ex);
             }
         });
@@ -138,13 +135,15 @@ public sealed class OpenAiSettingsStoreTests {
         return completionSource.Task;
     }
 
-    private static string CreateTempDirectory() {
+    private static string CreateTempDirectory()
+    {
         string path = Path.Combine(Path.GetTempPath(), $"AudioScript-openai-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }
 
-    private static string CreateSilentWaveFile(long dataBytes) {
+    private static string CreateSilentWaveFile(long dataBytes)
+    {
         string path = Path.Combine(Path.GetTempPath(), $"AudioScript-openai-audio-{Guid.NewGuid():N}.wav");
         int sampleRate = 16000;
         short channels = 1;
@@ -173,35 +172,44 @@ public sealed class OpenAiSettingsStoreTests {
         return path;
     }
 
-    private static void DeleteDirectory(string path) {
-        if (!Directory.Exists(path)) {
+    private static void DeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
             return;
         }
 
         Directory.Delete(path, recursive: true);
     }
 
-    private sealed class QueuedSynchronizationContext : SynchronizationContext {
+    private sealed class QueuedSynchronizationContext : SynchronizationContext
+    {
         private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _callbacks = new();
 
-        public override void Post(SendOrPostCallback d, object? state) {
+        public override void Post(SendOrPostCallback d, object? state)
+        {
             _callbacks.Enqueue((d, state));
         }
 
-        public void Drain() {
-            while (_callbacks.TryDequeue(out var callback)) {
+        public void Drain()
+        {
+            while (_callbacks.TryDequeue(out var callback))
+            {
                 callback.Callback(callback.State);
             }
         }
     }
 
-    private sealed class StubHttpMessageHandler : HttpMessageHandler {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         }
     }
 
-    private sealed class FakeAudioPlaybackService : IAudioPlaybackService {
+    private sealed class FakeAudioPlaybackService : IAudioPlaybackService
+    {
         private string? _loadedFilePath;
         private bool _isPlaying;
         private bool _isMuted;
@@ -215,7 +223,8 @@ public sealed class OpenAiSettingsStoreTests {
 
         public bool IsPlaying => _isPlaying;
 
-        public bool IsMuted {
+        public bool IsMuted
+        {
             get => _isMuted;
             set => _isMuted = value;
         }
@@ -224,22 +233,26 @@ public sealed class OpenAiSettingsStoreTests {
 
         public TimeSpan Position => _position;
 
-        public void LoadFile(string filePath) {
+        public void LoadFile(string filePath)
+        {
             _loadedFilePath = Path.GetFullPath(filePath);
             _position = TimeSpan.Zero;
             _isPlaying = false;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void UnloadFile() {
+        public void UnloadFile()
+        {
             _loadedFilePath = null;
             _position = TimeSpan.Zero;
             _isPlaying = false;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Play() {
-            if (!IsLoaded) {
+        public void Play()
+        {
+            if (!IsLoaded)
+            {
                 throw new InvalidOperationException("No audio file is loaded.");
             }
 
@@ -247,18 +260,21 @@ public sealed class OpenAiSettingsStoreTests {
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Pause() {
+        public void Pause()
+        {
             _isPlaying = false;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Stop() {
+        public void Stop()
+        {
             _isPlaying = false;
             _position = TimeSpan.Zero;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Seek(TimeSpan position) {
+        public void Seek(TimeSpan position)
+        {
             _position = position < TimeSpan.Zero
                 ? TimeSpan.Zero
                 : position > Duration
@@ -267,9 +283,35 @@ public sealed class OpenAiSettingsStoreTests {
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Dispose() {
+        public void Dispose()
+        {
             UnloadFile();
         }
     }
-}
 
+    private sealed class InMemoryCredentialStore : OpenAiCredentialStore.ICredentialStore
+    {
+        private readonly Dictionary<string, string> _entries = new(StringComparer.Ordinal);
+
+        public bool TryRead(string target, out string secret)
+        {
+            return _entries.TryGetValue(target, out secret!);
+        }
+
+        public bool Write(string target, string secret)
+        {
+            _entries[target] = secret;
+            return true;
+        }
+
+        public bool Delete(string target)
+        {
+            return _entries.Remove(target);
+        }
+
+        public bool HasEntry(string target)
+        {
+            return _entries.ContainsKey(target);
+        }
+    }
+}

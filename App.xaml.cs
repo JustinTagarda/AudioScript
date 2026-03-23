@@ -8,7 +8,8 @@ using AudioScript.ViewModels;
 
 namespace AudioScript;
 
-public partial class App : System.Windows.Application {
+public partial class App : System.Windows.Application
+{
     private const string SingleInstanceMutexName = @"Local\AudioScript_SingleInstance";
     private const string ActivateEventName = @"Local\AudioScript_Activate";
 
@@ -21,25 +22,28 @@ public partial class App : System.Windows.Application {
     private HttpClient? _httpClient;
     private MainViewModel? _mainViewModel;
     private WindowPlacementService? _windowPlacementService;
-    private OpenAiSettingsStore? _openAiSettingsStore;
+    private OpenAiCredentialStore? _openAiCredentialStore;
     private OpenAiApiKeyValidationService? _openAiApiKeyValidationService;
     private AppPreferencesStore? _appPreferencesStore;
     private AppThemeService? _appThemeService;
 
     [STAThread]
-    private static void Main(string[] args) {
+    private static void Main(string[] args)
+    {
         var app = new App();
         app.InitializeComponent();
         app.Run();
     }
 
-    protected override void OnStartup(System.Windows.StartupEventArgs e) {
+    protected override void OnStartup(System.Windows.StartupEventArgs e)
+    {
         base.OnStartup(e);
 
         bool createdNew;
         _singleInstanceMutex = new Mutex(initiallyOwned: true, name: SingleInstanceMutexName, createdNew: out createdNew);
 
-        if (!createdNew) {
+        if (!createdNew)
+        {
             NotifyRunningInstance();
             _singleInstanceMutex.Dispose();
             _singleInstanceMutex = null;
@@ -54,16 +58,17 @@ public partial class App : System.Windows.Application {
             _activationListenerCts.Token);
 
         var openAiOptions = new OpenAiTranscriptionOptions();
-        _openAiSettingsStore = new OpenAiSettingsStore();
+        _openAiCredentialStore = new OpenAiCredentialStore();
         _appPreferencesStore = new AppPreferencesStore();
         _appThemeService = new AppThemeService();
 
-        OpenAiSettingsSnapshot openAiSnapshot = _openAiSettingsStore.Load();
+        OpenAiCredentialSnapshot openAiSnapshot = _openAiCredentialStore.Load();
         AppPreferencesSnapshot appPreferencesSnapshot = _appPreferencesStore.Load();
         openAiOptions.ApiKey = openAiSnapshot.ApiKey;
         _appThemeService.Apply(appPreferencesSnapshot.ThemePreference);
 
-        _httpClient = new HttpClient {
+        _httpClient = new HttpClient
+        {
             // Long transcription and diarization uploads use service-level cancellation tokens.
             // The framework default HttpClient timeout is 100 seconds and cancels valid long requests too early.
             Timeout = Timeout.InfiniteTimeSpan,
@@ -111,7 +116,7 @@ public partial class App : System.Windows.Application {
             OpenAiTranscriptionModelCatalog.Models,
             audioPlaybackService,
             openAiOptions,
-            _openAiSettingsStore,
+            _openAiCredentialStore,
             _openAiApiKeyValidationService,
             chunkedSpeakerDiarizationService,
             processLogService,
@@ -126,7 +131,8 @@ public partial class App : System.Windows.Application {
                 playbackTranscriptionService,
                 processLogService,
                 playbackEditTranscriptionOptions),
-            processLogService: processLogService) {
+            processLogService: processLogService)
+        {
             DataContext = _mainViewModel,
         };
         _windowPlacementService.Apply(mainWindow);
@@ -136,26 +142,34 @@ public partial class App : System.Windows.Application {
         mainWindow.Show();
     }
 
-    protected override void OnExit(System.Windows.ExitEventArgs e) {
-        try {
+    protected override void OnExit(System.Windows.ExitEventArgs e)
+    {
+        try
+        {
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
-        finally {
+        finally
+        {
             _activationListenerCts?.Cancel();
             _httpClient?.Dispose();
 
-            try {
+            try
+            {
                 _activateEvent?.Set();
             }
-            catch {
+            catch
+            {
                 // Ignore wake failures during shutdown.
             }
 
-            if (_activationListenerTask is not null) {
-                try {
+            if (_activationListenerTask is not null)
+            {
+                try
+                {
                     _activationListenerTask.Wait(TimeSpan.FromMilliseconds(500));
                 }
-                catch {
+                catch
+                {
                     // Ignore listener shutdown failures.
                 }
             }
@@ -166,11 +180,14 @@ public partial class App : System.Windows.Application {
             _activateEvent?.Dispose();
             _activateEvent = null;
 
-            if (_singleInstanceMutex is not null) {
-                try {
+            if (_singleInstanceMutex is not null)
+            {
+                try
+                {
                     _singleInstanceMutex.ReleaseMutex();
                 }
-                catch (ApplicationException) {
+                catch (ApplicationException)
+                {
                     // Ignore release errors when mutex is not owned.
                 }
 
@@ -182,8 +199,10 @@ public partial class App : System.Windows.Application {
         base.OnExit(e);
     }
 
-    private void ListenForActivationRequests(CancellationToken cancellationToken) {
-        if (_activateEvent is null) {
+    private void ListenForActivationRequests(CancellationToken cancellationToken)
+    {
+        if (_activateEvent is null)
+        {
             return;
         }
 
@@ -192,32 +211,40 @@ public partial class App : System.Windows.Application {
             cancellationToken.WaitHandle,
         };
 
-        try {
-            while (!cancellationToken.IsCancellationRequested) {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
                 int signalIndex = WaitHandle.WaitAny(handles);
 
-                if (signalIndex == 1 || cancellationToken.IsCancellationRequested) {
+                if (signalIndex == 1 || cancellationToken.IsCancellationRequested)
+                {
                     break;
                 }
 
                 Dispatcher.BeginInvoke(new Action(ActivateMainWindow));
             }
         }
-        catch (ObjectDisposedException) {
+        catch (ObjectDisposedException)
+        {
             // Ignore shutdown races.
         }
     }
 
-    private void ActivateMainWindow() {
-        if (MainWindow is null) {
+    private void ActivateMainWindow()
+    {
+        if (MainWindow is null)
+        {
             return;
         }
 
-        if (MainWindow.WindowState == WindowState.Minimized) {
+        if (MainWindow.WindowState == WindowState.Minimized)
+        {
             MainWindow.WindowState = WindowState.Normal;
         }
 
-        if (!MainWindow.IsVisible) {
+        if (!MainWindow.IsVisible)
+        {
             MainWindow.Show();
         }
 
@@ -227,15 +254,19 @@ public partial class App : System.Windows.Application {
         MainWindow.Focus();
     }
 
-    private static void NotifyRunningInstance() {
-        try {
+    private static void NotifyRunningInstance()
+    {
+        try
+        {
             using EventWaitHandle activateEvent = EventWaitHandle.OpenExisting(ActivateEventName);
             activateEvent.Set();
         }
-        catch (WaitHandleCannotBeOpenedException) {
+        catch (WaitHandleCannotBeOpenedException)
+        {
             // Existing instance is not yet ready to receive activation signal.
         }
-        catch {
+        catch
+        {
             // Ignore activation signal failures for secondary instances.
         }
     }

@@ -8,17 +8,21 @@ using Xunit;
 
 namespace AudioScript.Tests;
 
-public sealed class MainViewModelTests {
+public sealed class MainViewModelTests
+{
     [Fact]
-    public async Task TryImportAudioFileFromPath_NewAudio_LoadsPreviewAndKeepsTranscriptGenerationEnabled() {
-        await RunInStaAsync(async () => {
+    public async Task TryImportAudioFileFromPath_NewAudio_LoadsPreviewAndKeepsTranscriptGenerationEnabled()
+    {
+        await RunInStaAsync(async () =>
+        {
             string rootPath = CreateTempDirectory();
             string audioPath = CreateSilentWaveFile(16000);
             var queuedContext = new QueuedSynchronizationContext();
             SynchronizationContext? previousContext = SynchronizationContext.Current;
             SynchronizationContext.SetSynchronizationContext(queuedContext);
 
-            try {
+            try
+            {
                 using var validationHttpClient = new HttpClient(new StubHttpMessageHandler());
                 using var diarizationHttpClient = new HttpClient(new StubHttpMessageHandler());
                 var playbackService = new FakeAudioPlaybackService();
@@ -28,7 +32,7 @@ public sealed class MainViewModelTests {
                     OpenAiTranscriptionModelCatalog.Models,
                     playbackService,
                     options,
-                    new OpenAiSettingsStore(),
+                    new OpenAiCredentialStore(),
                     new OpenAiApiKeyValidationService(validationHttpClient),
                     new ChunkedSpeakerDiarizationService(
                         new AudioStandardizer(),
@@ -51,7 +55,8 @@ public sealed class MainViewModelTests {
                         ThemePreference: AppThemePreference.System,
                         AutoPlayTimelineSelection: true));
 
-                try {
+                try
+                {
                     bool imported = viewModel.TryImportAudioFileFromPath(audioPath);
 
                     Assert.True(imported);
@@ -66,11 +71,13 @@ public sealed class MainViewModelTests {
                     Assert.True(viewModel.IsAudioFileLoaded);
                     Assert.True(viewModel.IsTranscriptGenerationEnabled);
                 }
-                finally {
+                finally
+                {
                     await viewModel.DisposeAsync();
                 }
             }
-            finally {
+            finally
+            {
                 SynchronizationContext.SetSynchronizationContext(previousContext);
                 DeleteDirectory(rootPath);
                 File.Delete(audioPath);
@@ -78,14 +85,18 @@ public sealed class MainViewModelTests {
         });
     }
 
-    private static Task RunInStaAsync(Func<Task> action) {
+    private static Task RunInStaAsync(Func<Task> action)
+    {
         var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() => {
-            try {
+        var thread = new Thread(() =>
+        {
+            try
+            {
                 action().GetAwaiter().GetResult();
                 completionSource.SetResult();
             }
-            catch (Exception ex) {
+            catch (Exception ex)
+            {
                 completionSource.SetException(ex);
             }
         });
@@ -95,13 +106,15 @@ public sealed class MainViewModelTests {
         return completionSource.Task;
     }
 
-    private static string CreateTempDirectory() {
+    private static string CreateTempDirectory()
+    {
         string path = Path.Combine(Path.GetTempPath(), $"AudioScript-mainvm-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
         return path;
     }
 
-    private static string CreateSilentWaveFile(long dataBytes) {
+    private static string CreateSilentWaveFile(long dataBytes)
+    {
         string path = Path.Combine(Path.GetTempPath(), $"AudioScript-mainvm-audio-{Guid.NewGuid():N}.wav");
         int sampleRate = 16000;
         short channels = 1;
@@ -130,35 +143,44 @@ public sealed class MainViewModelTests {
         return path;
     }
 
-    private static void DeleteDirectory(string path) {
-        if (!Directory.Exists(path)) {
+    private static void DeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
             return;
         }
 
         Directory.Delete(path, recursive: true);
     }
 
-    private sealed class QueuedSynchronizationContext : SynchronizationContext {
+    private sealed class QueuedSynchronizationContext : SynchronizationContext
+    {
         private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _callbacks = new();
 
-        public override void Post(SendOrPostCallback d, object? state) {
+        public override void Post(SendOrPostCallback d, object? state)
+        {
             _callbacks.Enqueue((d, state));
         }
 
-        public void Drain() {
-            while (_callbacks.TryDequeue(out var callback)) {
+        public void Drain()
+        {
+            while (_callbacks.TryDequeue(out var callback))
+            {
                 callback.Callback(callback.State);
             }
         }
     }
 
-    private sealed class StubHttpMessageHandler : HttpMessageHandler {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         }
     }
 
-    private sealed class FakeAudioPlaybackService : IAudioPlaybackService {
+    private sealed class FakeAudioPlaybackService : IAudioPlaybackService
+    {
         private string? _loadedFilePath;
         private bool _isPlaying;
         private bool _isMuted;
@@ -174,7 +196,8 @@ public sealed class MainViewModelTests {
 
         public bool IsPlaying => _isPlaying;
 
-        public bool IsMuted {
+        public bool IsMuted
+        {
             get => _isMuted;
             set => _isMuted = value;
         }
@@ -183,7 +206,8 @@ public sealed class MainViewModelTests {
 
         public TimeSpan Position => _position;
 
-        public void LoadFile(string filePath) {
+        public void LoadFile(string filePath)
+        {
             _loadedFilePath = Path.GetFullPath(filePath);
             _position = TimeSpan.Zero;
             _isPlaying = false;
@@ -191,15 +215,18 @@ public sealed class MainViewModelTests {
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void UnloadFile() {
+        public void UnloadFile()
+        {
             _loadedFilePath = null;
             _position = TimeSpan.Zero;
             _isPlaying = false;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Play() {
-            if (!IsLoaded) {
+        public void Play()
+        {
+            if (!IsLoaded)
+            {
                 throw new InvalidOperationException("No audio file is loaded.");
             }
 
@@ -207,18 +234,21 @@ public sealed class MainViewModelTests {
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Pause() {
+        public void Pause()
+        {
             _isPlaying = false;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Stop() {
+        public void Stop()
+        {
             _isPlaying = false;
             _position = TimeSpan.Zero;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Seek(TimeSpan position) {
+        public void Seek(TimeSpan position)
+        {
             _position = position < TimeSpan.Zero
                 ? TimeSpan.Zero
                 : position > Duration
@@ -227,7 +257,8 @@ public sealed class MainViewModelTests {
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        public void Dispose() {
+        public void Dispose()
+        {
             UnloadFile();
         }
     }
