@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Confirm Action"
-        Icon="pack://application:,,,/Assets/AudioScript.ico"
+        Icon="pack://application:,,,/assets/AudioScript.ico"
         Width="420"
         MinWidth="360"
         MinHeight="170"
@@ -15,21 +15,21 @@
         ShowInTaskbar="False">
     <Grid Margin="12">
         <Grid.RowDefinitions>
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0"
                 Padding="10">
             <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <TextBlock x:Name="DialogTitleText"
                            Grid.Row="0"
-                           FontSize="18" />
+                           FontSize="18"/>
                 <ScrollViewer Grid.Row="1"
                               Margin="0,8,0,0"
                               MaxHeight="180"
@@ -37,23 +37,23 @@
                               VerticalScrollBarVisibility="Auto"
                               CanContentScroll="False">
                     <TextBlock x:Name="DialogMessageText"
-                               TextWrapping="Wrap" />
+                               TextWrapping="Wrap"/>
                 </ScrollViewer>
             </Grid>
         </Border>
 
-            <StackPanel Grid.Row="1"
+        <StackPanel Grid.Row="1"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     Margin="0,8,0,0">
             <Button x:Name="CancelButton"
                     Width="88"
                     MinHeight="28"
-                    Click="CancelButton_Click" />
+                    Click="CancelButton_Click"/>
             <Button x:Name="ProceedButton"
                     Width="88"
                     MinHeight="28"
-                    Click="ProceedButton_Click" />
+                    Click="ProceedButton_Click"/>
         </StackPanel>
     </Grid>
 </Window>

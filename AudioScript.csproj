@@ -35,7 +35,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\AudioScript.ico" />
+    <Resource Include="assets\AudioScript.ico" />
   </ItemGroup>
 
 </Project>

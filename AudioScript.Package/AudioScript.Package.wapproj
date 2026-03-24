@@ -80,7 +80,6 @@
     <BuildAppxUploadPackageForUap>true</BuildAppxUploadPackageForUap>
     <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
     <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
-    <EntryPointExe>bin\x64\Release\net10.0-windows\publish\AudioScript.exe</EntryPointExe>
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
 
@@ -101,18 +100,11 @@
     <BuildAppxUploadPackageForUap>true</BuildAppxUploadPackageForUap>
     <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
     <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
-    <EntryPointExe>bin\ARM64\Release\net10.0-windows\publish\AudioScript.exe</EntryPointExe>
     <PlatformTarget>arm64</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>
     <AppxManifest Include="Package.appxmanifest" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- VS18 Appx targets can fail XPath evaluation on uap-prefixed queries; remove query lists to avoid APPX0002/MSB4018. -->
-    <AppxManifestFileNameQuery Remove="@(AppxManifestFileNameQuery)" />
-    <AppxManifestImageFileNameQuery Remove="@(AppxManifestImageFileNameQuery)" />
   </ItemGroup>
 
   <!-- Link to the main WPF project -->
@@ -121,17 +113,11 @@
     </ProjectReference>
   </ItemGroup>
 
-  <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets" Condition="Exists('$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets')" />
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\AppxPackage\Microsoft.AppxPackage.Targets" />
+  <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets" Condition="Exists('$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets')" />
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <AppxPackagePipelineVersion>2.0</AppxPackagePipelineVersion>
   </PropertyGroup>
-
-  <ItemGroup Condition="'$(Configuration)' == 'Release'">
-    <!-- Apply after Appx targets import so Remove is effective. -->
-    <AppxManifestFileNameQuery Remove="@(AppxManifestFileNameQuery)" />
-    <AppxManifestImageFileNameQuery Remove="@(AppxManifestImageFileNameQuery)" />
-  </ItemGroup>
 
 </Project>

@@ -1641,11 +1641,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         string sourcePathForSessionImport = string.IsNullOrWhiteSpace(_pendingImportedAudioFilePath)
             ? LoadedAudioFilePath
             : _pendingImportedAudioFilePath;
+        TranscriptModeOptionViewModel? selectedTranscriptModeBeforeImport = SelectedTranscriptMode;
 
         try
         {
             TranscriptSessionLoadResult loadResult = _sessionStore.ImportAudioFile(sourcePathForSessionImport);
             LoadSessionResult(loadResult, showAudioIssueDialog: true);
+
+            if (selectedTranscriptModeBeforeImport is not null
+                && !ReferenceEquals(SelectedTranscriptMode, selectedTranscriptModeBeforeImport))
+            {
+                SelectedTranscriptMode = selectedTranscriptModeBeforeImport;
+            }
+
             LoadRecentSessions(loadResult.Document.SessionId);
             ClearPendingImportedAudioSelection();
             return true;

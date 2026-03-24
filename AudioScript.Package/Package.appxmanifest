@@ -21,8 +21,8 @@
        IDENTITY  –  Values must match your Partner Center app registration
        ═══════════════════════════════════════════════════════════════════ -->
   <Identity
-    Name="AudioScript.App"
-    Publisher="CN=AudioScriptDev"
+    Name="JustinTagardaSoftware.AudioScript"
+    Publisher="CN=68EC506E-4B5E-416B-93E8-BA707CA3BE0F"
     Version="0.1.6.0" />
 
   <!-- ═══════════════════════════════════════════════════════════════════
@@ -30,7 +30,7 @@
        ═══════════════════════════════════════════════════════════════════ -->
   <Properties>
     <DisplayName>AudioScript</DisplayName>
-    <PublisherDisplayName>AudioScript Dev</PublisherDisplayName>
+    <PublisherDisplayName>JustinTagarda</PublisherDisplayName>
     <!-- 50×50 PNG required by the Store listing -->
     <Logo>assets\StoreLogo.png</Logo>
   </Properties>

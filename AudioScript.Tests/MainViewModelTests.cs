@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Net;
 using System.Text;
+using AudioScript.Abstractions;
 using AudioScript.Audio;
 using AudioScript.Services;
 using AudioScript.ViewModels;
@@ -70,6 +72,80 @@ public sealed class MainViewModelTests
                     Assert.Equal(Path.GetFullPath(audioPath), viewModel.LoadedAudioFilePath);
                     Assert.True(viewModel.IsAudioFileLoaded);
                     Assert.True(viewModel.IsTranscriptGenerationEnabled);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task CreatePlaceholdersForSegmentTranscriptionAsync_NewSessionCreation_PreservesSelectedTranscriptMode()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                using var validationHttpClient = new HttpClient(new StubHttpMessageHandler());
+                using var diarizationHttpClient = new HttpClient(new StubHttpMessageHandler());
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var options = new OpenAiTranscriptionOptions();
+                var viewModel = new MainViewModel(
+                    OpenAiTranscriptionModelCatalog.Models,
+                    playbackService,
+                    options,
+                    new OpenAiCredentialStore(),
+                    new OpenAiApiKeyValidationService(validationHttpClient),
+                    new ChunkedSpeakerDiarizationService(
+                        new AudioStandardizer(),
+                        new SilenceIntervalDetector(),
+                        new SilenceAwareChunkPlanner(),
+                        new WaveClipExtractor(),
+                        new OpenAiSpeakerDiarizationService(
+                            diarizationHttpClient,
+                            options,
+                            processLogService,
+                            new OpenAiSpeakerDiarizationResponseParser()),
+                        processLogService),
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true));
+
+                try
+                {
+                    bool imported = viewModel.TryImportAudioFileFromPath(audioPath);
+                    Assert.True(imported);
+
+                    TranscriptModeOptionViewModel speakerMode = viewModel.TranscriptModes
+                        .Single(mode => mode.Mode == TranscriptGenerationMode.SpeakerDiarization);
+                    viewModel.SelectedTranscriptMode = speakerMode;
+
+                    bool created = await viewModel.CreatePlaceholdersForSegmentTranscriptionAsync();
+
+                    Assert.True(created);
+                    Assert.Same(speakerMode, viewModel.SelectedTranscriptMode);
+                    Assert.True(viewModel.IsSpeakerDiarizationModeSelected);
                 }
                 finally
                 {
