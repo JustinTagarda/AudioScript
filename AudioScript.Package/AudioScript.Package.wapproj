@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AudioScript.Package.wapproj
+  Windows Application Packaging Project – generates the .msixupload bundle for
+  Partner Center / Microsoft Store submission.
+
+  Build from Visual Studio:
+    Right-click AudioScript.Package → Publish → Create App Packages → Store
+
+  Build from CLI (requires Visual Studio MSBuild, not just dotnet):
+    MSBuild AudioScript.Package.wapproj /p:Configuration=Release /p:Platform=x64
+         /p:UapAppxPackageBuildMode=StoreUpload /p:AppxBundle=Always
+         /p:AppxPackageSigningEnabled=false /p:AppxBundlePlatforms="x64|arm64"
+-->
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|ARM64">
+      <Configuration>Debug</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|ARM64">
+      <Configuration>Release</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>7A6B3D2E-FA12-4C78-9B05-E3D4A2C1F096</ProjectGuid>
+    <TargetPlatformVersion>10.0.26100.0</TargetPlatformVersion>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <DefaultLanguage>en-US</DefaultLanguage>
+    <AppxBundle>Always</AppxBundle>
+    <EntryPointProjectUniqueName>..\AudioScript.csproj</EntryPointProjectUniqueName>
+    <UseSdkBuildToolsPackage>true</UseSdkBuildToolsPackage>
+    <WindowsSDKBuildToolsVersion>10.0.26100.0</WindowsSDKBuildToolsVersion>
+    <MakePriExeFullPath>C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\makepri.exe</MakePriExeFullPath>
+    <MakeAppxExeFullPath>C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\makeappx.exe</MakeAppxExeFullPath>
+    <SignToolExeFullPath>C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe</SignToolExeFullPath>
+    <AppxGeneratePriEnabled>true</AppxGeneratePriEnabled>
+    <AppxGeneratePrisForPortableLibrariesEnabled>false</AppxGeneratePrisForPortableLibrariesEnabled>
+    <AppxUseResourceIndexerApi>true</AppxUseResourceIndexerApi>
+    <AppxPackagePipelineVersion>2.0</AppxPackagePipelineVersion>
+      <!-- suppress MSB3030: wapproj has no traditional assembly output -->
+      <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
+      <!--
+      BEFORE SUBMITTING TO THE STORE replace the placeholder values in
+      Package.appxmanifest (one level up):
+        Name           = value from Partner Center "Product identity"
+        Publisher      = CN=... from Partner Center
+        PublisherDisplayName = display name from Partner Center
+    -->
+  </PropertyGroup>
+
+  <Import Project="$(WinSDKBuildToolsPath)\Microsoft.WindowsDesktop.App.Ref.props" Condition="Exists('$(WinSDKBuildToolsPath)\Microsoft.WindowsDesktop.App.Ref.props')" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutputPath>bin\Debug\</OutputPath>
+    <IntermediateOutputPath>obj\Debug\</IntermediateOutputPath>
+    <DebuggerFlavor>AppHostLocalDebugger</DebuggerFlavor>
+    <PackageCertificateKeyFile />
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutputPath>bin\Release\x64\</OutputPath>
+    <IntermediateOutputPath>obj\Release\x64\</IntermediateOutputPath>
+    <UapAppxPackageBuildMode>StoreUpload</UapAppxPackageBuildMode>
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+    <AppxPackage>true</AppxPackage>
+    <BuildAppxUploadPackageForUap>true</BuildAppxUploadPackageForUap>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+    <EntryPointExe>bin\x64\Release\net10.0-windows\publish\AudioScript.exe</EntryPointExe>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
+    <OutputPath>bin\Debug\ARM64\</OutputPath>
+    <IntermediateOutputPath>obj\Debug\ARM64\</IntermediateOutputPath>
+    <DebuggerFlavor>AppHostLocalDebugger</DebuggerFlavor>
+    <PackageCertificateKeyFile />
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <OutputPath>bin\Release\ARM64\</OutputPath>
+    <IntermediateOutputPath>obj\Release\ARM64\</IntermediateOutputPath>
+    <UapAppxPackageBuildMode>StoreUpload</UapAppxPackageBuildMode>
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+    <AppxPackage>true</AppxPackage>
+    <BuildAppxUploadPackageForUap>true</BuildAppxUploadPackageForUap>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+    <EntryPointExe>bin\ARM64\Release\net10.0-windows\publish\AudioScript.exe</EntryPointExe>
+    <PlatformTarget>arm64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AppxManifest Include="Package.appxmanifest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- VS18 Appx targets can fail XPath evaluation on uap-prefixed queries; remove query lists to avoid APPX0002/MSB4018. -->
+    <AppxManifestFileNameQuery Remove="@(AppxManifestFileNameQuery)" />
+    <AppxManifestImageFileNameQuery Remove="@(AppxManifestImageFileNameQuery)" />
+  </ItemGroup>
+
+  <!-- Link to the main WPF project -->
+  <ItemGroup>
+    <ProjectReference Include="..\AudioScript.csproj">
+    </ProjectReference>
+  </ItemGroup>
+
+  <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets" Condition="Exists('$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets')" />
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\AppxPackage\Microsoft.AppxPackage.Targets" />
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <AppxPackagePipelineVersion>2.0</AppxPackagePipelineVersion>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- Apply after Appx targets import so Remove is effective. -->
+    <AppxManifestFileNameQuery Remove="@(AppxManifestFileNameQuery)" />
+    <AppxManifestImageFileNameQuery Remove="@(AppxManifestImageFileNameQuery)" />
+  </ItemGroup>
+
+</Project>

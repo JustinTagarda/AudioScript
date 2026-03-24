@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="AudioScript.csproj" />
   <Project Path="AudioScript.Tests/AudioScript.Tests.csproj" />
+  <Project Path="AudioScript.Package/AudioScript.Package.wapproj" />
 </Solution>
 
 

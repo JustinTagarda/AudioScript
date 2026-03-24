@@ -3,14 +3,21 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <StartupObject>AudioScript.App</StartupObject>
-    <Version>0.1.6</Version>
-    <ApplicationIcon>Assets\AudioScript.ico</ApplicationIcon>
+    <!-- 4-part version required by MSIX / Microsoft Store -->
+    <Version>0.1.6.0</Version>
+    <ApplicationIcon>assets\AudioScript.ico</ApplicationIcon>
+    <Company>Justin Tagarda</Company>
+    <Product>AudioScript</Product>
+    <Copyright>© 2026 Justin Tagarda. All rights reserved.</Copyright>
+    <Description>Audio transcription for anything playing on your PC, powered by OpenAI.</Description>
   </PropertyGroup>
+
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
