@@ -1,2 +1,0 @@
-MainPackage=d:\Projects\AudioScript\AudioScript.Package\bin\Release\ARM64\AudioScript.Package_0.1.6.0_arm64.msix
-SymbolPackage=d:\Projects\AudioScript\AudioScript.Package\obj\Release\ARM64\Symbols\AudioScript.Package_0.1.6.0_arm64.appxsym

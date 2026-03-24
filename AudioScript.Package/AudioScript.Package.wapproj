@@ -53,7 +53,7 @@
       <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
       <!--
       BEFORE SUBMITTING TO THE STORE replace the placeholder values in
-      Package.appxmanifest (one level up):
+      AudioScript.Package\Package.appxmanifest:
         Name           = value from Partner Center "Product identity"
         Publisher      = CN=... from Partner Center
         PublisherDisplayName = display name from Partner Center

@@ -5,6 +5,8 @@ obj/
 publish/
 artifacts/
 Releases/
+AudioScript.Package/AppPackages/
+AudioScript.Package/BundleArtifacts/
 
 # User-local IDE files
 *.user
