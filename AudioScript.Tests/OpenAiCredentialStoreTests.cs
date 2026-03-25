@@ -97,7 +97,6 @@ public sealed class OpenAiCredentialStoreTests
 
                     Assert.Equal(string.Empty, viewModel.OpenAiApiKey);
                     Assert.Equal(string.Empty, options.ApiKey);
-                    Assert.Contains("required", viewModel.AutoTranscribeAssistStatusText, StringComparison.OrdinalIgnoreCase);
                     Assert.False(credentialStore.HasEntry("AudioScript.Tests.OpenAI.ViewModel"));
                 }
                 finally

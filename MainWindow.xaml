@@ -449,19 +449,72 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <RadioButton GroupName="TranscriptModeGroup"
-                                                     Margin="0,0,0,12"
-                                                     IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding DisplayName}"
+                                        <Grid Margin="0,0,0,12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <RadioButton Grid.Column="0"
+                                                         GroupName="TranscriptModeGroup"
+                                                         VerticalAlignment="Center"
+                                                         IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding DisplayName}"
+                                                               FontSize="13"
+                                                               FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding Description}"
+                                                               Margin="0,3,0,0"
+                                                               FontSize="10.5"
+                                                               TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </RadioButton>
+                                            <StackPanel Grid.Column="1"
+                                                        Orientation="Horizontal"
+                                                        VerticalAlignment="Center"
+                                                        HorizontalAlignment="Right">
+                                                <StackPanel.Style>
+                                                    <Style TargetType="StackPanel">
+                                                        <Setter Property="Visibility"
+                                                                Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Mode}"
+                                                                         Value="{x:Static abstractions:TranscriptGenerationMode.Segments}">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </StackPanel.Style>
+                                                <CheckBox VerticalAlignment="Center"
+                                                          Margin="0,0,2,0"
+                                                          IsChecked="{Binding DataContext.IsAiAssistChecked, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          Checked="AutoTranscribeWithAiCheckBox_Checked">
+                                                    <CheckBox.Style>
+                                                        <Style TargetType="CheckBox"
+                                                               BasedOn="{StaticResource {x:Type CheckBox}}">
+                                                            <Setter Property="IsEnabled"
+                                                                    Value="False"/>
+                                                            <Style.Triggers>
+                                                                <MultiDataTrigger>
+                                                                    <MultiDataTrigger.Conditions>
+                                                                        <Condition Binding="{Binding DataContext.IsSegmentModeSelected, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                                   Value="True"/>
+                                                                        <Condition Binding="{Binding DataContext.IsEngineSelectionEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                                   Value="True"/>
+                                                                    </MultiDataTrigger.Conditions>
+                                                                    <Setter Property="IsEnabled"
+                                                                            Value="True"/>
+                                                                </MultiDataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </CheckBox.Style>
+                                                </CheckBox>
+                                                <TextBlock Text="AI Assist"
+                                                           VerticalAlignment="Center"
                                                            FontSize="13"
                                                            FontWeight="SemiBold"/>
-                                                <TextBlock Text="{Binding Description}"
-                                                           Margin="0,3,0,0"
-                                                           FontSize="10.5"
-                                                           TextWrapping="Wrap"/>
                                             </StackPanel>
-                                        </RadioButton>
+                                        </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -582,45 +635,6 @@
                                     </Button.Style>
                                 </Button>
                             </Grid>
-
-                            <Border
-                                Padding="10,9"
-                                Margin="0,10,0,0"
-                                CornerRadius="6"
-                                BorderThickness="1"
-                                BorderBrush="{DynamicResource ControlStrokeColorSecondaryBrush}">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Grid Grid.Column="0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <CheckBox Grid.Column="0"
-                                                  VerticalAlignment="Top"
-                                                  Margin="0,1,10,0"
-                                                  IsEnabled="{Binding IsEngineSelectionEnabled}"
-                                                  IsChecked="{Binding IsAiAssistChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  Checked="AutoTranscribeWithAiCheckBox_Checked"/>
-                                        <StackPanel Grid.Column="1">
-                                            <TextBlock Text="AI Assist"
-                                                       FontSize="13"
-                                                       FontWeight="SemiBold"/>
-                                            <TextBlock Text="{Binding AutoTranscribeAssistModeDescriptionText}"
-                                                       Margin="0,2,0,0"
-                                                       FontSize="10.5"
-                                                       TextWrapping="Wrap"/>
-                                            <TextBlock Text="{Binding AutoTranscribeAssistStatusText}"
-                                                       Margin="0,4,0,0"
-                                                       FontSize="10.5"
-                                                       TextWrapping="Wrap"/>
-                                        </StackPanel>
-                                    </Grid>
-                                </Grid>
-                            </Border>
 
                         </StackPanel>
                     </Border>
@@ -833,10 +847,27 @@
                                                                 Width="78">
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock Text="{Binding Timeline}"
-                                                               TextAlignment="Left"
-                                                               HorizontalAlignment="Left"
-                                                               Margin="10,0,0,0"/>
+                                                    <Border HorizontalAlignment="Left"
+                                                            Margin="6,0,0,0"
+                                                            Padding="4,1"
+                                                            CornerRadius="4">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background"
+                                                                        Value="Transparent"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsPlaybackTimelineMatch}"
+                                                                                 Value="True">
+                                                                        <Setter Property="Background"
+                                                                                Value="#33B3D4FC"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding Timeline}"
+                                                                   TextAlignment="Left"
+                                                                   HorizontalAlignment="Left"/>
+                                                    </Border>
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
                                             <DataGridTemplateColumn.CellEditingTemplate>

@@ -4,52 +4,55 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="OpenAI Settings"
+        Title="OpenAI API Key"
         Icon="pack://application:,,,/assets/AudioScript.ico"
-        Width="560"
-        Height="280"
-        MinWidth="560"
-        MinHeight="280"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
+        SizeToContent="Height"
+        Width="560"
+        MinWidth="560"
+        MaxWidth="560"
         ShowInTaskbar="False">
 
     <Grid Margin="16">
         <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0"
-                Padding="14">
-            <StackPanel>
-                <TextBlock Text="OpenAI API Key"
-                           FontSize="22"/>
-                <TextBlock Text="Changes apply immediately when AI transcription is turned on."
-                           Margin="0,2,0,2"
-                           FontSize="12"/>
+        <TextBlock Grid.Row="0"
+                   Text="Enter your OpenAI API key"
+                   Margin="0,0,0,10"
+                   FontSize="14"
+                   FontWeight="SemiBold"/>
 
-                <TextBlock Text="API Key"/>
-                <TextBox x:Name="ApiKeyTextBox"/>
+        <TextBlock Grid.Row="1"
+                   Margin="0,0,0,10"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Text="Stored securely in Windows Credential Manager and used for AI-assisted transcription features."
+                   TextWrapping="Wrap"/>
 
-                <TextBlock Text="This key is used when Auto Transcribe with AI is turned on."
-                           Margin="0,10,0,0"
-                           FontSize="12"/>
-            </StackPanel>
-        </Border>
+        <TextBox Grid.Row="2"
+                 x:Name="ApiKeyTextBox"
+                 Margin="0,0,0,14"
+                 HorizontalAlignment="Stretch"
+                 Width="Auto"
+                 Padding="8,6"
+                 ToolTip="Stored securely in Windows Credential Manager."/>
 
-        <StackPanel Grid.Row="1"
+        <StackPanel Grid.Row="3"
                     Orientation="Horizontal"
-                    HorizontalAlignment="Right"
-                    Margin="0,10,0,0">
+                    HorizontalAlignment="Right">
             <Button x:Name="RemoveButton"
                     Content="Remove Key"
+                    MinWidth="96"
                     Margin="0,0,8,0"
-                    MinWidth="110"
                     Click="RemoveButton_Click"/>
             <Button x:Name="SaveButton"
-                    Content="Save"
-                    MinWidth="110"
+                    Content="Save Key"
+                    MinWidth="96"
                     Click="SaveButton_Click"/>
         </StackPanel>
     </Grid>

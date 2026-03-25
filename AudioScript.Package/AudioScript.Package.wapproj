@@ -4,6 +4,13 @@
   Windows Application Packaging Project – generates the .msixupload bundle for
   Partner Center / Microsoft Store submission.
 
+  Preferred Store submission workflow:
+    powershell -ExecutionPolicy Bypass -File ..\Build-StorePackage.ps1
+
+  The checked-in script publishes self-contained x64 and arm64 binaries before
+  bundling, which avoids Store certification failures caused by external .NET
+  runtime dependencies.
+
   Build from Visual Studio:
     Right-click AudioScript.Package → Publish → Create App Packages → Store
 

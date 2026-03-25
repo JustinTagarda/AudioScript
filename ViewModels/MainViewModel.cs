@@ -380,7 +380,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(IsCopyWithTimelineOptionVisible));
             NotifyPropertyChanged(nameof(IsSpeakerCopyFormatVisible));
             NotifyCurrentTranscriptStateChanged();
-            NotifyAiAssistStateChanged();
+            NotifyPropertyChanged(nameof(IsAiAssistChecked));
             NotifyInteractionAvailabilityChanged();
             ScheduleSessionAutosave();
 
@@ -567,42 +567,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool HasSpeakerTranscriptLines =>
         SpeakerTranscriptLines.Count > 0;
 
-    public string AutoTranscribeAssistStatusText
-    {
-        get
-        {
-            if (IsSpeakerDiarizationModeSelected)
-            {
-                if (AutoTranscribeWithAi)
-                {
-                    return string.IsNullOrWhiteSpace(OpenAiApiKey)
-                        ? "On, but an API key is still required."
-                        : "On and ready for speaker diarization.";
-                }
-
-                return string.IsNullOrWhiteSpace(OpenAiApiKey)
-                    ? "Off. Add an API key to enable it."
-                    : "Off. Turn it on for speaker diarization.";
-            }
-
-            if (AutoTranscribeWithAi)
-            {
-                return string.IsNullOrWhiteSpace(OpenAiApiKey)
-                    ? "On, but an API key is still required."
-                    : "On and ready to fill segment text.";
-            }
-
-            return string.IsNullOrWhiteSpace(OpenAiApiKey)
-                ? "Off. Add an API key to enable it."
-                : "Off. Turn it on to fill segment text.";
-        }
-    }
-
-    public string AutoTranscribeAssistModeDescriptionText =>
-        IsSpeakerDiarizationModeSelected
-            ? "Enable OpenAI processing for speaker diarization."
-            : "Fill segment text automatically.";
-
     public bool IsAiAssistChecked
     {
         get => AutoTranscribeWithAi;
@@ -621,7 +585,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             SelectedEngine = value ? _autoTranscribeEngine : _manualEngine;
             SaveAppPreferences();
-            NotifyAiAssistStateChanged();
             NotifyCurrentTranscriptStateChanged();
             NotifyPropertyChanged(nameof(IsAiAssistChecked));
             AppendLog($"Auto Transcribe with AI: {(value ? "ON" : "OFF")}.");
@@ -1466,13 +1429,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(TranscriptEmptyStateMessage));
     }
 
-    private void NotifyAiAssistStateChanged()
-    {
-        NotifyPropertyChanged(nameof(AutoTranscribeAssistStatusText));
-        NotifyPropertyChanged(nameof(AutoTranscribeAssistModeDescriptionText));
-        NotifyPropertyChanged(nameof(IsAiAssistChecked));
-    }
-
     private void SaveAppPreferences()
     {
         _appPreferencesStore.Save(new AppPreferencesSnapshot(
@@ -1511,7 +1467,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             _openAiCredentialStore.Save(normalized);
         }
 
-        NotifyAiAssistStateChanged();
+        NotifyPropertyChanged(nameof(IsAiAssistChecked));
         NotifyCurrentTranscriptStateChanged();
         RefreshCommandStates();
 

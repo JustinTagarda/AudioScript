@@ -18,6 +18,12 @@
     <Description>Audio transcription for anything playing on your PC, powered by OpenAI.</Description>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(StoreSelfContained)' == 'true'">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
