@@ -952,7 +952,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdatePlaybackTimelineHighlight();
             UpdateTranscriptRowActionsVisibility();
 
-            if (_boundViewModel is not null && _boundViewModel.IsSpeakerDiarizationModeSelected)
+            if (_boundViewModel is not null
+                && _boundViewModel.IsSpeakerDiarizationModeSelected)
             {
                 if (!string.IsNullOrWhiteSpace(_boundViewModel.OpenAiApiKey))
                 {

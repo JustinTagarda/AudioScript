@@ -369,7 +369,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             }
 
             SelectedTranscriptViewIndex =
-                value?.Mode == TranscriptGenerationMode.SpeakerDiarization ? 1 : 0;
+                value?.Mode == TranscriptGenerationMode.Segments ? 0 : 1;
             NotifyPropertyChanged(nameof(IsSegmentModeSelected));
             NotifyPropertyChanged(nameof(IsSpeakerDiarizationModeSelected));
             NotifyPropertyChanged(nameof(CurrentTranscriptLines));
@@ -552,9 +552,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 return "Create the timeline, then fill rows manually or turn on AI.";
             }
 
-            if (IsSpeakerDiarizationModeSelected && string.IsNullOrWhiteSpace(OpenAiApiKey))
+            if (IsSpeakerDiarizationModeSelected
+                && string.IsNullOrWhiteSpace(OpenAiApiKey))
             {
-                return "Add an API key, then run diarization.";
+                return "Add an API key, then generate speaker transcript.";
             }
 
             return "Choose a mode, then generate the transcript.";
@@ -1821,11 +1822,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private TranscriptModeOptionViewModel ResolveTranscriptMode(string? value)
     {
+        if (string.Equals(
+                value?.Trim(),
+                "RealtimeSpeakerSegments",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return _speakerDiarizationMode;
+        }
+
         if (Enum.TryParse(value, ignoreCase: true, out TranscriptGenerationMode parsedMode))
         {
-            return parsedMode == TranscriptGenerationMode.SpeakerDiarization
-                ? _speakerDiarizationMode
-                : _segmentTranscriptMode;
+            return parsedMode switch
+            {
+                TranscriptGenerationMode.SpeakerDiarization => _speakerDiarizationMode,
+                _ => _segmentTranscriptMode,
+            };
         }
 
         return _segmentTranscriptMode;
@@ -2047,6 +2058,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         NotifyPropertyChanged(nameof(HasSpeakerTranscriptLines));
         NotifyCurrentTranscriptStateChanged();
+        ScheduleSessionAutosave();
     }
 
     private void OnAudioPlaybackStateChanged(object? sender, EventArgs e)
@@ -2246,7 +2258,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private bool HasExistingTranscriptContent(TranscriptGenerationMode transcriptMode)
     {
-        if (transcriptMode == TranscriptGenerationMode.SpeakerDiarization)
+        if (transcriptMode is TranscriptGenerationMode.SpeakerDiarization)
         {
             if (SpeakerTranscriptLines.Count > 0)
             {
@@ -2291,8 +2303,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         var request = new ConfirmationRequest(
             title: "Replace current transcript?",
-            message: transcriptMode == TranscriptGenerationMode.SpeakerDiarization
-                ? "This session already has speaker transcript content. Proceeding will remove the current speaker transcript and start a new diarization for this audio file."
+            message: transcriptMode is TranscriptGenerationMode.SpeakerDiarization
+                ? "This session already has speaker transcript content. Proceeding will remove the current speaker transcript and start a new speaker transcription for this audio file."
                 : "This session already has segment transcript content. Proceeding will remove the current segment transcript and start a new transcription for this audio file.",
             confirmButtonText: "Proceed",
             cancelButtonText: "Cancel");
@@ -2333,7 +2345,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return;
         }
 
-        TranscriptSessionTranscriptDocument transcript = transcriptMode == TranscriptGenerationMode.SpeakerDiarization
+        TranscriptSessionTranscriptDocument transcript = transcriptMode is TranscriptGenerationMode.SpeakerDiarization
             ? _currentSessionDocument.SpeakerTranscript
             : _currentSessionDocument.Transcript;
 
@@ -2450,7 +2462,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DateTimeOffset? segmentLastTranscribedUtc = updatedTranscriptMode == TranscriptGenerationMode.Segments
             ? updatedUtc
             : _currentSessionDocument.Transcript.LastTranscribedUtc;
-        DateTimeOffset? speakerLastTranscribedUtc = updatedTranscriptMode == TranscriptGenerationMode.SpeakerDiarization
+        DateTimeOffset? speakerLastTranscribedUtc = updatedTranscriptMode is TranscriptGenerationMode.SpeakerDiarization
             ? updatedUtc
             : _currentSessionDocument.SpeakerTranscript.LastTranscribedUtc;
         double? durationSeconds = _currentSessionDocument.Audio.DurationSeconds;
@@ -2498,9 +2510,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             .ToList();
         _currentSessionDocument.SpeakerTranscript.FinalText = BuildSpeakerTranscriptText(includeTimeline: true);
         _currentSessionDocument.SpeakerTranscript.ModelId =
-            updatedTranscriptMode == TranscriptGenerationMode.SpeakerDiarization
-                ? OpenAiTranscriptionModelCatalog.Gpt4oTranscribeDiarize
-                : _currentSessionDocument.SpeakerTranscript.ModelId;
+            updatedTranscriptMode switch
+            {
+                TranscriptGenerationMode.SpeakerDiarization => OpenAiTranscriptionModelCatalog.Gpt4oTranscribeDiarize,
+                _ => _currentSessionDocument.SpeakerTranscript.ModelId,
+            };
         _currentSessionDocument.SpeakerTranscript.LastTranscribedUtc = speakerLastTranscribedUtc;
         _currentSessionDocument.SpeakerTranscript.Lines = speakerLines
             .Select(line => new TranscriptSessionLineDocument

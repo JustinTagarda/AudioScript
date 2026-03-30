@@ -586,7 +586,7 @@
                                         <Setter Property="Visibility"
                                                 Value="Collapsed"/>
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsSpeakerDiarizationModeSelected}"
+                                            <DataTrigger Binding="{Binding IsSpeakerTranscriptViewSelected}"
                                                          Value="True">
                                                 <Setter Property="Visibility"
                                                         Value="Visible"/>

@@ -49,6 +49,7 @@
             <Button x:Name="CancelButton"
                     Width="88"
                     MinHeight="28"
+                    Margin="0,0,8,0"
                     Click="CancelButton_Click"/>
             <Button x:Name="ProceedButton"
                     Width="88"
