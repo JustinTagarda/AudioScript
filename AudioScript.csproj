@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="SharpVectors.Wpf" Version="1.8.5" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,6 +43,7 @@
 
   <ItemGroup>
     <Resource Include="assets\AudioScript.ico" />
+    <Resource Include="assets\titlebar\*.svg" />
   </ItemGroup>
 
 </Project>

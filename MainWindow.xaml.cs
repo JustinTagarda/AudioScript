@@ -43,6 +43,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditSegmentDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.Zero;
+    private static readonly Uri TitleBarMinimizeLightIconUri = new("pack://application:,,,/assets/titlebar/minimize-light.svg", UriKind.Absolute);
+    private static readonly Uri TitleBarMinimizeDarkIconUri = new("pack://application:,,,/assets/titlebar/minimize-dark.svg", UriKind.Absolute);
+    private static readonly Uri TitleBarMaximizeLightIconUri = new("pack://application:,,,/assets/titlebar/maximize-light.svg", UriKind.Absolute);
+    private static readonly Uri TitleBarMaximizeDarkIconUri = new("pack://application:,,,/assets/titlebar/maximize-dark.svg", UriKind.Absolute);
+    private static readonly Uri TitleBarRestoreLightIconUri = new("pack://application:,,,/assets/titlebar/restore-light.svg", UriKind.Absolute);
+    private static readonly Uri TitleBarRestoreDarkIconUri = new("pack://application:,,,/assets/titlebar/restore-dark.svg", UriKind.Absolute);
+    private static readonly Uri TitleBarCloseLightIconUri = new("pack://application:,,,/assets/titlebar/close-light.svg", UriKind.Absolute);
+    private static readonly Uri TitleBarCloseDarkIconUri = new("pack://application:,,,/assets/titlebar/close-dark.svg", UriKind.Absolute);
     private bool _isOpenAiDialogOpen;
     private bool _isApplyingTranscriptEditLoopSeek;
     private bool _isTranscriptEditLoopRestartPending;
@@ -77,6 +85,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Closed += OnMainWindowClosed;
+        StateChanged += OnMainWindowStateChanged;
         PreviewMouseDown += OnWindowMouseDismissToast;
         PreviewMouseWheel += OnWindowMouseWheelDismissToast;
         Loaded += OnMainWindowLoaded;
@@ -147,6 +156,181 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OpenOpenAiSettings_Click(object sender, RoutedEventArgs e)
     {
         ShowOpenAiSettingsDialog();
+    }
+
+    private void ExitMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+
+    private void TitleBarMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button
+            || button.ContextMenu is not System.Windows.Controls.ContextMenu menu)
+        {
+            return;
+        }
+
+        menu.PlacementTarget = button;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    private void SettingsContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ContextMenu menu)
+        {
+            return;
+        }
+
+        SyncThemeMenuChecks(menu, _boundViewModel?.SelectedThemePreference ?? AppThemePreference.System);
+    }
+
+    private void ViewContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ContextMenu menu || LogsToggleButton is null)
+        {
+            return;
+        }
+
+        System.Windows.Controls.MenuItem? showLogsMenuItem = menu.Items
+            .OfType<System.Windows.Controls.MenuItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, "ShowLogs", StringComparison.Ordinal));
+        if (showLogsMenuItem is null)
+        {
+            return;
+        }
+
+        showLogsMenuItem.IsChecked = LogsToggleButton.IsChecked == true;
+    }
+
+    private void ShowLogsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.MenuItem showLogsMenuItem || LogsToggleButton is null)
+        {
+            return;
+        }
+
+        LogsToggleButton.IsChecked = showLogsMenuItem.IsChecked;
+    }
+
+    private void ThemeSystemMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SetThemePreference(AppThemePreference.System);
+    }
+
+    private void ThemeLightMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SetThemePreference(AppThemePreference.Light);
+    }
+
+    private void ThemeDarkMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SetThemePreference(AppThemePreference.Dark);
+    }
+
+    private void SetThemePreference(AppThemePreference preference)
+    {
+        if (_boundViewModel is null)
+        {
+            return;
+        }
+
+        _boundViewModel.SelectedThemePreference = preference;
+        if (SettingsMenuButton?.ContextMenu is System.Windows.Controls.ContextMenu settingsMenu)
+        {
+            SyncThemeMenuChecks(settingsMenu, preference);
+        }
+    }
+
+    private static void SyncThemeMenuChecks(System.Windows.Controls.ContextMenu settingsMenu, AppThemePreference preference)
+    {
+        System.Windows.Controls.MenuItem? themeRoot = settingsMenu.Items
+            .OfType<System.Windows.Controls.MenuItem>()
+            .FirstOrDefault(item => string.Equals(item.Header as string, "Theme", StringComparison.Ordinal));
+        if (themeRoot is null)
+        {
+            return;
+        }
+
+        foreach (System.Windows.Controls.MenuItem item in themeRoot.Items.OfType<System.Windows.Controls.MenuItem>())
+        {
+            item.IsChecked = item.Tag switch
+            {
+                "ThemeSystem" => preference == AppThemePreference.System,
+                "ThemeLight" => preference == AppThemePreference.Light,
+                "ThemeDark" => preference == AppThemePreference.Dark,
+                _ => false,
+            };
+        }
+    }
+
+    private void TitleBarMinimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        SystemCommands.MinimizeWindow(this);
+    }
+
+    private void TitleBarMaximizeRestoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+        {
+            SystemCommands.RestoreWindow(this);
+            return;
+        }
+
+        SystemCommands.MaximizeWindow(this);
+    }
+
+    private void TitleBarCloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        SystemCommands.CloseWindow(this);
+    }
+
+    private void CustomTitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left)
+        {
+            return;
+        }
+
+        if (IsInteractiveTitleBarElement(e.OriginalSource as DependencyObject))
+        {
+            return;
+        }
+
+        if (e.ClickCount == 2)
+        {
+            TitleBarMaximizeRestoreButton_Click(sender, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
+
+        try
+        {
+            DragMove();
+            e.Handled = true;
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private static bool IsInteractiveTitleBarElement(DependencyObject? source)
+    {
+        DependencyObject? current = source;
+        while (current is not null)
+        {
+            if (current is System.Windows.Controls.Button
+                || current is System.Windows.Controls.MenuItem
+                || current is System.Windows.Controls.ContextMenu)
+            {
+                return true;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return false;
     }
 
     private void Window_PreviewDragEnter(object sender, System.Windows.DragEventArgs e)
@@ -640,6 +824,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdateTranscriptGridPresentation();
             UpdatePlaybackTimelineHighlight();
             UpdateTranscriptRowActionsVisibility();
+            if (SettingsMenuButton?.ContextMenu is System.Windows.Controls.ContextMenu settingsMenu)
+            {
+                SyncThemeMenuChecks(settingsMenu, vm.SelectedThemePreference);
+            }
         }
         else
         {
@@ -729,6 +917,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OnMainWindowClosed(object? sender, EventArgs e)
     {
         Loaded -= OnMainWindowLoaded;
+        StateChanged -= OnMainWindowStateChanged;
         CancelCopyToast();
         PreviewMouseDown -= OnWindowMouseDismissToast;
         PreviewMouseWheel -= OnWindowMouseWheelDismissToast;
@@ -879,6 +1068,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ApplyFloatingSurfaceTheme();
     }
 
+    private void OnMainWindowStateChanged(object? sender, EventArgs e)
+    {
+        ApplyFloatingSurfaceTheme();
+    }
+
     private void CancelCopyToast()
     {
         if (_copyToastCts is not null)
@@ -931,6 +1125,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (e.PropertyName == nameof(MainViewModel.SelectedThemePreference))
         {
+            if (SettingsMenuButton?.ContextMenu is System.Windows.Controls.ContextMenu settingsMenu
+                && _boundViewModel is not null)
+            {
+                SyncThemeMenuChecks(settingsMenu, _boundViewModel.SelectedThemePreference);
+            }
+
             // The view-model property changed event is raised before Application.ThemeMode settles.
             // Re-apply after bindings and theme updates complete to keep floating surfaces in sync.
             Dispatcher.BeginInvoke(new Action(ApplyFloatingSurfaceTheme), DispatcherPriority.Background);
@@ -1030,10 +1230,38 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             borderBrush.Freeze();
         }
 
+        Resources["TitleBarForegroundBrush"] = new SolidColorBrush(
+            darkTheme ? Colors.White : Colors.Black);
+        Resources["TitleBarMenuLabelOpacity"] = darkTheme ? 0.5d : 1d;
+        ApplyTitleBarIconTheme(darkTheme);
+
         SegmentBatchCard.Background = backgroundBrush;
         SegmentBatchCard.BorderBrush = borderBrush;
         CopyToastCard.Background = backgroundBrush;
         CopyToastCard.BorderBrush = borderBrush;
+    }
+
+    private void ApplyTitleBarIconTheme(bool darkTheme)
+    {
+        if (TitleBarMinimizeIcon is not null)
+        {
+            TitleBarMinimizeIcon.UriSource = darkTheme ? TitleBarMinimizeDarkIconUri : TitleBarMinimizeLightIconUri;
+        }
+
+        if (TitleBarMaximizeIcon is not null)
+        {
+            TitleBarMaximizeIcon.UriSource = darkTheme ? TitleBarMaximizeDarkIconUri : TitleBarMaximizeLightIconUri;
+        }
+
+        if (TitleBarRestoreIcon is not null)
+        {
+            TitleBarRestoreIcon.UriSource = darkTheme ? TitleBarRestoreDarkIconUri : TitleBarRestoreLightIconUri;
+        }
+
+        if (TitleBarCloseIcon is not null)
+        {
+            TitleBarCloseIcon.UriSource = darkTheme ? TitleBarCloseDarkIconUri : TitleBarCloseLightIconUri;
+        }
     }
 
     private bool IsDarkThemeActive()
