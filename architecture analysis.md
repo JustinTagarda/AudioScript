@@ -1,526 +1,396 @@
-# Codex Instructions: Project Assessment, Architecture Planning, Refactoring, and Improvement Preparation
+# AudioScript Architecture Analysis
 
-Use this document as the operating instruction for assessing an existing project, understanding its current state, producing architecture planning outputs, and preparing safe, implementation-ready follow-up work.
+## 1. Executive Summary
 
----
+AudioScript is a single-instance WPF desktop application on .NET 10 focused on local-audio transcription workflows, with optional OpenAI-powered AI assist and speaker diarization.
 
-## Role
+Current architecture is a pragmatic desktop MVVM style:
 
-You are working on an existing production codebase.
+- App startup and composition are centralized in App.xaml.cs.
+- UI orchestration is concentrated in MainWindow.xaml.cs.
+- Stateful workflow and persistence orchestration are concentrated in ViewModels/MainViewModel.cs.
+- Transcription, diarization, persistence, placement, and settings concerns are split into Services and Audio helpers.
 
-Your responsibilities are to:
+Main strengths:
 
-1. understand the project as it currently exists,
-2. assess its architecture and implementation quality,
-3. identify risks, technical debt, and improvement opportunities,
-4. propose a practical refactoring and improvement plan,
-5. prepare future implementation work without guessing or inventing missing details.
+- clear end-user workflow for import -> transcribe -> edit -> copy
+- robust local persistence and recovery model with SHA-256-based session identity
+- strong focused unit test suite for high-risk service behavior
+- explicit handling of long-running OpenAI requests and cancellation
 
-Work from the actual repository content and any provided project documentation. Do not infer hidden systems, files, APIs, schemas, or behavior that are not present in the supplied materials.
+Main weaknesses / risks:
 
----
+- MainWindow.xaml.cs and MainViewModel.cs are large orchestration hotspots
+- update/version policy components exist but are not currently wired into startup/runtime flow
+- AI prompt text currently includes hardcoded prose in service configuration
 
-## Primary Objective
+High-value next steps:
 
-Build a complete, accurate picture of the project’s current state so that architecture assessment, planning, refactoring strategy, and future implementation work are grounded in the real codebase.
+1. keep extracting workflow units from MainWindow/MainViewModel into focused collaborators
+2. formalize prompt ownership strategy for AI request text
+3. decide and implement intended runtime wiring for update/version check behavior
 
-Your output must help answer:
+## 2. Project Purpose And Scope
 
-- what the system currently does,
-- how it is structured,
-- where responsibilities live,
-- what architectural patterns are being used,
-- what the main pain points and risks are,
-- what should be improved first,
-- how to safely evolve the codebase.
+AudioScript provides desktop transcription workflows for local audio files:
 
----
+- Segment mode:
+  - Manual timeline placeholder generation
+  - AI-assisted segment transcription using playback capture
+- Speaker diarization mode:
+  - Silence-aware chunk planning
+  - Chunked OpenAI requests
+  - Speaker-labeled merged output
 
-## Non-Negotiable Rules
+The app is local-first and session-oriented, with reopen/recovery behavior built around audio fingerprint identity.
 
-- Inspect before concluding.
-- Use the repository as the source of truth.
-- Do not guess missing implementation details.
-- Do not invent files, endpoints, schema fields, services, or architecture layers.
-- Preserve the distinction between current state and proposed future state.
-- Call out uncertainty explicitly whenever information is missing.
-- Prefer representative evidence from real files over generic assumptions.
-- Keep recommendations aligned with the existing stack, constraints, and patterns unless there is a clear reason to change them.
-- Avoid recommending large refactors without explaining migration risk, dependency impact, and rollout order.
-- Do not propose changes that require rewriting unrelated areas unless clearly justified.
+## 3. Source-Verified Stack
 
----
+Application and runtime:
 
-## Scope of Work
+- .NET: net10.0-windows
+- UI: WPF
+- Startup object: AudioScript.App
+- Single-instance behavior: Mutex + activation event signaling
+- Windows Forms interop: used for screen/window placement handling
 
-Perform all of the following.
+Dependencies:
 
-### 1. Project Discovery
+- NAudio: playback, loopback capture, audio processing
+- SharpVectors.Wpf: SVG assets (titlebar resources)
+- OpenAI Audio Transcriptions endpoint integration
 
-Understand the project at a high level.
+Testing:
 
-Determine:
+- xUnit test project: AudioScript.Tests
 
-- project purpose,
-- major features,
-- business/domain boundaries,
-- main user flows,
-- external systems and integrations,
-- deployment shape,
-- technology stack and versions where available.
+Packaging and distribution:
 
-### 2. Repository Mapping
+- MSIX Store packaging project: AudioScript.Package
+- Build script: Build-StorePackage.ps1
+- Publishes self-contained win-x64 and win-arm64, then packages/bundles artifacts
 
-Map the repository structure and explain the role of major directories and key files.
+## 4. Repository Map
 
-Identify:
+Top-level structure (functional view):
 
-- application entry points,
-- API/controller layers,
-- service/domain layers,
-- data access layers,
-- shared utility layers,
-- UI/component layers,
-- test locations,
-- configuration and infrastructure files,
-- schema/migration files,
-- build and deployment files.
+- App.xaml.cs
+  - startup composition
+  - single-instance enforcement
+  - main window creation and lifecycle shutdown
+- MainWindow.xaml + MainWindow.xaml.cs
+  - interaction-heavy transcript UI orchestration
+  - batch transcription flow, row operations, copy actions, dialog flow
+- ViewModels/MainViewModel.cs
+  - core state, command gating, transcript collections, autosave, session operations
+- Services/
+  - AI request services/parsers
+  - session store, preferences store, credential store
+  - diagnostics and window placement
+- Audio/
+  - playback/capture and chunk-planning primitives
+- Abstractions/
+  - shared contracts and domain records
+- AudioScript.Tests/
+  - service and view-model unit tests
 
-### 3. Architecture Assessment
+## 5. Architecture And Responsibility Boundaries
 
-Assess the architecture as implemented today.
+### 5.1 Startup And Composition
 
-Evaluate:
+App.xaml.cs composes runtime dependencies in one place:
 
-- layer boundaries,
-- separation of concerns,
-- coupling and cohesion,
-- consistency of patterns,
-- data flow,
-- state management,
-- error handling,
-- validation approach,
-- type safety,
-- configuration management,
-- observability/logging,
-- performance hotspots visible from code,
-- scalability constraints,
-- security-sensitive areas apparent from the implementation.
+- OpenAiTranscriptionOptions and credential snapshot load
+- App preferences + theme application
+- HttpClient initialization with infinite timeout
+- construction of parsing, audio, transcription, diarization, and session services
+- MainViewModel and MainWindow creation
+- window placement restore/attach
 
-### 4. Current State Summary
-
-Produce a concise but complete summary of the current system design.
-
-Include:
-
-- architecture style,
-- request/response flow,
-- domain organization,
-- important cross-cutting concerns,
-- dependency hotspots,
-- areas of duplication,
-- fragile modules,
-- missing abstractions,
-- strong areas worth preserving.
-
-### 5. Technical Debt Review
-
-Identify debt in categories such as:
-
-- structural debt,
-- code duplication,
-- unclear ownership,
-- mixed concerns,
-- weak abstractions,
-- inconsistent naming,
-- inconsistent error handling,
-- test gaps,
-- dead or obsolete code,
-- outdated dependencies,
-- migration or schema debt,
-- manual or brittle integration points.
-
-For each important debt item, explain:
-
-- what it is,
-- where it appears,
-- why it matters,
-- its likely impact,
-- its remediation priority.
-
-### 6. Refactoring Opportunities
-
-Recommend refactors that are realistic and safe.
-
-For each recommendation, describe:
+Assessment:
 
-- the problem,
-- the target design,
-- affected areas,
-- expected benefit,
-- migration risk,
-- sequencing and prerequisites,
-- whether it is low, medium, or high risk.
+- Composition is straightforward and explicit.
+- Service graph is understandable.
+- No DI container is used; manual composition is acceptable for current size.
 
-Prefer incremental improvements over broad rewrites unless the current design makes incremental change impractical.
+### 5.2 UI And Workflow Layering
 
-### 7. Improvement Planning
+MainWindow.xaml.cs:
 
-Propose improvements for the next stage of development.
+- owns UI event handlers, dialog interactions, batch locks, grid-focused editing orchestration
+- coordinates playback-edit transcription sessions for row-level operations
 
-Include:
+MainViewModel.cs:
 
-- maintainability improvements,
-- performance improvements,
-- developer experience improvements,
-- test strategy improvements,
-- architecture improvements,
-- reliability improvements,
-- security hardening opportunities,
-- modernization opportunities that fit the current project.
+- owns app state, command enablement, transcript mode state, autosave scheduling, and persistence orchestration
+- exposes operations for placeholders, speaker diarization, session management, settings behavior
 
-### 8. Implementation Preparation
+Assessment:
 
-Prepare future implementation work by turning findings into actionable handoff material.
+- Separation exists (window for UI orchestration, view model for state/business orchestration).
+- Two major files remain high-coupling hotspots and primary change-risk zones.
 
-Create:
+### 5.3 Service Layer
 
-- a prioritized roadmap,
-- implementation phases,
-- per-phase goals,
-- likely touched areas/files,
-- dependency and migration concerns,
-- acceptance criteria ideas,
-- risks and blockers,
-- information gaps that must be resolved before coding.
+Services are mostly focused:
 
----
+- PlaybackTranscriptionService: OpenAI transcription request lifecycle and parsing integration
+- ChunkedSpeakerDiarizationService + OpenAiSpeakerDiarizationService: chunk planning and diarization requests
+- TranscriptSessionStore: session identity and persistence/recovery
+- AppPreferencesStore/OpenAiCredentialStore/WindowPlacementService: local settings and shell integration concerns
+- ProcessLogService: event-driven in-memory log emission
 
-## Required Inputs to Review
+Assessment:
 
-When available, inspect these first:
+- Service responsibilities are generally cohesive.
+- AI behavior remains reasonably centralized in service/options paths.
 
-### Repository and Build Context
+## 6. Data And Persistence Model
 
-- `package.json` or equivalent manifest
-- lockfile
-- TypeScript, Babel, ESLint, Prettier, or equivalent config
-- workspace/monorepo config
-- environment example files
-- Docker and compose files
-- CI/CD configuration
-- README and architecture docs
+Local storage root:
 
-### Application Structure
+- %LocalAppData%\AudioScript
 
-- app entrypoints
-- server bootstrap files
-- route/controller files
-- representative page/component files
-- service/domain modules
-- utility/shared modules
-- middleware
-- background job or worker files
+Key persisted artifacts:
 
-### Data Layer
+- Sessions\<sessionId>\session.json
+- Sessions\<sessionId>\audio\...
+- app-preferences.json
+- window-placement.json
 
-- schema definitions
-- ORM models
-- migrations
-- database access layer
-- repositories or query modules
+Credential storage:
 
-### Contract Layer
+- Windows Credential Manager target: AudioScript.OpenAI.ApiKey
 
-- API route definitions
-- request/response schemas
-- validation schemas
-- DTOs and shared types
-- external API client wrappers
+Session identity:
 
-### Quality and Operations
+- SHA-256 fingerprint of imported source audio determines session id
 
-- tests
-- logging/monitoring setup
-- feature flags
-- auth and permission logic
-- caching and queue integrations
+Reliability characteristics:
 
-If some of these are missing, state that clearly and continue based only on what is available.
+- atomic write patterns for key JSON persistence paths
+- resilient default fallbacks on failed settings reads
+- stored-audio integrity verification during session load
 
----
+## 7. Runtime Flow Analysis
 
-## Method
+### 7.1 Import And Session Resolution
 
-Follow this order.
+1. User opens/drops an audio file.
+2. Session store validates and fingerprints the file.
+3. Existing or new session document is materialized.
+4. Audio copy metadata and integrity fields are saved.
 
-### Phase 1: Orient
+### 7.2 Segment Mode
 
-1. Read the top-level project metadata and documentation.
-2. Identify the stack and execution model.
-3. Identify the main modules and system boundaries.
-4. Summarize the apparent architecture before diving deeper.
+Manual branch:
 
-### Phase 2: Inspect Representative Files
+- creates timeline placeholders using fixed segment duration
+- enables manual text editing in-grid
 
-Inspect the most important files that reveal project patterns.
+AI-assisted branch:
 
-Look for:
+- requires configured API key and AI-assist mode
+- performs batch row orchestration with playback-driven capture/transcription
+- supports cancellation and row-level progress signaling
 
-- how requests enter the system,
-- where domain logic lives,
-- how data is validated,
-- how data is persisted,
-- how errors are handled,
-- how shared logic is reused,
-- how tests mirror behavior.
+### 7.3 Speaker Diarization Mode
 
-### Phase 3: Map Dependencies and Flows
+1. Validates API key and current audio state.
+2. Uses silence detection + chunk planner for request boundaries.
+3. Executes chunked diarization requests.
+4. Resolves/merges speaker mappings into final transcript lines.
 
-Trace representative flows such as:
+### 7.4 Edit And Copy
 
-- UI to API to service to database,
-- external integration to adapter to domain logic,
-- form submission to validation to persistence,
-- auth or permission checks through the stack.
+- grid supports timeline/text edits plus row insert/duplicate/delete actions
+- copy workflows support text-only and timeline+text variants
+- edits are persisted through autosave scheduling in view model
 
-### Phase 4: Assess Quality
+## 8. Observability And Error Handling
 
-Evaluate what is working well and what is risky.
+Observability:
 
-Prioritize findings that affect:
+- ProcessLogService emits categorized runtime messages consumed by UI
+- useful for diagnosing transcription/diarization request paths
 
-- correctness,
-- maintainability,
-- scaling,
-- development speed,
-- change safety.
+Error handling patterns:
 
-### Phase 5: Plan Improvements
+- service and persistence paths favor resilience with fallback defaults
+- UI surfaces blocking requirements (for example, missing API key)
+- cancellation behavior is explicit in long-running operations
 
-Convert findings into a staged improvement plan.
+## 9. Test Coverage Snapshot
 
-Prefer:
+High-value tested areas include:
 
-- high-impact, low-risk improvements first,
-- refactors that reduce future implementation cost,
-- changes that strengthen system boundaries,
-- improvements that can be validated incrementally.
+- playback transcription service/session behavior
+- speaker diarization request behavior
+- silence-aware chunk planner logic
+- transcript session store persistence/recovery behavior
+- app preferences and credential store behavior
+- window placement behavior
+- main view model behavior
 
----
+Assessment:
 
-## Assessment Framework
+- core non-UI logic has meaningful regression coverage
+- UI-heavy orchestration in MainWindow remains comparatively less isolated/testable
 
-Use the following framework when reasoning about the system.
+## 10. Technical Debt And Risks
 
-### A. Architecture
+### 10.1 Large Orchestration Hotspots
 
-Assess:
+Where:
 
-- is the architecture explicit or accidental,
-- are module boundaries clear,
-- are responsibilities well placed,
-- is domain logic isolated from framework details,
-- are infrastructure concerns leaking into business logic,
-- are UI and data concerns overly coupled,
-- are there strong patterns worth standardizing.
+- MainWindow.xaml.cs
+- ViewModels/MainViewModel.cs
 
-### B. Code Organization
+Risk:
 
-Assess:
+- higher regression probability for cross-cutting changes
+- harder to reason about side effects across playback, editing, and persistence
 
-- directory clarity,
-- naming consistency,
-- discoverability,
-- dependency direction,
-- duplication,
-- presence of god modules or god services,
-- whether abstractions are meaningful or unnecessary.
+Priority:
 
-### C. Data and Contracts
+- High
 
-Assess:
+### 10.2 Update/Version Policy Not Runtime-Wired
 
-- schema quality,
-- validation completeness,
-- type consistency across layers,
-- request/response shape consistency,
-- migration safety,
-- data ownership clarity.
+Where:
 
-### D. Reliability
+- Services/ApplicationVersionCheckService.cs
+- UpdateRequiredDialogWindow.xaml.cs
 
-Assess:
+Risk:
 
-- error handling patterns,
-- retry/idempotency behavior where relevant,
-- fallback behavior,
-- configuration safety,
-- logging and debuggability,
-- operational visibility.
+- policy behavior may diverge from intent if callers are not established
 
-### E. Testability
+Priority:
 
-Assess:
+- Medium
 
-- existing test coverage by layer,
-- confidence level for refactors,
-- missing unit/integration/e2e coverage,
-- brittleness of current testing strategy,
-- fast feedback quality.
+### 10.3 Prompt Ownership Governance Risk
 
-### F. Scalability and Performance
+Where:
 
-Assess only from evidence visible in the codebase.
+- OpenAiTranscriptionOptions default prompt text
 
-Look for:
+Risk:
 
-- heavy queries,
-- repeated data fetching,
-- missing caching opportunities,
-- synchronous bottlenecks,
-- coupling that blocks horizontal scaling,
-- oversized modules that limit team scaling.
+- prompt drift if prose expands in multiple locations over time
 
-### G. Security and Safety
+Priority:
 
-Assess visible concerns such as:
+- Medium
 
-- auth boundaries,
-- permission checks,
-- secrets handling,
-- validation gaps,
-- unsafe input handling,
-- risky logging,
-- insecure defaults.
+## 11. Refactoring Opportunities
 
-Do not claim vulnerabilities unless they are supported by actual evidence from the code or configuration.
+### 11.1 Extract Batch Transcription Coordinator
 
----
+Target:
 
-## Output Requirements
+- move segment batch orchestration from MainWindow into a dedicated coordinator/service
 
-Return results in the exact structure below.
+Benefits:
 
-# 1. Executive Summary
+- smaller UI code-behind
+- easier unit testing of batch state transitions and cancellation
 
-Provide a compact overview of:
+Risk:
 
-- what the system appears to be,
-- its current architectural style,
-- its main strengths,
-- its main weaknesses,
-- the most important next steps.
+- Medium
 
-# 2. Project Snapshot
+### 11.2 Extract Transcript Grid Edit Controller
 
-Document:
+Target:
 
-- purpose,
-- stack,
-- main modules,
-- major flows,
-- external dependencies,
-- deployment context if visible.
+- isolate row command and edit-loop behaviors from window event surface
 
-# 3. Current Architecture
+Benefits:
 
-Describe the architecture as implemented today.
+- lowers coupling between visual tree concerns and workflow rules
 
-Include:
+Risk:
 
-- system layers,
-- module boundaries,
-- request/data flow,
-- where business logic lives,
-- where infrastructure concerns live,
-- cross-cutting concerns.
+- Medium
 
-# 4. Repository Map
+### 11.3 Formalize Update Wiring Decision
 
-Provide a concise tree-style or sectioned explanation of major directories and important files.
+Target:
 
-# 5. Findings
+- either wire ApplicationVersionCheckService into startup flow with explicit UX, or retire/defer component
 
-Group findings by severity or category.
+Benefits:
 
-For each finding provide:
+- removes ambiguity in operational behavior
 
-- title,
-- evidence,
-- impact,
-- recommendation.
+Risk:
 
-# 6. Technical Debt List
+- Low to Medium
 
-Provide a prioritized list of debt items with rationale.
+### 11.4 Prompt Configuration Ownership
 
-# 7. Refactoring Recommendations
+Target:
 
-For each recommendation include:
+- define single ownership location/rule for AI prompt prose and derived prompt variants
 
-- goal,
-- suggested target structure,
-- files/areas likely involved,
-- expected benefit,
-- risk level,
-- suggested rollout order.
+Benefits:
 
-# 8. Improvement Roadmap
+- avoids duplicated AI instruction text and drift
 
-Provide phased recommendations such as:
+Risk:
 
-- Phase 1: quick wins,
-- Phase 2: structural cleanup,
-- Phase 3: deeper architecture improvements,
-- Phase 4: modernization or scale preparation.
+- Low
 
-# 9. Implementation Handoff Notes
+## 12. Suggested Implementation Roadmap
 
-Convert the assessment into practical next-step instructions for future coding work.
+Phase 1 (low-risk clarity):
 
-Include:
+1. Document and decide update/version runtime strategy.
+2. Add small architecture notes for current startup/service graph.
+3. Add tests where current behavior is ambiguous around cancellation and autosave edges.
 
-- concrete task candidates,
-- likely touched files or areas,
-- validation targets,
-- test expectations,
-- assumptions that must not be made,
-- missing information that must be gathered first.
+Phase 2 (targeted extraction):
 
-# 10. Open Questions and Uncertainties
+1. Extract segment batch coordinator.
+2. Extract transcript grid edit controller.
+3. Keep MainWindow as wiring shell for UI events.
 
-List anything that cannot be concluded safely from the available materials.
+Phase 3 (governance hardening):
 
----
+1. Enforce prompt ownership and request-construction conventions.
+2. Add test coverage for any new prompt/config rules.
 
-## Quality Bar
+## 13. Verification Guidance For Future Changes
 
-Your work must be:
+If changing transcription request/response behavior:
 
-- evidence-based,
-- explicit about uncertainty,
-- grounded in the current codebase,
-- oriented toward practical implementation,
-- safe for production-minded planning,
-- detailed enough that future implementation prompts can be written from it.
+- run PlaybackTranscriptionServiceTests
+- run OpenAiTranscriptionModelCatalogTests when model selection/ids change
 
----
+If changing diarization chunking or mapping:
 
-## Do Not Do These
+- run SilenceAwareChunkPlannerTests
+- run OpenAiSpeakerDiarizationServiceTests
 
-- Do not provide generic best-practice advice detached from the repository.
-- Do not recommend rewriting the project without strong justification.
-- Do not collapse current-state analysis and future-state proposals into one unclear summary.
-- Do not hide uncertainty.
-- Do not assume missing files behave a certain way.
-- Do not propose new architecture layers unless you explain why the current structure fails and how migration should happen.
+If changing session persistence/recovery:
 
----
+- run TranscriptSessionStoreTests
+- run MainViewModelTests
 
-## Final Instruction
+If changing playback capture/session behavior:
 
-Base every conclusion on inspected project materials.
+- run PlaybackAudioCaptureServiceTests
+- run PlaybackTranscriptionSessionTests
 
-Where evidence is incomplete, say exactly what is missing and what should be reviewed next before implementation or major refactoring begins.
+If changing startup/window state behavior:
 
+- run WindowPlacementServiceTests
+- run MainViewModelTests
+
+## 14. Open Questions
+
+1. Should ApplicationVersionCheckService be wired into App startup and, if yes, what is the intended blocking UX?
+2. Should prompt text remain code-defined in options or move to a dedicated settings/resource contract?
+3. What level of UI automation coverage is desired for MainWindow interaction-heavy workflows?

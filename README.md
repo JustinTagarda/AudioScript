@@ -2,46 +2,77 @@
 
 AudioScript is a Windows desktop app (WPF, .NET 10) for transcribing audio from local files and live playback capture, with optional OpenAI-powered transcription and speaker diarization.
 
-## Quick project analysis
+## What It Does
 
-- App type: single-instance WPF desktop app (`net10.0-windows`)
-- Primary workflow: load audio -> generate transcript (manual segments or OpenAI) -> edit/copy output -> persist session
-- AI integration: OpenAI Audio Transcriptions endpoint (`/v1/audio/transcriptions`)
-- Persistence:
-  - OpenAI API key in Windows Credential Manager (`AudioScript.OpenAI.ApiKey`)
-  - transcript sessions under `%LOCALAPPDATA%\\AudioScript\\Sessions`
-- Audio stack: `NAudio` for playback/capture and processing
-- Packaging: includes `AudioScript.Package` (`.wapproj`) + `Build-StorePackage.ps1` for x64/arm64 self-contained MSIX bundle
-- Test coverage: `AudioScript.Tests` (xUnit), currently `49` passing tests
+- Imports supported audio files and previews playback in-app
+- Supports segment-based transcript generation:
+  - Manual mode: creates placeholder timeline rows for manual entry
+  - AI-assisted mode: transcribes segments through OpenAI
+- Supports speaker diarization mode:
+  - Splits long audio into chunked requests
+  - Uses silence-aware planning to improve chunk boundaries
+  - Merges speaker-labeled segments into a final transcript
+- Enables transcript editing directly in the grid:
+  - Timeline edits
+  - Text edits
+  - Insert/duplicate/delete row actions
+  - Per-row playback edit transcription workflows
+- Provides copy workflows for transcript output
+- Persists sessions so work can be reopened and recovered
 
-## Repository layout
+## Technology Stack
 
-- `App.xaml.cs`: app startup, dependency wiring, single-instance handling
-- `MainWindow.xaml(.cs)`: desktop UI
-- `ViewModels/`: UI state and commands (`MainViewModel` is the main orchestration layer)
-- `Services/`: app services (OpenAI calls, session store, preferences, logging, theme, version checks)
-- `Audio/`: audio playback/capture/chunking utilities
-- `Abstractions/`: shared domain contracts and models
+- .NET: `net10.0-windows`
+- UI: WPF
+- Audio: NAudio (`NAudio`)
+- SVG rendering: SharpVectors (`SharpVectors.Wpf`)
+- AI integration: OpenAI Audio Transcriptions API (`/v1/audio/transcriptions`)
+- Tests: xUnit (`AudioScript.Tests`)
+
+## Runtime Behavior
+
+- Single-instance app behavior is enforced at startup.
+- Dependency wiring is performed in `App.OnStartup`.
+- `MainWindow` and `MainViewModel` orchestrate UI state and workflows.
+- Long transcription/diarization HTTP operations use cancellation tokens with infinite `HttpClient` timeout configured at app startup.
+
+## Data Storage
+
+AudioScript stores local data under:
+
+- `%LocalAppData%\AudioScript\Sessions\<sessionId>\session.json`
+- `%LocalAppData%\AudioScript\Sessions\<sessionId>\audio\...`
+- `%LocalAppData%\AudioScript\app-preferences.json`
+- `%LocalAppData%\AudioScript\window-placement.json`
+
+OpenAI API key storage:
+
+- Windows Credential Manager target: `AudioScript.OpenAI.ApiKey`
+
+Session identity is based on SHA-256 audio fingerprinting.
+
+## Repository Layout
+
+- `App.xaml.cs`: app startup, single-instance activation, dependency composition
+- `MainWindow.xaml` + `MainWindow.xaml.cs`: main UI and interaction orchestration
+- `ViewModels/MainViewModel.cs`: core state, commands, autosave, transcript workflows
+- `Services/`: transcription, diarization, persistence, preferences, diagnostics, window placement
+- `Audio/`: playback/capture and audio processing/chunk planning helpers
+- `Abstractions/`: shared contracts and models
 - `AudioScript.Tests/`: unit tests
-- `AudioScript.Package/`: Store/MSIX packaging project and assets
+- `AudioScript.Package/`: Store/MSIX packaging project assets and outputs
 
 ## Requirements
 
 - Windows 10/11
 - .NET SDK `10.0.201` (see `global.json`)
-- Optional: OpenAI API key (for AI transcription/diarization features)
-- Optional (Store packaging): Windows SDK tools including `makeappx.exe`
+- OpenAI API key (required for AI-assisted segment transcription and speaker diarization)
+- Optional for Store packaging: Windows SDK tools including `makeappx.exe`
 
-## Run locally
+## Run Locally
 
 ```powershell
 dotnet run --project .\AudioScript.csproj
-```
-
-## Run tests
-
-```powershell
-dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 ```
 
 ## Build
@@ -50,20 +81,40 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 dotnet build .\AudioScript.csproj -c Release
 ```
 
-## Create Microsoft Store package
+## Run Tests
+
+```powershell
+dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
+```
+
+Targeted examples:
+
+```powershell
+dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj --filter "FullyQualifiedName~AudioScript.Tests.MainViewModelTests"
+dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj --filter "FullyQualifiedName~AudioScript.Tests.TranscriptSessionStoreTests"
+dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj --filter "FullyQualifiedName~AudioScript.Tests.PlaybackTranscriptionServiceTests"
+dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj --filter "FullyQualifiedName~AudioScript.Tests.OpenAiSpeakerDiarizationServiceTests"
+```
+
+## Create Microsoft Store Package
 
 ```powershell
 .\Build-StorePackage.ps1
 ```
 
-Default output is written under:
+Default output root:
 
 - `AudioScript.Package\AppPackages\store-selfcontained\...`
 
-The script publishes self-contained `win-x64` and `win-arm64` builds, packs `.msix` files, bundles them, and produces a `.msixupload` artifact.
+The packaging script:
+
+- Publishes self-contained `win-x64` and `win-arm64` builds
+- Creates architecture-specific `.msix` packages
+- Bundles into a `.msixbundle`
+- Produces a `.msixupload` artifact
 
 ## Notes
 
-- The app supports both manual transcription mode and OpenAI-assisted mode.
-- Session data is keyed by audio fingerprint (SHA-256) to help resume/reopen work reliably.
-- API key management is handled in-app and persisted via Windows Credential Manager.
+- Manual transcription mode remains available without OpenAI.
+- AI-assisted segment transcription and speaker diarization require a configured API key.
+- Version-check/update components exist in the codebase (`ApplicationVersionCheckService`, `UpdateRequiredDialogWindow`) but are not currently wired into app startup/runtime flow.

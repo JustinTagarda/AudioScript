@@ -3,9 +3,6 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:sys="clr-namespace:System;assembly=mscorlib"
-        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        xmlns:svgc="clr-namespace:SharpVectors.Converters;assembly=SharpVectors.Converters.Wpf"
         xmlns:local="clr-namespace:AudioScript"
         xmlns:abstractions="clr-namespace:AudioScript.Abstractions"
         mc:Ignorable="d"
@@ -15,21 +12,12 @@
         Width="1080"
         MinHeight="600"
         MinWidth="900"
-        WindowStyle="None"
-        ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
         AllowDrop="True"
         PreviewDragEnter="Window_PreviewDragEnter"
         PreviewDragOver="Window_PreviewDragOver"
         PreviewDragLeave="Window_PreviewDragLeave"
         PreviewDrop="Window_PreviewDrop">
-    <shell:WindowChrome.WindowChrome>
-        <shell:WindowChrome CaptionHeight="0"
-                            ResizeBorderThickness="6"
-                            CornerRadius="0"
-                            GlassFrameThickness="0"
-                            UseAeroCaptionButtons="False"/>
-    </shell:WindowChrome.WindowChrome>
     <Window.CommandBindings>
         <CommandBinding Command="{x:Static local:MainWindow.InsertRowAboveCommand}"
                         CanExecute="TranscriptContextCommand_CanExecute"
@@ -51,9 +39,6 @@
                         Executed="CopyTimelineAndTextCommand_Executed"/>
     </Window.CommandBindings>
     <Window.Resources>
-        <SolidColorBrush x:Key="TitleBarForegroundBrush"
-                         Color="#000000"/>
-        <sys:Double x:Key="TitleBarMenuLabelOpacity">1</sys:Double>
         <Style x:Key="FluentComboBoxItemStyle"
                TargetType="{x:Type ComboBoxItem}"
                BasedOn="{StaticResource {x:Type ComboBoxItem}}"/>
@@ -185,265 +170,10 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="TitleBarWindowButtonStyle"
-               TargetType="{x:Type Button}"
-               BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Width"
-                    Value="48.51"/>
-            <Setter Property="Height"
-                    Value="40"/>
-            <Setter Property="Margin"
-                    Value="0"/>
-            <Setter Property="Padding"
-                    Value="0"/>
-            <Setter Property="BorderThickness"
-                    Value="0"/>
-            <Setter Property="Background"
-                    Value="Transparent"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type Button}">
-                        <Border x:Name="ButtonHost"
-                                Background="{TemplateBinding Background}"
-                                BorderThickness="0"
-                                CornerRadius="0">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver"
-                                     Value="True">
-                                <Setter TargetName="ButtonHost"
-                                        Property="Background"
-                                        Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed"
-                                     Value="True">
-                                <Setter TargetName="ButtonHost"
-                                        Property="Background"
-                                        Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <Style x:Key="TitleBarMenuButtonStyle"
-               TargetType="{x:Type Button}"
-               BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Foreground"
-                    Value="{DynamicResource TitleBarForegroundBrush}"/>
-            <Setter Property="Background"
-                    Value="Transparent"/>
-            <Setter Property="BorderThickness"
-                    Value="0"/>
-            <Setter Property="Height"
-                    Value="40"/>
-            <Setter Property="MinWidth"
-                    Value="44"/>
-            <Setter Property="Padding"
-                    Value="6,0"/>
-            <Setter Property="Margin"
-                    Value="0"/>
-            <Setter Property="FontSize"
-                    Value="14"/>
-            <Setter Property="FontWeight"
-                    Value="Normal"/>
-            <Setter Property="VerticalContentAlignment"
-                    Value="Center"/>
-            <Setter Property="HorizontalContentAlignment"
-                    Value="Center"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="{x:Type Button}">
-                        <Border x:Name="MenuButtonHost"
-                                Background="{TemplateBinding Background}"
-                                BorderThickness="0"
-                                CornerRadius="0">
-                            <ContentPresenter x:Name="MenuLabelPresenter"
-                                              HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"
-                                              Opacity="{DynamicResource TitleBarMenuLabelOpacity}"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver"
-                                     Value="True">
-                                <Setter TargetName="MenuButtonHost"
-                                        Property="Background"
-                                        Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
-                                <Setter TargetName="MenuLabelPresenter"
-                                        Property="Opacity"
-                                        Value="1"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed"
-                                     Value="True">
-                                <Setter TargetName="MenuButtonHost"
-                                        Property="Background"
-                                        Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
-                                <Setter TargetName="MenuLabelPresenter"
-                                        Property="Opacity"
-                                        Value="1"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
     </Window.Resources>
 
     <Grid x:Name="MainRootGrid">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="40"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
-
-        <Border x:Name="CustomTitleBar"
-                Grid.Row="0"
-                Background="{DynamicResource LayerFillColorDefaultBrush}"
-                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                BorderThickness="0,0,0,1"
-                MouseLeftButtonDown="CustomTitleBar_MouseLeftButtonDown">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0"
-                            Orientation="Horizontal"
-                            Margin="6,0,0,0">
-                    <Button x:Name="FileMenuButton"
-                            Style="{StaticResource TitleBarMenuButtonStyle}"
-                            Content="File"
-                            Click="TitleBarMenuButton_Click">
-                        <Button.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Exit"
-                                          Click="ExitMenuItem_Click"/>
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
-                    <Button x:Name="SettingsMenuButton"
-                            Style="{StaticResource TitleBarMenuButtonStyle}"
-                            Content="Settings"
-                            Click="TitleBarMenuButton_Click">
-                        <Button.ContextMenu>
-                            <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
-                                         Opened="SettingsContextMenu_Opened">
-                                <MenuItem Header="API Key"
-                                          IsEnabled="{Binding IsOpenAiSettingsEnabled}"
-                                          Click="OpenOpenAiSettings_Click"/>
-                                <Separator/>
-                                <MenuItem Header="Theme">
-                                    <MenuItem Tag="ThemeSystem"
-                                              Header="System"
-                                              IsCheckable="True"
-                                              Click="ThemeSystemMenuItem_Click"/>
-                                    <MenuItem Tag="ThemeLight"
-                                              Header="Light"
-                                              IsCheckable="True"
-                                              Click="ThemeLightMenuItem_Click"/>
-                                    <MenuItem Tag="ThemeDark"
-                                              Header="Dark"
-                                              IsCheckable="True"
-                                              Click="ThemeDarkMenuItem_Click"/>
-                                </MenuItem>
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
-                    <Button x:Name="ViewMenuButton"
-                            Style="{StaticResource TitleBarMenuButtonStyle}"
-                            Content="View"
-                            Click="TitleBarMenuButton_Click">
-                        <Button.ContextMenu>
-                            <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
-                                         Opened="ViewContextMenu_Opened">
-                                <MenuItem Tag="ShowLogs"
-                                          Header="Show Logs"
-                                          IsCheckable="True"
-                                          IsEnabled="{Binding HasProcessLogs}"
-                                          Click="ShowLogsMenuItem_Click"/>
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
-                </StackPanel>
-
-                <TextBlock Grid.Column="1"
-                           Text="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=Title}"
-                           HorizontalAlignment="Center"
-                           VerticalAlignment="Center"
-                           Foreground="{DynamicResource TitleBarForegroundBrush}"
-                           FontSize="13"
-                           FontWeight="SemiBold"/>
-
-                <StackPanel Grid.Column="2"
-                            Orientation="Horizontal"
-                            VerticalAlignment="Stretch">
-                    <Button Style="{StaticResource TitleBarWindowButtonStyle}"
-                            ToolTip="Minimize"
-                            Click="TitleBarMinimizeButton_Click">
-                        <svgc:SvgViewbox x:Name="TitleBarMinimizeIcon"
-                                         Width="10.83"
-                                         Height="10.83"
-                                         UriSource="pack://application:,,,/assets/titlebar/minimize-light.svg"/>
-                    </Button>
-                    <Button ToolTip="Maximize"
-                            Click="TitleBarMaximizeRestoreButton_Click">
-                        <Button.Style>
-                            <Style TargetType="{x:Type Button}"
-                                   BasedOn="{StaticResource TitleBarWindowButtonStyle}">
-                                <Setter Property="Visibility"
-                                        Value="Visible"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=WindowState}"
-                                                 Value="Maximized">
-                                        <Setter Property="Visibility"
-                                                Value="Collapsed"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                        <svgc:SvgViewbox x:Name="TitleBarMaximizeIcon"
-                                         Width="10.83"
-                                         Height="10.83"
-                                         UriSource="pack://application:,,,/assets/titlebar/maximize-light.svg"/>
-                    </Button>
-                    <Button ToolTip="Restore"
-                            Click="TitleBarMaximizeRestoreButton_Click">
-                        <Button.Style>
-                            <Style TargetType="{x:Type Button}"
-                                   BasedOn="{StaticResource TitleBarWindowButtonStyle}">
-                                <Setter Property="Visibility"
-                                        Value="Collapsed"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=Window}, Path=WindowState}"
-                                                 Value="Maximized">
-                                        <Setter Property="Visibility"
-                                                Value="Visible"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                        <svgc:SvgViewbox x:Name="TitleBarRestoreIcon"
-                                         Width="10.83"
-                                         Height="10.83"
-                                         UriSource="pack://application:,,,/assets/titlebar/restore-light.svg"/>
-                    </Button>
-                    <Button Style="{StaticResource TitleBarWindowButtonStyle}"
-                            ToolTip="Close"
-                            Click="TitleBarCloseButton_Click">
-                        <svgc:SvgViewbox x:Name="TitleBarCloseIcon"
-                                         Width="10.83"
-                                         Height="10.83"
-                                         UriSource="pack://application:,,,/assets/titlebar/close-light.svg"/>
-                    </Button>
-                </StackPanel>
-            </Grid>
-        </Border>
-
         <DockPanel x:Name="MainContentHost"
-                   Grid.Row="1"
                    LastChildFill="True">
             <StatusBar DockPanel.Dock="Bottom"
                        Margin="0"
@@ -856,7 +586,7 @@
                                         <Setter Property="Visibility"
                                                 Value="Collapsed"/>
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsSpeakerTranscriptViewSelected}"
+                                            <DataTrigger Binding="{Binding IsSpeakerDiarizationModeSelected}"
                                                          Value="True">
                                                 <Setter Property="Visibility"
                                                         Value="Visible"/>
@@ -1264,7 +994,6 @@
         </DockPanel>
 
         <Border x:Name="SegmentBatchOverlay"
-                Grid.Row="1"
                 Panel.ZIndex="100"
                 Background="Transparent"
                 Visibility="Collapsed"
@@ -1327,7 +1056,6 @@
         </Border>
 
         <Border x:Name="CopyToastHost"
-                Grid.Row="1"
                 Panel.ZIndex="20"
                 HorizontalAlignment="Center"
                 VerticalAlignment="Bottom"
