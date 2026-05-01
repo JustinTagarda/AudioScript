@@ -26,10 +26,7 @@ public sealed class WindowPlacementService {
             _stateFilePath = Path.GetFullPath(stateFilePath);
         }
         else {
-            var appDataDirectory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "AudioScript");
-            _stateFilePath = Path.Combine(appDataDirectory, "window-placement.json");
+            _stateFilePath = Path.Combine(AppDataPathProvider.Create().SettingsPath, "window-placement.json");
         }
 
         _saveDebounceDelay = saveDebounceDelay ?? TimeSpan.FromMilliseconds(350);

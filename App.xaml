@@ -5,8 +5,420 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ResourceDictionary Source="pack://application:,,,/PresentationFramework.Fluent;component/Themes/Fluent.xaml" />
+                <ResourceDictionary Source="pack://application:,,,/PresentationFramework.Fluent;component/Themes/Fluent.xaml"/>
             </ResourceDictionary.MergedDictionaries>
+
+            <SolidColorBrush x:Key="SelectionControlForegroundBrush"
+                             Color="#FF1A1A1A"/>
+
+            <Style x:Key="ToolbarButtonIconTextStyle"
+                   TargetType="{x:Type TextBlock}">
+                <Setter Property="FontFamily"
+                        Value="Segoe Fluent Icons"/>
+                <Setter Property="FontSize"
+                        Value="13.5"/>
+                <Setter Property="Foreground"
+                        Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                <Setter Property="TextAlignment"
+                        Value="Center"/>
+                <Setter Property="VerticalAlignment"
+                        Value="Center"/>
+                <Setter Property="HorizontalAlignment"
+                        Value="Center"/>
+            </Style>
+
+            <Style x:Key="ToolbarButtonLabelTextStyle"
+                   TargetType="{x:Type TextBlock}">
+                <Setter Property="FontSize"
+                        Value="11.5"/>
+                <Setter Property="VerticalAlignment"
+                        Value="Center"/>
+                <Setter Property="Foreground"
+                        Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+            </Style>
+
+            <Style TargetType="{x:Type CheckBox}"
+                   BasedOn="{StaticResource {x:Type CheckBox}}">
+                <Setter Property="FontSize"
+                        Value="12"/>
+                <Setter Property="Foreground"
+                        Value="{DynamicResource SelectionControlForegroundBrush}"/>
+                <Setter Property="Cursor"
+                        Value="Hand"/>
+                <Setter Property="MinHeight"
+                        Value="24"/>
+                <Setter Property="Padding"
+                        Value="0"/>
+                <Setter Property="SnapsToDevicePixels"
+                        Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type CheckBox}">
+                            <Border x:Name="Root"
+                                    Background="Transparent"
+                                    CornerRadius="6"
+                                    Padding="{TemplateBinding Padding}">
+                                <Grid VerticalAlignment="Center">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="GlyphBorder"
+                                            Width="18"
+                                            Height="18"
+                                            VerticalAlignment="Center"
+                                            BorderThickness="1"
+                                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                            CornerRadius="4">
+                                        <Viewbox Margin="2.2"
+                                                 HorizontalAlignment="Center"
+                                                 VerticalAlignment="Center">
+                                            <Path x:Name="CheckGlyph"
+                                                  Data="M2.5,8.5 L6.2,12.2 L13.5,4.5"
+                                                  Stroke="{DynamicResource TextFillColorPrimaryBrush}"
+                                                  StrokeThickness="2.2"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round"
+                                                  Visibility="Collapsed"/>
+                                        </Viewbox>
+                                    </Border>
+                                    <ContentPresenter Grid.Column="1"
+                                                      Margin="8,0,0,0"
+                                                      VerticalAlignment="Center"
+                                                      RecognizesAccessKey="True"/>
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver"
+                                         Value="True">
+                                    <Setter TargetName="GlyphBorder"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                                    <Setter TargetName="GlyphBorder"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked"
+                                         Value="True">
+                                    <Setter TargetName="GlyphBorder"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                    <Setter TargetName="GlyphBorder"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                                    <Setter TargetName="CheckGlyph"
+                                            Property="Visibility"
+                                            Value="Visible"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed"
+                                         Value="True">
+                                </Trigger>
+                                <Trigger Property="IsEnabled"
+                                         Value="False">
+                                    <Setter Property="Opacity"
+                                            Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="{x:Type RadioButton}"
+                   BasedOn="{StaticResource {x:Type RadioButton}}">
+                <Setter Property="FontSize"
+                        Value="12"/>
+                <Setter Property="Foreground"
+                        Value="{DynamicResource SelectionControlForegroundBrush}"/>
+                <Setter Property="Cursor"
+                        Value="Hand"/>
+                <Setter Property="MinHeight"
+                        Value="24"/>
+                <Setter Property="Padding"
+                        Value="0"/>
+                <Setter Property="SnapsToDevicePixels"
+                        Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type RadioButton}">
+                            <Border x:Name="Root"
+                                    Background="Transparent"
+                                    CornerRadius="6"
+                                    Padding="{TemplateBinding Padding}">
+                                <Grid VerticalAlignment="Center">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="GlyphBorder"
+                                            Width="18"
+                                            Height="18"
+                                            VerticalAlignment="Center"
+                                            BorderThickness="1"
+                                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                            CornerRadius="9">
+                                        <Ellipse x:Name="CheckGlyph"
+                                                 Width="8"
+                                                 Height="8"
+                                                 Fill="{DynamicResource TextFillColorPrimaryBrush}"
+                                                 Visibility="Collapsed"
+                                                 HorizontalAlignment="Center"
+                                                 VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ContentPresenter Grid.Column="1"
+                                                      Margin="8,0,0,0"
+                                                      VerticalAlignment="Center"
+                                                      RecognizesAccessKey="True"/>
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver"
+                                         Value="True">
+                                    <Setter TargetName="GlyphBorder"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                                    <Setter TargetName="GlyphBorder"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked"
+                                         Value="True">
+                                    <Setter TargetName="GlyphBorder"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                    <Setter TargetName="GlyphBorder"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                                    <Setter TargetName="CheckGlyph"
+                                            Property="Visibility"
+                                            Value="Visible"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed"
+                                         Value="True">
+                                </Trigger>
+                                <Trigger Property="IsEnabled"
+                                         Value="False">
+                                    <Setter Property="Opacity"
+                                            Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="ToolbarButtonStyle"
+                   TargetType="{x:Type Button}">
+                <Setter Property="MinHeight"
+                        Value="32"/>
+                <Setter Property="FontSize"
+                        Value="12"/>
+                <Setter Property="Padding"
+                        Value="12,6"/>
+                <Setter Property="Margin"
+                        Value="0,0,6,0"/>
+                <Setter Property="HorizontalContentAlignment"
+                        Value="Center"/>
+                <Setter Property="VerticalContentAlignment"
+                        Value="Center"/>
+                <Setter Property="Background"
+                        Value="{DynamicResource ControlFillColorDefaultBrush}"/>
+                <Setter Property="BorderBrush"
+                        Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                <Setter Property="BorderThickness"
+                        Value="1"/>
+                <Setter Property="Foreground"
+                        Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                <Setter Property="Cursor"
+                        Value="Hand"/>
+                <Setter Property="ToolTipService.ShowOnDisabled"
+                        Value="True"/>
+                <Setter Property="SnapsToDevicePixels"
+                        Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Button}">
+                            <Border x:Name="Chrome"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="5">
+                                <StackPanel Orientation="Horizontal"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Margin="{TemplateBinding Padding}">
+                                    <TextBlock x:Name="IconText"
+                                               Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                               Text="{TemplateBinding Tag}"
+                                               Margin="0,0,6,0"/>
+                                    <ContentPresenter HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="Tag"
+                                         Value="{x:Null}">
+                                    <Setter TargetName="IconText"
+                                            Property="Visibility"
+                                            Value="Collapsed"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver"
+                                         Value="True">
+                                    <Setter TargetName="Chrome"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                                    <Setter TargetName="Chrome"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed"
+                                         Value="True">
+                                    <Setter TargetName="Chrome"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                    <Setter TargetName="Chrome"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled"
+                                         Value="False">
+                                    <Setter Property="Opacity"
+                                            Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="ToolbarPrimaryButtonStyle"
+                   TargetType="{x:Type Button}"
+                   BasedOn="{StaticResource ToolbarButtonStyle}">
+                <Setter Property="FontWeight"
+                        Value="SemiBold"/>
+            </Style>
+
+            <Style x:Key="ToolbarDestructiveButtonStyle"
+                   TargetType="{x:Type Button}"
+                   BasedOn="{StaticResource ToolbarButtonStyle}">
+                <Setter Property="Background"
+                        Value="{DynamicResource SystemFillColorCriticalBrush}"/>
+                <Setter Property="BorderBrush"
+                        Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+            </Style>
+
+            <Style x:Key="ToolbarToggleButtonStyle"
+                   TargetType="{x:Type ToggleButton}"
+                   BasedOn="{StaticResource {x:Type ToggleButton}}">
+                <Setter Property="MinHeight"
+                        Value="32"/>
+                <Setter Property="Padding"
+                        Value="12,6"/>
+                <Setter Property="Margin"
+                        Value="0,0,6,0"/>
+                <Setter Property="Background"
+                        Value="{DynamicResource ControlFillColorDefaultBrush}"/>
+                <Setter Property="BorderBrush"
+                        Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                <Setter Property="BorderThickness"
+                        Value="1"/>
+                <Setter Property="Foreground"
+                        Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                <Setter Property="Cursor"
+                        Value="Hand"/>
+                <Setter Property="ToolTipService.ShowOnDisabled"
+                        Value="True"/>
+                <Setter Property="SnapsToDevicePixels"
+                        Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type ToggleButton}">
+                            <Border x:Name="Chrome"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="5">
+                                <StackPanel Orientation="Horizontal"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Margin="{TemplateBinding Padding}">
+                                    <TextBlock x:Name="IconText"
+                                               Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                               Text="{TemplateBinding Tag}"
+                                               Margin="0,0,6,0"/>
+                                    <ContentPresenter HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"
+                                                      RecognizesAccessKey="True"/>
+                                </StackPanel>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="Tag"
+                                         Value="{x:Null}">
+                                    <Setter TargetName="IconText"
+                                            Property="Visibility"
+                                            Value="Collapsed"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver"
+                                         Value="True">
+                                    <Setter TargetName="Chrome"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                                    <Setter TargetName="Chrome"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked"
+                                         Value="True">
+                                    <Setter TargetName="Chrome"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                    <Setter TargetName="Chrome"
+                                            Property="BorderBrush"
+                                            Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed"
+                                         Value="True">
+                                    <Setter TargetName="Chrome"
+                                            Property="Background"
+                                            Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled"
+                                         Value="False">
+                                    <Setter TargetName="Chrome"
+                                            Property="Opacity"
+                                            Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="ToolbarComboBoxStyle"
+                   TargetType="{x:Type ComboBox}"
+                   BasedOn="{StaticResource {x:Type ComboBox}}">
+                <Setter Property="MinHeight"
+                        Value="32"/>
+                <Setter Property="Padding"
+                        Value="12,6"/>
+                <Setter Property="Margin"
+                        Value="0,0,6,0"/>
+                <Setter Property="Background"
+                        Value="{DynamicResource ControlFillColorDefaultBrush}"/>
+                <Setter Property="BorderBrush"
+                        Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                <Setter Property="BorderThickness"
+                        Value="1"/>
+                <Setter Property="Foreground"
+                        Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                <Setter Property="Cursor"
+                        Value="Hand"/>
+                <Setter Property="SnapsToDevicePixels"
+                        Value="True"/>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

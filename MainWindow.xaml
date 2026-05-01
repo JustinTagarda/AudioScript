@@ -8,10 +8,10 @@
         mc:Ignorable="d"
         Title="AudioScript"
         Icon="pack://application:,,,/assets/AudioScript.ico"
-        Height="670"
-        Width="1080"
-        MinHeight="600"
-        MinWidth="900"
+        Height="600"
+        Width="900"
+        MinHeight="400"
+        MinWidth="500"
         WindowStartupLocation="CenterScreen"
         AllowDrop="True"
         PreviewDragEnter="Window_PreviewDragEnter"
@@ -39,6 +39,14 @@
                         Executed="CopyTimelineAndTextCommand_Executed"/>
     </Window.CommandBindings>
     <Window.Resources>
+        <Style x:Key="SectionHeaderTextBlockStyle"
+               TargetType="{x:Type TextBlock}"
+               BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize"
+                    Value="16"/>
+            <Setter Property="Margin"
+                    Value="0,0,0,4"/>
+        </Style>
         <Style x:Key="FluentComboBoxItemStyle"
                TargetType="{x:Type ComboBoxItem}"
                BasedOn="{StaticResource {x:Type ComboBoxItem}}"/>
@@ -191,30 +199,6 @@
                     </StackPanel>
                 </StatusBarItem>
 
-                <StatusBarItem DockPanel.Dock="Right"
-                               Padding="0">
-                    <StackPanel Orientation="Horizontal">
-                        <Button Content="API Key"
-                                Margin="0,0,10,0"
-                                VerticalAlignment="Center"
-                                ToolTip="OpenAI API Key"
-                                AutomationProperties.Name="OpenAI API Key"
-                                IsEnabled="{Binding IsOpenAiSettingsEnabled}"
-                                Click="OpenOpenAiSettings_Click"/>
-                        <ComboBox Width="129"
-                                  Margin="0,0,10,0"
-                                  ItemsSource="{Binding ThemeOptions}"
-                                  DisplayMemberPath="DisplayName"
-                                  SelectedValuePath="Preference"
-                                  SelectedValue="{Binding SelectedThemePreference, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                  ItemContainerStyle="{StaticResource FluentComboBoxItemStyle}"/>
-                        <ToggleButton x:Name="LogsToggleButton"
-                                      Content="Logs"
-                                      Margin="0,0,20,0"
-                                      IsEnabled="{Binding HasProcessLogs}"/>
-                    </StackPanel>
-                </StatusBarItem>
-
                 <StatusBarItem DockPanel.Dock="Left"
                                Padding="0">
                     <TextBlock Text="{Binding StatusMessage}"
@@ -224,224 +208,69 @@
                 </StatusBarItem>
             </StatusBar>
 
-            <Border DockPanel.Dock="Bottom"
-                    Margin="8,0,8,6"
-                    Padding="8"
-                    CornerRadius="6"
-                    BorderThickness="1"
-                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel Grid.Row="0"
-                                Grid.Column="0"
-                                Margin="0,0,14,0"
-                                Orientation="Horizontal">
-                        <TextBlock Text="Player"
-                                   FontSize="16"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock Text="{Binding LoadedAudioFileName}"
-                                   Margin="20,0,0,0"
-                                   FontSize="11"
-                                   VerticalAlignment="Center"
-                                   TextTrimming="CharacterEllipsis"
-                                   MaxWidth="220"/>
-                    </StackPanel>
-
-                    <Grid Grid.Row="1"
-                          Grid.ColumnSpan="2"
-                          Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <CheckBox Grid.Column="0"
-                                  Content="Auto play"
-                                  Margin="0,0,12,0"
-                                  VerticalAlignment="Center"
-                                  IsChecked="{Binding AutoPlayTimelineSelection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                        <Button Grid.Column="1"
-                                Margin="0,0,8,0"
-                                Width="74">
-                            <Button.Style>
-                                <Style TargetType="Button"
-                                       BasedOn="{StaticResource {x:Type Button}}">
-                                    <Setter Property="Content"
-                                            Value="Play"/>
-                                    <Setter Property="Command"
-                                            Value="{Binding PlayAudioCommand}"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsAudioPlaying}"
-                                                     Value="True">
-                                            <Setter Property="Content"
-                                                    Value="Pause"/>
-                                            <Setter Property="Command"
-                                                    Value="{Binding PauseAudioCommand}"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
-                        <TextBlock Grid.Column="2"
-                                   Text="{Binding AudioElapsedText}"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,8,0"
-                                   FontSize="12"/>
-                        <Slider Grid.Column="3"
-                                Minimum="0"
-                                Maximum="{Binding AudioSeekMaximumSeconds}"
-                                Value="{Binding AudioSeekPositionSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                VerticalAlignment="Center"
-                                IsEnabled="{Binding IsAudioFileLoaded}"/>
-                        <TextBlock Grid.Column="4"
-                                   Text="{Binding AudioRemainingText}"
-                                   VerticalAlignment="Center"
-                                   Margin="8,0,0,0"
-                                   FontSize="12"/>
-                    </Grid>
-                </Grid>
-            </Border>
-
-            <Border DockPanel.Dock="Bottom"
-                    Margin="8,0,8,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility"
-                                Value="Collapsed"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsChecked, ElementName=LogsToggleButton}"
-                                         Value="True">
-                                <Setter Property="Visibility"
-                                        Value="Visible"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-
-                    <DockPanel Grid.Row="0"
-                               Margin="8,8,8,6"
-                               LastChildFill="False">
-                        <TextBlock Text="Process Logs"
-                                   DockPanel.Dock="Left"
-                                   FontSize="16"/>
-                        <TextBlock Text="Latest activity"
-                                   DockPanel.Dock="Right"
-                                   VerticalAlignment="Center"
-                                   FontSize="11"/>
-                    </DockPanel>
-
-                    <ListView x:Name="ProcessLogsListView"
-                              Grid.Row="1"
-                              Margin="8,0,8,8"
-                              Height="132"
-                              ItemsSource="{Binding ProcessLogs}"
-                              ItemContainerStyle="{StaticResource FluentListViewItemStyle}"
-                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Margin="10,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="88"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding Time}"/>
-                                    <TextBlock Grid.Column="1"
-                                               Text="{Binding Message}"
-                                               Margin="12,0,0,0"
-                                               TextWrapping="Wrap"/>
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                </Grid>
-            </Border>
-
             <Grid Margin="6,2,6,4">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="332"/>
-                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="300"/>
+                    <ColumnDefinition Width="0"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <Grid Grid.Column="0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
+                <Border Grid.Column="0"
+                        Padding="6">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
 
                     <Border Grid.Row="0"
-                            Padding="10">
+                            Margin="0,0,0,8">
                         <StackPanel>
-                            <TextBlock Text="Current Task"
-                                       FontSize="18"
-                                       Margin="0,0,0,10"/>
-
-                            <Border x:Name="AudioDropZoneBorder"
-                                    Margin="0,2,0,0"
-                                    Padding="8">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0"
-                                                VerticalAlignment="Center">
-                                        <TextBlock Text="Drop audio file"
-                                                   FontSize="13"
-                                                   FontWeight="SemiBold">
-
-                                        </TextBlock>
-                                        <TextBlock Text="{Binding LoadedAudioFileName}"
-                                                   Margin="0,2,0,0"
-                                                   FontSize="11.5"
-                                                   FontWeight="SemiBold"
-                                                   TextTrimming="CharacterEllipsis">
-
-                                        </TextBlock>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1"
-                                                Orientation="Horizontal"
-                                                VerticalAlignment="Center">
-                                        <Button Content="Select Audio"
-                                                VerticalAlignment="Center"
-                                                Command="{Binding OpenAudioFileCommand}"/>
-                                        <Border Width="8"/>
-                                        <Button Content="Clear"
-                                                VerticalAlignment="Center"
-                                                Command="{Binding ClearCommand}"/>
-                                    </StackPanel>
-                                </Grid>
+                            <Border x:Name="AudioDropZoneBorder">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Select Audio"
+                                            VerticalAlignment="Center"
+                                            Tag="&#xE838;"
+                                            Style="{StaticResource ToolbarButtonStyle}"
+                                            Command="{Binding OpenAudioFileCommand}"/>
+                                    <Button Content="Clear"
+                                            VerticalAlignment="Center"
+                                            Tag="&#xE711;"
+                                            Style="{StaticResource ToolbarButtonStyle}"
+                                            Command="{Binding ClearCommand}"/>
+                                </StackPanel>
                             </Border>
                             <TextBlock Text="{Binding CurrentSessionAudioIssue}"
                                        Margin="0,8,0,0"
                                        FontSize="11"
                                        TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility"
+                                                Value="Visible"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="Text"
+                                                     Value="">
+                                                <Setter Property="Visibility"
+                                                        Value="Collapsed"/>
+                                            </Trigger>
+                                            <Trigger Property="Text"
+                                                     Value="{x:Null}">
+                                                <Setter Property="Visibility"
+                                                        Value="Collapsed"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
 
                             </TextBlock>
 
                             <TextBlock Text="Mode"
-                                       Margin="0,16,0,6"/>
+                                       Margin="0,10,0,4"/>
                             <ItemsControl ItemsSource="{Binding TranscriptModes}"
                                           IsEnabled="{Binding IsTranscriptModeSelectionEnabled}"
-                                          Margin="0,2,0,0">
+                                          Margin="0,0,0,0">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <StackPanel/>
@@ -449,199 +278,97 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Grid Margin="0,0,0,12">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <RadioButton Grid.Column="0"
-                                                         GroupName="TranscriptModeGroup"
+                                        <Grid Margin="0,0,0,8">
+                                            <RadioButton GroupName="TranscriptModeGroup"
                                                          VerticalAlignment="Center"
                                                          IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
                                                 <StackPanel>
                                                     <TextBlock Text="{Binding DisplayName}"
-                                                               FontSize="13"
+                                                               Foreground="{DynamicResource SelectionControlForegroundBrush}"
+                                                               FontSize="12"
                                                                FontWeight="SemiBold"/>
-                                                    <TextBlock Text="{Binding Description}"
-                                                               Margin="0,3,0,0"
-                                                               FontSize="10.5"
-                                                               TextWrapping="Wrap"/>
                                                 </StackPanel>
                                             </RadioButton>
-                                            <StackPanel Grid.Column="1"
-                                                        Orientation="Horizontal"
-                                                        VerticalAlignment="Center"
-                                                        HorizontalAlignment="Right">
-                                                <StackPanel.Style>
-                                                    <Style TargetType="StackPanel">
-                                                        <Setter Property="Visibility"
-                                                                Value="Collapsed"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding Mode}"
-                                                                         Value="{x:Static abstractions:TranscriptGenerationMode.Segments}">
-                                                                <Setter Property="Visibility"
-                                                                        Value="Visible"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </StackPanel.Style>
-                                                <CheckBox VerticalAlignment="Center"
-                                                          Margin="0,0,2,0"
-                                                          IsChecked="{Binding DataContext.IsAiAssistChecked, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                          Checked="AutoTranscribeWithAiCheckBox_Checked">
-                                                    <CheckBox.Style>
-                                                        <Style TargetType="CheckBox"
-                                                               BasedOn="{StaticResource {x:Type CheckBox}}">
-                                                            <Setter Property="IsEnabled"
-                                                                    Value="False"/>
-                                                            <Style.Triggers>
-                                                                <MultiDataTrigger>
-                                                                    <MultiDataTrigger.Conditions>
-                                                                        <Condition Binding="{Binding DataContext.IsSegmentModeSelected, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                                   Value="True"/>
-                                                                        <Condition Binding="{Binding DataContext.IsEngineSelectionEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                                   Value="True"/>
-                                                                    </MultiDataTrigger.Conditions>
-                                                                    <Setter Property="IsEnabled"
-                                                                            Value="True"/>
-                                                                </MultiDataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </CheckBox.Style>
-                                                </CheckBox>
-                                                <TextBlock Text="AI Assist"
-                                                           VerticalAlignment="Center"
-                                                           FontSize="13"
-                                                           FontWeight="SemiBold"/>
-                                            </StackPanel>
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
 
-                            <Grid Margin="0,10,0,0"
-                                  HorizontalAlignment="Right">
-                                <Grid.Style>
-                                    <Style TargetType="{x:Type Grid}">
-                                        <Setter Property="Visibility"
-                                                Value="Collapsed"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsSegmentModeSelected}"
-                                                         Value="True">
-                                                <Setter Property="Visibility"
-                                                        Value="Visible"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Grid.Style>
+                            <TextBlock Text="Engine"
+                                       Margin="0,2,0,4"/>
+                            <Grid>
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <Button x:Name="GenerateTranscriptButton"
-                                        Grid.Column="0"
-                                        MinWidth="156"
-                                        Content="{Binding GenerateTranscriptButtonText}"
-                                        IsEnabled="{Binding IsTranscriptGenerationEnabled}"
-                                        Click="GenerateTranscript_Click">
-                                    <Button.Style>
-                                        <Style TargetType="Button"
-                                               BasedOn="{StaticResource {x:Type Button}}">
-                                            <Setter Property="Visibility"
-                                                    Value="Visible"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility"
-                                                            Value="Collapsed"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Button.Style>
-                                </Button>
-                                <Button Grid.Column="0"
-                                        MinWidth="156"
-                                        Content="Cancel Transcription"
-                                        Click="CancelProcessing_Click">
-                                    <Button.Style>
-                                        <Style TargetType="Button"
-                                               BasedOn="{StaticResource {x:Type Button}}">
-                                            <Setter Property="Visibility"
-                                                    Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility"
-                                                            Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Button.Style>
-                                </Button>
+                                <ComboBox Grid.Column="0"
+                                          Padding="12,6,24,6"
+                                          ItemsSource="{Binding Engines}"
+                                          SelectedItem="{Binding SelectedEngine, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          DisplayMemberPath="DisplayName"
+                                          IsEnabled="{Binding IsEngineSelectionEnabled}"
+                                          ItemContainerStyle="{StaticResource FluentComboBoxItemStyle}"/>
+                                <Button Grid.Column="1"
+                                        Content="Setup"
+                                        Tag="&#xE713;"
+                                        Margin="8,0,0,0"
+                                        Style="{StaticResource ToolbarButtonStyle}"
+                                        Click="SetupEngineModels_Click"/>
                             </Grid>
 
-                            <Grid Margin="0,10,0,0"
-                                  HorizontalAlignment="Right">
-                                <Grid.Style>
-                                    <Style TargetType="{x:Type Grid}">
-                                        <Setter Property="Visibility"
-                                                Value="Collapsed"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsSpeakerDiarizationModeSelected}"
-                                                         Value="True">
+                            <Grid Margin="0,6,0,0"
+                                  HorizontalAlignment="Stretch">
+                                <StackPanel Orientation="Horizontal"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Right">
+                                    <Button x:Name="PrimaryTranscriptActionButton"
+                                            MinWidth="156"
+                                            Content="{Binding PrimaryActionButtonText}"
+                                            Tag="&#xE768;"
+                                            IsEnabled="{Binding CanRunPrimaryAction}"
+                                            Click="GenerateTranscript_Click">
+                                        <Button.Style>
+                                            <Style TargetType="Button"
+                                                   BasedOn="{StaticResource ToolbarPrimaryButtonStyle}">
                                                 <Setter Property="Visibility"
                                                         Value="Visible"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Grid.Style>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <Button MinWidth="156"
-                                        Content="{Binding GenerateTranscriptButtonText}"
-                                        IsEnabled="{Binding IsTranscriptGenerationEnabled}"
-                                        Click="GenerateTranscript_Click">
-                                    <Button.Style>
-                                        <Style TargetType="Button"
-                                               BasedOn="{StaticResource {x:Type Button}}">
-                                            <Setter Property="Visibility"
-                                                    Value="Visible"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility"
-                                                            Value="Collapsed"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Button.Style>
-                                </Button>
-                                <Button MinWidth="156"
-                                        Content="Cancel Transcription"
-                                        Click="CancelProcessing_Click">
-                                    <Button.Style>
-                                        <Style TargetType="Button"
-                                               BasedOn="{StaticResource {x:Type Button}}">
-                                            <Setter Property="Visibility"
-                                                    Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsSegmentBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility"
-                                                            Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Button.Style>
-                                </Button>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsGenerationRunning}"
+                                                                 Value="True">
+                                                        <Setter Property="Visibility"
+                                                                Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                    <Button MinWidth="156"
+                                            Content="{Binding CancelActionButtonText}"
+                                            Tag="&#xE711;"
+                                            IsEnabled="{Binding CanCancelCurrentAction}"
+                                            Click="CancelProcessing_Click">
+                                        <Button.Style>
+                                            <Style TargetType="Button"
+                                                   BasedOn="{StaticResource ToolbarButtonStyle}">
+                                                <Setter Property="Visibility"
+                                                        Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsGenerationRunning}"
+                                                                 Value="True">
+                                                        <Setter Property="Visibility"
+                                                                Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                </StackPanel>
                             </Grid>
 
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Row="1"
-                            Padding="10"
-                            Margin="0,10,0,0">
+                    <Border Grid.Row="1">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -651,10 +378,9 @@
 
                             <TextBlock Grid.Row="0"
                                        Text="Sessions"
-                                       FontSize="18"/>
+                                       Style="{StaticResource SectionHeaderTextBlockStyle}"/>
 
-                            <Grid Grid.Row="1"
-                                  Margin="0,10,0,0">
+                            <Grid Grid.Row="1">
                                 <ListBox ItemsSource="{Binding RecentSessions}"
                                          SelectedItem="{Binding SelectedRecentSession}"
                                          HorizontalContentAlignment="Stretch"
@@ -712,280 +438,378 @@
 
                             <StackPanel Grid.Row="2"
                                         Orientation="Horizontal"
-                                        HorizontalAlignment="Right"
-                                        Margin="0,10,0,0">
+                                        HorizontalAlignment="Left"
+                                        Margin="0,6,0,0">
                                 <Button Content="Load"
+                                        Tag="&#xE8A7;"
+                                        Style="{StaticResource ToolbarButtonStyle}"
                                         Command="{Binding OpenSelectedSessionCommand}"/>
-                                <Border Width="8"/>
                                 <Button Content="Clear"
+                                        Tag="&#xE711;"
+                                        Style="{StaticResource ToolbarButtonStyle}"
                                         Command="{Binding ClearCommand}"/>
-                                <Border Width="8"/>
                                 <Button Content="Delete"
+                                        Tag="&#xE74D;"
+                                        Style="{StaticResource ToolbarDestructiveButtonStyle}"
                                         Command="{Binding DeleteSelectedSessionCommand}"/>
                             </StackPanel>
                         </Grid>
                     </Border>
-                </Grid>
 
-                <GridSplitter Grid.Column="1"
-                              Width="6"
-                              HorizontalAlignment="Center"
-                              VerticalAlignment="Stretch"
-                              ResizeDirection="Columns"
-                              ResizeBehavior="PreviousAndNext"
-                              ShowsPreview="True"/>
+                    <Border Grid.Row="2"
+                            Margin="0,8,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Settings"
+                                       Style="{StaticResource SectionHeaderTextBlockStyle}"/>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Grid.Row="0"
+                                            Orientation="Horizontal">
+                                    <ComboBox MinWidth="140"
+                                              VerticalAlignment="Top"
+                                              ItemsSource="{Binding ThemeOptions}"
+                                              SelectedValuePath="Preference"
+                                              SelectedValue="{Binding SelectedThemePreference, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              DisplayMemberPath="DisplayName"
+                                              ItemContainerStyle="{StaticResource FluentComboBoxItemStyle}"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    </Grid>
+                </Border>
 
                 <Border Grid.Column="2"
                         Padding="6"
                         Margin="0">
                     <Grid>
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <Grid Grid.Row="0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Transcript"
-                                           FontSize="18"/>
-                                <TextBlock Text="{Binding TranscriptPaneSubtitle}"
-                                           Margin="0,3,0,0"
-                                           FontSize="11"
-                                           TextTrimming="CharacterEllipsis">
 
-                                </TextBlock>
-                            </StackPanel>
-                            <Grid Grid.Column="1"
-                                  VerticalAlignment="Center">
-
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <CheckBox Content="Copy with time"
-                                          Grid.Column="0"
-                                          IsChecked="{Binding CopyFinalizedWithTimeline, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
-                                    <CheckBox.Style>
-                                        <Style TargetType="CheckBox"
-                                               BasedOn="{StaticResource {x:Type CheckBox}}">
-                                            <Setter Property="Visibility"
-                                                    Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsCopyWithTimelineOptionVisible}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility"
-                                                            Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </CheckBox.Style>
-                                </CheckBox>
-                                <TextBlock Grid.Column="2"
-                                           Text="Speaker copy includes labels and time."
-                                           VerticalAlignment="Center"
-                                           FontSize="10.5">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Visibility"
-                                                    Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsSpeakerCopyFormatVisible}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility"
-                                                            Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                                <Button Content="Copy"
-                                        Grid.Column="4"
-                                        VerticalAlignment="Center"
-                                        ToolTip="Copy to Clipboard"
-                                        AutomationProperties.Name="Copy to Clipboard"
-                                        IsEnabled="{Binding CanCopyTranscript}"
-                                        Click="CopyFinalizedToClipboard_Click"/>
-                            </Grid>
-                        </Grid>
-
-                        <Border Grid.Row="1"
-                                Margin="0,8,0,0"
-                                ClipToBounds="True">
+                        <Border Grid.Row="0"
+                                Padding="0"
+                                MinHeight="0"
+                                VerticalAlignment="Stretch">
                             <Grid>
-                                <DataGrid x:Name="FinalizedTranscriptGrid"
-                                          ItemsSource="{Binding CurrentTranscriptLines}"
-                                          Style="{StaticResource FluentDataGridStyle}"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          CanUserDeleteRows="False"
-                                          CanUserResizeRows="False"
-                                          SelectionMode="Single"
-                                          SelectionUnit="Cell"
-                                          CurrentCellChanged="FinalizedTranscriptGrid_CurrentCellChanged"
-                                          GotKeyboardFocus="FinalizedTranscriptGrid_GotKeyboardFocus"
-                                          LostKeyboardFocus="FinalizedTranscriptGrid_LostKeyboardFocus"
-                                          BeginningEdit="FinalizedTranscriptGrid_BeginningEdit"
-                                          CellEditEnding="FinalizedTranscriptGrid_CellEditEnding"
-                                          PreviewKeyDown="FinalizedTranscriptGrid_PreviewKeyDown"
-                                          VerticalScrollBarVisibility="Auto"
-                                          HorizontalScrollBarVisibility="Disabled">
-                                    <DataGrid.Resources>
-                                        <Style TargetType="{x:Type TextBox}"
-                                               BasedOn="{StaticResource WorkspaceGridEditorTextBoxStyle}"/>
-                                    </DataGrid.Resources>
-
-                                    <DataGrid.Columns>
-                                        <DataGridTemplateColumn x:Name="TimelineTranscriptColumn"
-                                                                Header="Timeline"
-                                                                CanUserSort="False"
-                                                                Width="78">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <Border HorizontalAlignment="Left"
-                                                            Margin="6,0,0,0"
-                                                            Padding="4,1"
-                                                            CornerRadius="4">
-                                                        <Border.Style>
-                                                            <Style TargetType="Border">
-                                                                <Setter Property="Background"
-                                                                        Value="Transparent"/>
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding IsPlaybackTimelineMatch}"
-                                                                                 Value="True">
-                                                                        <Setter Property="Background"
-                                                                                Value="#33B3D4FC"/>
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Border.Style>
-                                                        <TextBlock Text="{Binding Timeline}"
-                                                                   TextAlignment="Left"
-                                                                   HorizontalAlignment="Left"/>
-                                                    </Border>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                            <DataGridTemplateColumn.CellEditingTemplate>
-                                                <DataTemplate>
-                                                    <TextBox Text="{Binding Timeline, Mode=TwoWay, UpdateSourceTrigger=Explicit}"
-                                                             MaxLength="5"
-                                                             TextAlignment="Left"
-                                                             Loaded="TimelineEditingTextBox_Loaded"
-                                                             GotKeyboardFocus="TimelineEditingTextBox_GotKeyboardFocus"
-                                                             PreviewTextInput="TimelineEditingTextBox_PreviewTextInput"
-                                                             PreviewKeyDown="TimelineEditingTextBox_PreviewKeyDown"
-                                                             DataObject.Pasting="TimelineEditingTextBox_Pasting"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellEditingTemplate>
-                                        </DataGridTemplateColumn>
-                                        <DataGridTextColumn x:Name="SpeakerTranscriptColumn"
-                                                            Header="Speaker"
-                                                            Binding="{Binding SpeakerLabel}"
-                                                            Width="136"/>
-                                        <DataGridTemplateColumn x:Name="TranscriptTextColumn"
-                                                                Header="Text"
-                                                                CanUserSort="False"
-                                                                Width="*">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <Grid>
-                                                        <TextBlock Text="{Binding Text}">
-
-                                                        </TextBlock>
-                                                        <Border HorizontalAlignment="Stretch"
-                                                                VerticalAlignment="Center"
-                                                                Margin="20,0"
-                                                                Padding="0">
-                                                            <Border.Style>
-                                                                <Style TargetType="Border">
-                                                                    <Setter Property="Visibility"
-                                                                            Value="Collapsed"/>
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsPlaybackEditTranscribing}"
-                                                                                     Value="True">
-                                                                            <Setter Property="Visibility"
-                                                                                    Value="Visible"/>
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding IsPlaybackEditProgressIndeterminate}"
-                                                                                     Value="True">
-                                                                            <Setter Property="Visibility"
-                                                                                    Value="Visible"/>
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Border.Style>
-
-                                                            <ProgressBar Value="{Binding PlaybackEditProgressPercent}"
-                                                                         IsIndeterminate="{Binding IsPlaybackEditProgressIndeterminate}"/>
-                                                        </Border>
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                            <DataGridTemplateColumn.CellEditingTemplate>
-                                                <DataTemplate>
-                                                    <TextBox Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                             IsReadOnly="{Binding IsPlaybackEditTranscribing}"/>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellEditingTemplate>
-                                        </DataGridTemplateColumn>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <Border x:Name="TranscriptEmptyStateBorder"
-                                        Padding="12"
-                                        Margin="0,56,0,0"
-                                        VerticalAlignment="Top"
-                                        MaxWidth="360">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Visibility"
-                                                    Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsTranscriptEmptyStateVisible}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility"
-                                                            Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <StackPanel HorizontalAlignment="Center"
-                                                VerticalAlignment="Center"
-                                                MaxWidth="320">
-                                        <TextBlock Text="{Binding TranscriptEmptyStateTitle}"
-                                                   FontSize="15"
-                                                   FontWeight="SemiBold"
-                                                   TextAlignment="Center"/>
-                                        <TextBlock Text="{Binding TranscriptEmptyStateMessage}"
-                                                   Margin="0,8,0,0"
-                                                   FontSize="11"
-                                                   TextAlignment="Center"
-                                                   TextWrapping="Wrap"/>
-                                        <Button Content="Select Audio"
-                                                Margin="0,12,0,0"
-                                                HorizontalAlignment="Center"
-                                                Command="{Binding OpenAudioFileCommand}">
-                                            <Button.Style>
-                                                <Style TargetType="Button"
-                                                       BasedOn="{StaticResource {x:Type Button}}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0">
+                                    <StackPanel HorizontalAlignment="Right"
+                                                Margin="0,0,0,4"
+                                                Orientation="Horizontal"
+                                                VerticalAlignment="Center">
+                                        <CheckBox Content="Copy with time"
+                                                  VerticalAlignment="Center"
+                                                  VerticalContentAlignment="Center"
+                                                  Margin="0,0,6,0"
+                                                  FontWeight="SemiBold"
+                                                  IsChecked="{Binding CopyFinalizedWithTimeline, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                            <CheckBox.Style>
+                                                <Style TargetType="CheckBox"
+                                                       BasedOn="{StaticResource {x:Type CheckBox}}">
                                                     <Setter Property="Visibility"
                                                             Value="Collapsed"/>
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding ShouldShowTranscriptChooseFileAction}"
+                                                        <DataTrigger Binding="{Binding IsCopyWithTimelineOptionVisible}"
                                                                      Value="True">
                                                             <Setter Property="Visibility"
                                                                     Value="Visible"/>
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
-                                            </Button.Style>
-                                        </Button>
+                                            </CheckBox.Style>
+                                        </CheckBox>
+                                        <Button Content="Copy"
+                                                VerticalAlignment="Center"
+                                                ToolTip="Copy to Clipboard"
+                                                AutomationProperties.Name="Copy to Clipboard"
+                                                Tag="&#xE8C8;"
+                                                Style="{StaticResource ToolbarButtonStyle}"
+                                                IsEnabled="{Binding CanCopyTranscript}"
+                                                Click="CopyFinalizedToClipboard_Click"/>
                                     </StackPanel>
+                                </Grid>
+
+                                <Border Grid.Row="1"
+                                        ClipToBounds="True"
+                                        VerticalAlignment="Stretch">
+                                    <Grid>
+                                        <DataGrid x:Name="FinalizedTranscriptGrid"
+                                                  ItemsSource="{Binding CurrentTranscriptLines}"
+                                                  Style="{StaticResource FluentDataGridStyle}"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  CanUserDeleteRows="False"
+                                                  CanUserResizeRows="False"
+                                                  SelectionMode="Single"
+                                                  SelectionUnit="Cell"
+                                                  CurrentCellChanged="FinalizedTranscriptGrid_CurrentCellChanged"
+                                                  GotKeyboardFocus="FinalizedTranscriptGrid_GotKeyboardFocus"
+                                                  LostKeyboardFocus="FinalizedTranscriptGrid_LostKeyboardFocus"
+                                                  BeginningEdit="FinalizedTranscriptGrid_BeginningEdit"
+                                                  CellEditEnding="FinalizedTranscriptGrid_CellEditEnding"
+                                                  PreviewKeyDown="FinalizedTranscriptGrid_PreviewKeyDown"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  VerticalAlignment="Stretch"
+                                                  HorizontalAlignment="Stretch">
+                                            <DataGrid.Resources>
+                                                <Style TargetType="{x:Type TextBox}"
+                                                       BasedOn="{StaticResource WorkspaceGridEditorTextBoxStyle}"/>
+                                            </DataGrid.Resources>
+
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn x:Name="TimelineTranscriptColumn"
+                                                                        Header="Timeline"
+                                                                        CanUserSort="False"
+                                                                        Width="78">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <Border HorizontalAlignment="Left"
+                                                                    Margin="4,0"
+                                                                    Padding="4,1"
+                                                                    CornerRadius="4">
+                                                                <Border.Style>
+                                                                    <Style TargetType="Border">
+                                                                        <Setter Property="Background"
+                                                                                Value="Transparent"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsPlaybackTimelineMatch}"
+                                                                                         Value="True">
+                                                                                <Setter Property="Background"
+                                                                                        Value="#33B3D4FC"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
+                                                                <TextBlock Text="{Binding Timeline}"
+                                                                           TextAlignment="Left"
+                                                                           HorizontalAlignment="Left"/>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                    <DataGridTemplateColumn.CellEditingTemplate>
+                                                        <DataTemplate>
+                                                            <TextBox Text="{Binding Timeline, Mode=TwoWay, UpdateSourceTrigger=Explicit}"
+                                                                     MaxLength="5"
+                                                                     TextAlignment="Left"
+                                                                     Loaded="TimelineEditingTextBox_Loaded"
+                                                                     GotKeyboardFocus="TimelineEditingTextBox_GotKeyboardFocus"
+                                                                     PreviewTextInput="TimelineEditingTextBox_PreviewTextInput"
+                                                                     PreviewKeyDown="TimelineEditingTextBox_PreviewKeyDown"
+                                                                     DataObject.Pasting="TimelineEditingTextBox_Pasting"/>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellEditingTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn x:Name="SpeakerColumn"
+                                                                    Header="Speaker"
+                                                                    Binding="{Binding SpeakerLabel}"
+                                                                    Width="136"
+                                                                    Visibility="Collapsed"/>
+                                                <DataGridTemplateColumn x:Name="TranscriptTextColumn"
+                                                                        Header="Text"
+                                                                        CanUserSort="False"
+                                                                        Width="*">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <TextBlock Text="{Binding Text}"
+                                                                           Margin="4,0"
+                                                                           TextWrapping="Wrap">
+                                                                </TextBlock>
+                                                                <Border HorizontalAlignment="Stretch"
+                                                                        VerticalAlignment="Center"
+                                                                        Margin="20,0"
+                                                                        Padding="0">
+                                                                    <Border.Style>
+                                                                        <Style TargetType="Border">
+                                                                            <Setter Property="Visibility"
+                                                                                    Value="Collapsed"/>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsPlaybackEditTranscribing}"
+                                                                                             Value="True">
+                                                                                    <Setter Property="Visibility"
+                                                                                            Value="Visible"/>
+                                                                                </DataTrigger>
+                                                                                <DataTrigger Binding="{Binding IsPlaybackEditProgressIndeterminate}"
+                                                                                             Value="True">
+                                                                                    <Setter Property="Visibility"
+                                                                                            Value="Visible"/>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Border.Style>
+
+                                                                    <ProgressBar Value="{Binding PlaybackEditProgressPercent}"
+                                                                                 IsIndeterminate="{Binding IsPlaybackEditProgressIndeterminate}"/>
+                                                                </Border>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                    <DataGridTemplateColumn.CellEditingTemplate>
+                                                        <DataTemplate>
+                                                            <TextBox Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                     TextWrapping="Wrap"
+                                                                     AcceptsReturn="True"
+                                                                     IsReadOnly="{Binding IsPlaybackEditTranscribing}"/>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellEditingTemplate>
+                                                </DataGridTemplateColumn>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <Border x:Name="TranscriptEmptyStateBorder"
+                                                Padding="12"
+                                                Margin="0"
+                                                VerticalAlignment="Stretch"
+                                                MaxWidth="360">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility"
+                                                            Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsTranscriptEmptyStateVisible}"
+                                                                     Value="True">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"
+                                                        MaxWidth="320">
+                                                <TextBlock Text="{Binding TranscriptEmptyStateTitle}"
+                                                           FontSize="15"
+                                                           FontWeight="SemiBold"
+                                                           TextAlignment="Center"/>
+                                                <TextBlock Text="{Binding TranscriptEmptyStateMessage}"
+                                                           Margin="0,8,0,0"
+                                                           FontSize="11"
+                                                           TextAlignment="Center"
+                                                           TextWrapping="Wrap"/>
+                                                <Button Content="Select Audio"
+                                                        Margin="0,12,0,0"
+                                                        HorizontalAlignment="Center"
+                                                        Tag="&#xE838;"
+                                                        Command="{Binding OpenAudioFileCommand}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button"
+                                                               BasedOn="{StaticResource ToolbarButtonStyle}">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding ShouldShowTranscriptChooseFileAction}"
+                                                                             Value="True">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
                                 </Border>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="1"
+                                Margin="0,8,0,0"
+                                Padding="8"
+                                CornerRadius="6"
+                                BorderThickness="1"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Row="0"
+                                            Grid.Column="0"
+                                            Margin="0,0,14,0"
+                                            Orientation="Horizontal">
+                                    <TextBlock Text="Player"
+                                               FontSize="16"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding LoadedAudioFileName}"
+                                               Margin="20,0,0,0"
+                                               FontSize="11"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               MaxWidth="220"/>
+                                </StackPanel>
+
+                                <Grid Grid.Row="1"
+                                      Grid.ColumnSpan="2"
+                                      Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0"
+                                              Content="Auto play"
+                                              Margin="0,0,12,0"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding AutoPlayTimelineSelection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <Button Grid.Column="1"
+                                            Margin="0,0,8,0"
+                                            Width="74">
+                                        <Button.Style>
+                                            <Style TargetType="Button"
+                                                   BasedOn="{StaticResource ToolbarButtonStyle}">
+                                                <Setter Property="Content"
+                                                        Value="Play"/>
+                                                <Setter Property="Tag"
+                                                        Value="&#xE768;"/>
+                                                <Setter Property="Command"
+                                                        Value="{Binding PlayAudioCommand}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsAudioPlaying}"
+                                                                 Value="True">
+                                                        <Setter Property="Content"
+                                                                Value="Pause"/>
+                                                        <Setter Property="Tag"
+                                                                Value="&#xE769;"/>
+                                                        <Setter Property="Command"
+                                                                Value="{Binding PauseAudioCommand}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding AudioElapsedText}"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,8,0"
+                                               FontSize="12"/>
+                                    <Slider Grid.Column="3"
+                                            Minimum="0"
+                                            Maximum="{Binding AudioSeekMaximumSeconds}"
+                                            Value="{Binding AudioSeekPositionSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            VerticalAlignment="Center"
+                                            IsEnabled="{Binding IsAudioFileLoaded}"/>
+                                    <TextBlock Grid.Column="4"
+                                               Text="{Binding AudioRemainingText}"
+                                               VerticalAlignment="Center"
+                                               Margin="8,0,0,0"
+                                               FontSize="12"/>
+                                </Grid>
                             </Grid>
                         </Border>
                     </Grid>
@@ -993,35 +817,70 @@
             </Grid>
         </DockPanel>
 
-        <Border x:Name="SegmentBatchOverlay"
+        <Border x:Name="TranscribeAudioBatchOverlay"
                 Panel.ZIndex="100"
                 Background="Transparent"
                 Visibility="Collapsed"
                 IsHitTestVisible="False">
             <Grid>
                 <Border HorizontalAlignment="Center"
-                        x:Name="SegmentBatchCard"
+                        x:Name="TranscribeAudioBatchCard"
                         VerticalAlignment="Center"
-                        Width="320"
+                        Width="420"
                         Background="{DynamicResource ControlFillColorDefaultBrush}"
                         BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                         BorderThickness="1"
                         CornerRadius="10"
-                        Padding="16,14">
+                        Padding="18,16">
 
                     <StackPanel>
-                        <TextBlock Text="{Binding TranscriptProcessingTitle, RelativeSource={RelativeSource AncestorType=Window}}"
+                        <TextBlock Text="{Binding TranscriptProcessingDetail, RelativeSource={RelativeSource AncestorType=Window}}"
                                    FontSize="18"
                                    HorizontalAlignment="Center"/>
-                        <ProgressBar Width="160"
-                                     Height="8"
+                        <ProgressBar Height="8"
                                      Margin="0,14,0,0"
-                                     IsIndeterminate="True"/>
-                        <TextBlock Text="{Binding StatusMessage}"
-                                   Margin="0,12,0,0"
-                                   FontSize="12"
-                                   TextAlignment="Center"
-                                   TextWrapping="Wrap"/>
+                                     Minimum="0"
+                                     Maximum="100"
+                                     Value="{Binding TranscriptProcessingPercent, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
+                                     IsIndeterminate="{Binding IsTranscriptProcessingIndeterminate, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                        <Grid Margin="0,12,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Row="0"
+                                       Grid.ColumnSpan="2"
+                                       Text="{Binding TranscriptProcessingChunkText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                       FontSize="14"
+                                       Opacity="0.82"
+                                       TextAlignment="Center"/>
+                            <TextBlock Grid.Row="1"
+                                       Grid.ColumnSpan="2"
+                                       Text="{Binding TranscriptProcessingAudioText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                       Margin="0,4,0,0"
+                                       FontSize="11"
+                                       Opacity="0.82"
+                                       TextAlignment="Center"/>
+                            <TextBlock Grid.Row="2"
+                                       Grid.Column="0"
+                                       Text="{Binding TranscriptProcessingElapsedText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                       Margin="0,4,8,0"
+                                       FontSize="11"
+                                       Opacity="0.82"
+                                       TextAlignment="Right"/>
+                            <TextBlock Grid.Row="2"
+                                       Grid.Column="1"
+                                       Text="{Binding TranscriptProcessingEtaText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                       Margin="8,4,0,0"
+                                       FontSize="11"
+                                       Opacity="0.82"
+                                       TextAlignment="Left"/>
+                        </Grid>
                         <DockPanel Margin="0,16,0,0"
                                    LastChildFill="False">
                             <CheckBox DockPanel.Dock="Left"
@@ -1044,10 +903,12 @@
                                     </Style>
                                 </CheckBox.Style>
                             </CheckBox>
-                            <Button x:Name="SegmentBatchCancelButton"
+                            <Button x:Name="TranscribeAudioBatchCancelButton"
                                     DockPanel.Dock="Right"
                                     Content="Cancel"
-                                    IsEnabled="True"
+                                    Tag="&#xE711;"
+                                    Style="{StaticResource ToolbarButtonStyle}"
+                                    IsEnabled="{Binding IsTranscriptProcessingCancelEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
                                     Click="CancelProcessing_Click"/>
                         </DockPanel>
                     </StackPanel>
@@ -1115,6 +976,7 @@
         </Border>
     </Grid>
 </Window>
+
 
 
 

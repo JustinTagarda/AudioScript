@@ -1,3 +1,5 @@
+using AudioScript.Abstractions;
+using AudioScript.Audio;
 using AudioScript.Services;
 using Xunit;
 
@@ -18,6 +20,7 @@ public sealed class AppPreferencesStoreTests {
             Assert.False(snapshot.AutoTranscribeWithAi);
             Assert.Equal(AppThemePreference.System, snapshot.ThemePreference);
             Assert.True(snapshot.AutoPlayTimelineSelection);
+            Assert.Equal(TranscriptionModelCatalog.WhisperSmall, snapshot.SelectedEngineId);
         }
         finally {
             DeleteDirectory(rootPath);
@@ -36,11 +39,16 @@ public sealed class AppPreferencesStoreTests {
                 CopyFinalizedWithTimeline: true,
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.System,
-                AutoPlayTimelineSelection: true));
+                AutoPlayTimelineSelection: true,
+                SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
+                LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                LiveAudioDeviceNumber: -1,
+                SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
             AppPreferencesSnapshot snapshot = store.Load();
 
             Assert.True(snapshot.CopyFinalizedWithTimeline);
             Assert.Equal(AppThemePreference.System, snapshot.ThemePreference);
+            Assert.Equal(TranscriptionModelCatalog.WhisperSmall, snapshot.SelectedEngineId);
             Assert.Empty(Directory.EnumerateFiles(rootPath, "*.tmp", SearchOption.AllDirectories));
         }
         finally {
@@ -60,7 +68,10 @@ public sealed class AppPreferencesStoreTests {
                 CopyFinalizedWithTimeline: false,
                 AutoTranscribeWithAi: true,
                 ThemePreference: AppThemePreference.System,
-                AutoPlayTimelineSelection: true));
+                AutoPlayTimelineSelection: true,
+                SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
+                LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                LiveAudioDeviceNumber: -1));
             AppPreferencesSnapshot snapshot = store.Load();
 
             Assert.False(snapshot.CopyFinalizedWithTimeline);
@@ -71,6 +82,36 @@ public sealed class AppPreferencesStoreTests {
             DeleteDirectory(rootPath);
         }
     }
+
+    [Fact]
+    public void Load_MapsLegacyMinimumWhisperPreferenceToSmall() {
+        string rootPath = CreateTempDirectory();
+        string settingsPath = Path.Combine(rootPath, "app-preferences.json");
+
+        try {
+            Directory.CreateDirectory(rootPath);
+            string legacyMinimumModelId = string.Concat("whisper", "-", "base");
+            File.WriteAllText(
+                settingsPath,
+                $$"""
+                {
+                  "SelectedEngineId": "{{legacyMinimumModelId}}",
+                  "SelectedTranscriptMode": "TranscribeAudio",
+                  "LiveAudioSourceKind": "DefaultPlayback",
+                  "LiveAudioDeviceNumber": -1
+                }
+                """);
+            var store = new AppPreferencesStore(settingsPath);
+
+            AppPreferencesSnapshot snapshot = store.Load();
+
+            Assert.Equal(TranscriptionModelCatalog.WhisperSmall, snapshot.SelectedEngineId);
+        }
+        finally {
+            DeleteDirectory(rootPath);
+        }
+    }
+
 
     [Fact]
     public void Save_AndLoad_RoundTripThemePreference() {
@@ -84,7 +125,10 @@ public sealed class AppPreferencesStoreTests {
                 CopyFinalizedWithTimeline: false,
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.Dark,
-                AutoPlayTimelineSelection: false));
+                AutoPlayTimelineSelection: false,
+                SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
+                LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                LiveAudioDeviceNumber: -1));
             AppPreferencesSnapshot snapshot = store.Load();
 
             Assert.Equal(AppThemePreference.Dark, snapshot.ThemePreference);

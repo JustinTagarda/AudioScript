@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Package.appxmanifest – Microsoft Store / MSIX packaging identity for AudioScript.
+  Store builds store downloaded models and user-created app data under the package
+  LocalState folder, not beside the installed app binaries. This keeps the Store
+  installer small and lets Windows manage package-owned app data on uninstall.
 
   BEFORE SUBMITTING TO THE STORE:
   1. Create (or sign in to) your app in Partner Center:
@@ -65,7 +68,7 @@
 
       <uap:VisualElements
         DisplayName="AudioScript"
-        Description="Audio transcription for anything playing on your PC, powered by OpenAI."
+        Description="Offline audio transcription for local files and live playback capture."
         BackgroundColor="transparent"
         Square150x150Logo="assets\Square150x150Logo.png"
         Square44x44Logo="assets\Square44x44Logo.png">
@@ -82,10 +85,9 @@
 
   <!-- ═══════════════════════════════════════════════════════════════════
        CAPABILITIES
-       • internetClient  – required for OpenAI API calls
+       • internetClient  – required for optional model downloads
        • runFullTrust    – required for all packaged WPF/Win32 desktop apps;
-                           enables Windows Credential Manager, WinForms APIs,
-                           WASAPI loopback capture and file-system access that
+                           enables WinForms APIs, WASAPI loopback capture and file-system access that
                            standard sandboxed apps cannot use
        ═══════════════════════════════════════════════════════════════════ -->
   <Capabilities>

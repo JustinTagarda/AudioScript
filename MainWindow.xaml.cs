@@ -15,10 +15,12 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using AudioScript.Abstractions;
+using AudioScript.Audio;
 using AudioScript.Services;
 using AudioScript.ViewModels;
 using DataGridCell = System.Windows.Controls.DataGridCell;
 using DataGridCellsPresenter = System.Windows.Controls.Primitives.DataGridCellsPresenter;
+using NAudio.CoreAudioApi;
 
 namespace AudioScript;
 
@@ -43,16 +45,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditSegmentDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.Zero;
-    private bool _isOpenAiDialogOpen;
     private bool _isApplyingTranscriptEditLoopSeek;
     private bool _isTranscriptEditLoopRestartPending;
     private MainViewModel? _boundViewModel;
     private CancellationTokenSource? _copyToastCts;
-    private CancellationTokenSource? _segmentBatchTranscriptionCts;
+    private CancellationTokenSource? _transcribeAudioBatchTranscriptionCts;
     private readonly Func<PlaybackTranscriptionSession>? _playbackTranscriptionSessionFactory;
+    private readonly Func<AudioInputDeviceOption, PlaybackTranscriptionSession>? _liveTranscriptionSessionFactory;
     private readonly ProcessLogService? _processLogService;
-    private bool _isSegmentBatchTranscribing;
+    private readonly WhisperModelManager? _whisperModelManager;
+    private bool _isTranscribeAudioBatchTranscribing;
+    private bool _isLiveTranscribing;
     private bool _isTranscriptProcessingMuteAvailable = true;
+    private bool _isTranscriptProcessingIndeterminate = true;
+    private bool _isTranscriptProcessingCanceling;
+    private double _transcriptProcessingPercent;
+    private string _transcriptProcessingDetail = "Preparing...";
+    private string _transcriptProcessingElapsedText = "Elapsed 00:00";
+    private string _transcriptProcessingEtaText = "ETA calculating";
+    private string _transcriptProcessingChunkText = "Progress 0%";
+    private string _transcriptProcessingAudioText = "Audio 00:00 / 00:00";
     private string _transcriptProcessingTitle = "Generating Transcript";
     private FinalizedTranscriptLineViewModel? _playbackMatchedLine;
     private FinalizedTranscriptLineViewModel? _editLoopLine;
@@ -66,14 +78,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private FinalizedTranscriptLineViewModel? _transcriptTextEditLine;
     private string _transcriptTextEditOriginalText = string.Empty;
     private FinalizedTranscriptLineViewModel? _lastPlaybackSyncedLine;
+    private PlaybackTranscriptionSession? _liveTranscriptionSession;
+    private FinalizedTranscriptLineViewModel? _liveInterimLine;
+    private DateTimeOffset _liveTranscriptionStartedUtc;
     private int _requiredUpdateShutdownStarted;
 
     public MainWindow(
         Func<PlaybackTranscriptionSession>? playbackTranscriptionSessionFactory = null,
-        ProcessLogService? processLogService = null)
+        Func<AudioInputDeviceOption, PlaybackTranscriptionSession>? liveTranscriptionSessionFactory = null,
+        ProcessLogService? processLogService = null,
+        WhisperModelManager? whisperModelManager = null)
     {
         _playbackTranscriptionSessionFactory = playbackTranscriptionSessionFactory;
+        _liveTranscriptionSessionFactory = liveTranscriptionSessionFactory;
         _processLogService = processLogService;
+        _whisperModelManager = whisperModelManager;
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Closed += OnMainWindowClosed;
@@ -84,17 +103,32 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public bool IsSegmentBatchTranscribing
+    public bool IsTranscribeAudioBatchTranscribing
     {
-        get => _isSegmentBatchTranscribing;
+        get => _isTranscribeAudioBatchTranscribing;
         private set
         {
-            if (_isSegmentBatchTranscribing == value)
+            if (_isTranscribeAudioBatchTranscribing == value)
             {
                 return;
             }
 
-            _isSegmentBatchTranscribing = value;
+            _isTranscribeAudioBatchTranscribing = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsLiveTranscribing
+    {
+        get => _isLiveTranscribing;
+        private set
+        {
+            if (_isLiveTranscribing == value)
+            {
+                return;
+            }
+
+            _isLiveTranscribing = value;
             OnPropertyChanged();
         }
     }
@@ -127,26 +161,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _transcriptProcessingTitle = value;
             OnPropertyChanged();
         }
-    }
-
-    private void AutoTranscribeWithAiCheckBox_Checked(object sender, RoutedEventArgs e)
-    {
-        if (!IsLoaded || DataContext is not MainViewModel vm)
-        {
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(vm.OpenAiApiKey))
-        {
-            return;
-        }
-
-        ShowOpenAiSettingsDialog();
-    }
-
-    private void OpenOpenAiSettings_Click(object sender, RoutedEventArgs e)
-    {
-        ShowOpenAiSettingsDialog();
     }
 
     private void Window_PreviewDragEnter(object sender, System.Windows.DragEventArgs e)
@@ -189,278 +203,60 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (IsSegmentBatchTranscribing)
+        if (vm.IsGenerationRunning)
         {
             return;
         }
 
-        if (vm.IsSpeakerDiarizationModeSelected)
+        if (vm.IsLiveTranscriptionModeSelected)
         {
-            await GenerateSpeakerDiarizationAsync(vm);
+            await StartLiveTranscriptionAsync(vm);
             return;
         }
 
-        await RunSegmentTranscriptAsync(vm);
+        await RunTranscribeAudioAsync(vm);
     }
 
-    private async void TranscribeBySegments_Click(object sender, RoutedEventArgs e)
+    private async void TranscribeAudio_Click(object sender, RoutedEventArgs e)
     {
-        if (DataContext is not MainViewModel vm || IsSegmentBatchTranscribing)
+        if (DataContext is not MainViewModel vm || IsTranscribeAudioBatchTranscribing)
         {
             return;
         }
 
-        await RunSegmentTranscriptAsync(vm);
+        await RunTranscribeAudioAsync(vm);
     }
 
-    private async Task RunSegmentTranscriptAsync(MainViewModel vm)
-    {
-        ConfigureTranscriptProcessingUi(
-            title: "Transcribing By Segments",
-            allowMute: true);
-
-        if (vm.IsManualTranscriptionSelected)
-        {
-            LogSegmentBatch("Manual transcription mode selected. Creating placeholder timeline only.");
-
-            bool placeholdersCreated = await vm.CreatePlaceholdersForSegmentTranscriptionAsync();
-            if (placeholdersCreated)
-            {
-                vm.SelectedTranscriptViewIndex = 0;
-                vm.StatusMessage = "Placeholder transcript created for manual transcription.";
-                ShowCopyToast(
-                    "Timeline created",
-                    "Segment timelines are ready for manual transcription.",
-                    ToastNotificationType.Success);
-                _ = Dispatcher.BeginInvoke(
-                    new Action(() => FocusFirstManualSegmentRowForEditing(vm)),
-                    DispatcherPriority.Background);
-            }
-
-            return;
-        }
-
-        if (_playbackTranscriptionSessionFactory is null)
-        {
-            LogSegmentBatch("Segment transcription is unavailable because playback transcription is not configured.");
-            ShowCopyToast(
-                "Segment transcription unavailable",
-                "Playback transcription is not configured.",
-                ToastNotificationType.Warning);
-            return;
-        }
-
-        if (!vm.IsOpenAiEngineSelected)
-        {
-            LogSegmentBatch("Segment transcription aborted: Auto Transcribe with AI is turned off.");
-            ShowCopyToast(
-                "Segment transcription unavailable",
-                "Turn on Auto Transcribe with AI first.",
-                ToastNotificationType.Warning);
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(vm.OpenAiApiKey))
-        {
-            LogSegmentBatch("Segment transcription aborted: OpenAI API key is not configured.");
-            ShowBlockingMessage(
-                "API key required",
-                "Segment transcription with AI Assist was stopped because no OpenAI API key is configured.");
-            return;
-        }
-
-        IsSegmentBatchTranscribing = true;
-        _segmentBatchTranscriptionCts = new CancellationTokenSource();
-        CancellationToken batchCancellationToken = _segmentBatchTranscriptionCts.Token;
-        ApplySegmentBatchInteractionLock();
-        _ = Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
-        await Dispatcher.Yield(DispatcherPriority.Background);
-
-        try
-        {
-            LogSegmentBatch("Transcribe by segments requested.");
-
-            bool placeholdersCreated = await vm.CreatePlaceholdersForSegmentTranscriptionAsync();
-            if (batchCancellationToken.IsCancellationRequested)
-            {
-                vm.StatusMessage = "Segment transcription canceled.";
-                LogSegmentBatch("Segment transcription canceled before row processing started.");
-                ShowCopyToast(
-                    "Segment transcription canceled",
-                    "The automated segment transcription was canceled.",
-                    ToastNotificationType.Info);
-                return;
-            }
-
-            if (!placeholdersCreated)
-            {
-                LogSegmentBatch("Transcribe by segments stopped before placeholder generation completed.");
-                return;
-            }
-
-            vm.SelectedTranscriptViewIndex = 0;
-
-            List<FinalizedTranscriptLineViewModel> pendingLines = vm.FinalizedTranscriptLines
-                .Where(line => line.StartOffset is not null)
-                .ToList();
-
-            if (pendingLines.Count == 0)
-            {
-                vm.StatusMessage = "No transcript rows are available for segment transcription.";
-                LogSegmentBatch("No transcript rows were generated for segment transcription.");
-                return;
-            }
-
-            LogSegmentBatch($"Segment transcription automation started for {pendingLines.Count:N0} row(s).");
-            int completedRows = 0;
-
-            for (int index = 0; index < pendingLines.Count; index++)
-            {
-                if (batchCancellationToken.IsCancellationRequested)
-                {
-                    break;
-                }
-
-                if (!IsLoaded || !ReferenceEquals(DataContext, vm))
-                {
-                    LogSegmentBatch("Segment transcription stopped because the active view context changed.");
-                    break;
-                }
-
-                if (!vm.IsAudioFileLoaded)
-                {
-                    LogSegmentBatch("Segment transcription stopped because the audio preview is no longer loaded.");
-                    break;
-                }
-
-                FinalizedTranscriptLineViewModel line = pendingLines[index];
-                if (!vm.FinalizedTranscriptLines.Contains(line))
-                {
-                    continue;
-                }
-
-                vm.StatusMessage = $"Transcribing segment {index + 1} of {pendingLines.Count}...";
-                ScrollTranscriptRowIntoView(line, TranscriptTextColumnIndex);
-
-                var completionSource = new TaskCompletionSource<PlaybackEditAutomationResult>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-
-                if (!TryStartPlaybackEditTranscription(vm, line, completionSource))
-                {
-                    LogSegmentBatch($"Unable to start segment transcription for row '{line.Timeline}'.");
-                    break;
-                }
-
-                PlaybackEditAutomationResult result = await completionSource.Task;
-
-                if (batchCancellationToken.IsCancellationRequested)
-                {
-                    LogSegmentBatch("Segment transcription canceled while waiting for the current row to stop.");
-                    break;
-                }
-
-                if (result.Failure is not null)
-                {
-                    LogSegmentBatch(
-                        $"Segment transcription stopped after row '{line.Timeline}' failed: {result.Failure.Message}");
-                    break;
-                }
-
-                if (result.WasDiscarded)
-                {
-                    LogSegmentBatch(
-                        $"Segment transcription stopped after row '{line.Timeline}' was interrupted.");
-                    break;
-                }
-
-                completedRows++;
-                LogSegmentBatch(
-                    $"Segment row {index + 1}/{pendingLines.Count} completed for '{line.Timeline}'" +
-                    (result.HadFinalText ? "." : " with no finalized text."));
-            }
-
-            if (batchCancellationToken.IsCancellationRequested)
-            {
-                vm.StatusMessage = "Segment transcription canceled.";
-                LogSegmentBatch("Segment transcription automation canceled by user.");
-                ShowCopyToast(
-                    "Segment transcription canceled",
-                    "The automated segment transcription was canceled.",
-                    ToastNotificationType.Info);
-                return;
-            }
-
-            int remainingRows = Math.Max(pendingLines.Count - completedRows, 0);
-            if (remainingRows == 0)
-            {
-                vm.StatusMessage = "Segment transcription completed.";
-                LogSegmentBatch("Segment transcription automation completed for all rows.");
-                ShowCopyToast(
-                    "Segment transcription completed",
-                    "All transcript rows were processed.",
-                    ToastNotificationType.Success);
-                return;
-            }
-
-            vm.StatusMessage = $"Segment transcription stopped with {remainingRows:N0} remaining row(s).";
-            LogSegmentBatch(
-                $"Segment transcription automation stopped with {remainingRows:N0} remaining row(s).");
-            ShowCopyToast(
-                "Segment transcription stopped",
-                $"{remainingRows:N0} row(s) still need transcription.",
-                ToastNotificationType.Warning);
-        }
-        catch (Exception ex)
-        {
-            vm.LogHandledException("transcribe by segments", ex);
-            LogSegmentBatch($"Segment transcription automation failed: {ex.Message}");
-            ShowCopyToast(
-                "Segment transcription failed",
-                ex.Message,
-                ToastNotificationType.Error);
-        }
-        finally
-        {
-            _segmentBatchTranscriptionCts?.Dispose();
-            _segmentBatchTranscriptionCts = null;
-            if (vm.IsPlaybackMuted)
-            {
-                vm.IsPlaybackMuted = false;
-            }
-            IsSegmentBatchTranscribing = false;
-            RestoreSegmentBatchInteractionLock();
-            _ = Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
-        }
-    }
-
-    private async Task GenerateSpeakerDiarizationAsync(MainViewModel vm)
+    private async Task RunTranscribeAudioAsync(MainViewModel vm)
     {
         ConfigureTranscriptProcessingUi(
-            title: "Speaker Diarization",
+            title: "Transcribing Audio",
             allowMute: false);
 
-        if (!EnsureOpenAiApiKey(vm, "Speaker diarization"))
+        if (!EnsureSelectedEngineReady(vm, "Transcribe Audio"))
         {
-            vm.StatusMessage = "Speaker diarization requires an OpenAI API key.";
+            vm.StatusMessage = "Transcribe Audio requires a configured transcription engine.";
             return;
         }
 
-        IsSegmentBatchTranscribing = true;
-        _segmentBatchTranscriptionCts = new CancellationTokenSource();
-        CancellationToken cancellationToken = _segmentBatchTranscriptionCts.Token;
-        ApplySegmentBatchInteractionLock();
+        IsTranscribeAudioBatchTranscribing = true;
+        vm.SetGenerationRunning(isRunning: true);
+        _transcribeAudioBatchTranscriptionCts = new CancellationTokenSource();
+        CancellationToken cancellationToken = _transcribeAudioBatchTranscriptionCts.Token;
+        ApplyTranscribeAudioBatchInteractionLock();
         await Dispatcher.Yield(DispatcherPriority.Background);
 
         try
         {
-            LogSpeakerDiarization("Speaker diarization requested.");
+            LogTranscribeAudioBatch("Transcribe Audio requested.");
+            var transcriptionProgress = new Progress<TranscriptionProgressSnapshot>(ApplyTranscriptionProgress);
 
-            bool completed = await vm.GenerateSpeakerDiarizationTranscriptAsync(cancellationToken);
+            bool completed = await vm.GenerateTranscribeAudioTranscriptAsync(cancellationToken, transcriptionProgress);
             if (cancellationToken.IsCancellationRequested)
             {
                 ShowCopyToast(
-                    "Speaker diarization canceled",
-                    "The speaker diarization request was canceled.",
+                    "Transcribe Audio canceled",
+                    "The automated Transcribe Audio was canceled.",
                     ToastNotificationType.Info);
                 return;
             }
@@ -469,36 +265,407 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 return;
             }
-
             ShowCopyToast(
-                "Speaker diarization completed",
-                "Speaker transcript lines are ready.",
+                "Transcribe Audio completed",
+                "Transcript rows are ready.",
                 ToastNotificationType.Success);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            vm.StatusMessage = "Speaker diarization canceled.";
+            vm.StatusMessage = "Transcribe Audio canceled.";
             ShowCopyToast(
-                "Speaker diarization canceled",
-                "The speaker diarization request was canceled.",
+                "Transcribe Audio canceled",
+                "The Transcribe Audio request was canceled.",
                 ToastNotificationType.Info);
         }
         catch (Exception ex)
         {
-            vm.LogHandledException("speaker diarization", ex);
-            LogSpeakerDiarization($"Speaker diarization failed: {ex.Message}");
+            vm.LogHandledException("Transcribe Audio", ex);
+            LogTranscribeAudioBatch($"Transcribe Audio failed: {ex.Message}");
             ShowCopyToast(
-                "Speaker diarization failed",
+                "Transcribe Audio failed",
                 ex.Message,
                 ToastNotificationType.Error);
         }
         finally
         {
-            _segmentBatchTranscriptionCts?.Dispose();
-            _segmentBatchTranscriptionCts = null;
-            IsSegmentBatchTranscribing = false;
-            RestoreSegmentBatchInteractionLock();
+            _transcribeAudioBatchTranscriptionCts?.Dispose();
+            _transcribeAudioBatchTranscriptionCts = null;
+            IsTranscribeAudioBatchTranscribing = false;
+            vm.SetGenerationRunning(isRunning: false);
+            RestoreTranscribeAudioBatchInteractionLock();
         }
+    }
+
+    public bool IsTranscriptProcessingIndeterminate
+    {
+        get => _isTranscriptProcessingIndeterminate;
+        private set
+        {
+            if (_isTranscriptProcessingIndeterminate == value)
+            {
+                return;
+            }
+
+            _isTranscriptProcessingIndeterminate = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsTranscriptProcessingCanceling
+    {
+        get => _isTranscriptProcessingCanceling;
+        private set
+        {
+            if (_isTranscriptProcessingCanceling == value)
+            {
+                return;
+            }
+
+            _isTranscriptProcessingCanceling = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsTranscriptProcessingCancelEnabled));
+        }
+    }
+
+    public bool IsTranscriptProcessingCancelEnabled => !IsTranscriptProcessingCanceling;
+
+    public double TranscriptProcessingPercent
+    {
+        get => _transcriptProcessingPercent;
+        private set
+        {
+            double normalized = Math.Clamp(value, 0, 100);
+            if (Math.Abs(_transcriptProcessingPercent - normalized) < 0.01)
+            {
+                return;
+            }
+
+            _transcriptProcessingPercent = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public string TranscriptProcessingDetail
+    {
+        get => _transcriptProcessingDetail;
+        private set
+        {
+            if (string.Equals(_transcriptProcessingDetail, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _transcriptProcessingDetail = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string TranscriptProcessingElapsedText
+    {
+        get => _transcriptProcessingElapsedText;
+        private set
+        {
+            if (string.Equals(_transcriptProcessingElapsedText, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _transcriptProcessingElapsedText = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string TranscriptProcessingEtaText
+    {
+        get => _transcriptProcessingEtaText;
+        private set
+        {
+            if (string.Equals(_transcriptProcessingEtaText, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _transcriptProcessingEtaText = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string TranscriptProcessingChunkText
+    {
+        get => _transcriptProcessingChunkText;
+        private set
+        {
+            if (string.Equals(_transcriptProcessingChunkText, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _transcriptProcessingChunkText = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string TranscriptProcessingAudioText
+    {
+        get => _transcriptProcessingAudioText;
+        private set
+        {
+            if (string.Equals(_transcriptProcessingAudioText, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _transcriptProcessingAudioText = value;
+            OnPropertyChanged();
+        }
+    }
+
+    private async Task StartLiveTranscriptionAsync(MainViewModel vm)
+    {
+        if (_liveTranscriptionSessionFactory is null)
+        {
+            ShowCopyToast(
+                "Live transcription unavailable",
+                "Live transcription is not configured.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        if (!EnsureSelectedEngineReady(vm, "Live transcription"))
+        {
+            vm.StatusMessage = "Live transcription requires a configured transcription engine.";
+            return;
+        }
+
+        IReadOnlyList<AudioInputDeviceOption> devices = BuildLiveAudioSourceOptions();
+        if (devices.Count == 0)
+        {
+            ShowCopyToast(
+                "No input devices",
+                "No recording input devices were found.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        var picker = new LiveAudioDevicePickerWindow(devices)
+        {
+            Owner = this,
+        };
+        picker.SelectPreferredDevice(vm.PreferredLiveAudioSourceKind, vm.PreferredLiveAudioDeviceNumber);
+
+        if (picker.ShowDialog() != true || picker.SelectedDevice is null)
+        {
+            return;
+        }
+
+        AudioInputDeviceOption selectedDevice = picker.SelectedDevice;
+        vm.SetPreferredLiveAudioSource(selectedDevice);
+        if (!vm.EnsureLiveTranscriptSession(selectedDevice.Name))
+        {
+            return;
+        }
+
+        ConfigureTranscriptProcessingUi(
+            title: "Live Transcription",
+            allowMute: false);
+
+        PlaybackTranscriptionSession session = _liveTranscriptionSessionFactory(selectedDevice);
+        _liveTranscriptionSession = session;
+        _liveInterimLine = null;
+        _liveTranscriptionStartedUtc = DateTimeOffset.Now;
+        session.PlaybackInterimTranscriptionUpdated += OnLiveInterimTranscriptionUpdated;
+        session.PlaybackFinalTranscriptionAvailable += OnLiveFinalTranscriptionAvailable;
+        session.Faulted += OnLiveTranscriptionFaulted;
+
+        try
+        {
+            string model = TranscriptionModelCatalog.SupportsPlaybackTranscription(vm.SelectedEngine?.Id ?? string.Empty)
+                ? vm.SelectedEngine!.Id
+                : TranscriptionModelCatalog.WhisperSmall;
+            IsLiveTranscribing = true;
+            vm.SetGenerationRunning(isRunning: true, isLiveTranscriptionRunning: true);
+            vm.StatusMessage = $"Live transcription started: {selectedDevice.Name}.";
+            LogLiveTranscription(
+                $"Live transcription started source='{selectedDevice.Name}', kind={selectedDevice.Kind}, deviceNumber={selectedDevice.DeviceNumber}, model='{model}'.");
+            session.StartPlaybackTranscription(model);
+            await Dispatcher.Yield(DispatcherPriority.Background);
+        }
+        catch (Exception ex)
+        {
+            DetachLiveTranscriptionSession(session);
+            _liveTranscriptionSession = null;
+            IsLiveTranscribing = false;
+            vm.SetGenerationRunning(isRunning: false);
+            await DisposePlaybackEditTranscriptionSessionAsync(session);
+            vm.LogHandledException("live transcription start", ex);
+            ShowCopyToast(
+                "Live transcription failed",
+                ex.Message,
+                ToastNotificationType.Error);
+        }
+    }
+
+    private static IReadOnlyList<AudioInputDeviceOption> BuildLiveAudioSourceOptions()
+    {
+        var options = new List<AudioInputDeviceOption>();
+        IReadOnlyList<AudioInputDeviceOption> microphones = MicrophoneAudioCaptureService.GetInputDevices();
+        AudioInputDeviceOption? defaultMicrophone = microphones.FirstOrDefault();
+        string defaultPlaybackName = GetDefaultPlaybackDeviceName();
+
+        if (defaultMicrophone is not null)
+        {
+            options.Add(new AudioInputDeviceOption(
+                LiveAudioSourceKind.Microphone,
+                defaultMicrophone.DeviceNumber,
+                $"Microphone ({defaultMicrophone.Name})"));
+        }
+
+        options.Add(new AudioInputDeviceOption(
+            LiveAudioSourceKind.DefaultPlayback,
+            -1,
+            $"Default playback device ({defaultPlaybackName})"));
+
+        if (defaultMicrophone is not null)
+        {
+            options.Add(new AudioInputDeviceOption(
+                LiveAudioSourceKind.MicrophoneAndDefaultPlayback,
+                defaultMicrophone.DeviceNumber,
+                $"Microphone + default playback ({defaultMicrophone.Name} + {defaultPlaybackName})"));
+        }
+
+        return options;
+    }
+
+    private static string GetDefaultPlaybackDeviceName()
+    {
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            MMDevice device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            return string.IsNullOrWhiteSpace(device.FriendlyName)
+                ? "Default Playback"
+                : device.FriendlyName;
+        }
+        catch
+        {
+            return "Default Playback";
+        }
+    }
+
+    private async Task StopLiveTranscriptionAsync(MainViewModel vm, bool showToast)
+    {
+        PlaybackTranscriptionSession? session = _liveTranscriptionSession;
+        if (session is null)
+        {
+            IsLiveTranscribing = false;
+            vm.SetGenerationRunning(isRunning: false);
+            return;
+        }
+
+        try
+        {
+            vm.StatusMessage = "Stopping live transcription...";
+            await session.StopPlaybackTranscriptionAsync();
+            vm.SaveLiveTranscriptSession();
+            vm.StatusMessage = "Live transcription stopped.";
+            LogLiveTranscription("Live transcription stopped.");
+
+            if (showToast)
+            {
+                ShowCopyToast(
+                    "Live transcription stopped",
+                    "Captured transcript rows were kept.",
+                    ToastNotificationType.Info);
+            }
+        }
+        catch (Exception ex)
+        {
+            vm.LogHandledException("live transcription stop", ex);
+            ShowCopyToast(
+                "Live transcription stop failed",
+                ex.Message,
+                ToastNotificationType.Error);
+        }
+        finally
+        {
+            DetachLiveTranscriptionSession(session);
+            _liveTranscriptionSession = null;
+            _liveInterimLine = null;
+            IsLiveTranscribing = false;
+            vm.SetGenerationRunning(isRunning: false);
+            await DisposePlaybackEditTranscriptionSessionAsync(session);
+        }
+    }
+
+    private void OnLiveInterimTranscriptionUpdated(object? sender, PlaybackTranscriptionUpdate update)
+    {
+        Dispatcher.BeginInvoke(
+            new Action(() => ApplyLiveTranscriptionUpdate(update.Text, isFinal: false)),
+            DispatcherPriority.Background);
+    }
+
+    private void OnLiveFinalTranscriptionAvailable(object? sender, PlaybackTranscriptionUpdate update)
+    {
+        Dispatcher.BeginInvoke(
+            new Action(() => ApplyLiveTranscriptionUpdate(update.Text, isFinal: true)),
+            DispatcherPriority.Background);
+    }
+
+    private void OnLiveTranscriptionFaulted(object? sender, Exception ex)
+    {
+        Dispatcher.BeginInvoke(new Action(async () =>
+        {
+            if (DataContext is MainViewModel vm)
+            {
+                vm.LogHandledException("live transcription", ex);
+                ShowCopyToast(
+                    "Live transcription failed",
+                    ex.Message,
+                    ToastNotificationType.Error);
+                await StopLiveTranscriptionAsync(vm, showToast: false);
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private void ApplyLiveTranscriptionUpdate(string text, bool isFinal)
+    {
+        if (DataContext is not MainViewModel vm || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        TimeSpan startOffset = DateTimeOffset.Now - _liveTranscriptionStartedUtc;
+        TimeSpan endOffset = startOffset + TimeSpan.FromSeconds(1);
+
+        if (_liveInterimLine is null)
+        {
+            _liveInterimLine = vm.AddLiveTranscriptLine(startOffset, endOffset, text);
+        }
+        else
+        {
+            vm.UpdateLiveTranscriptLine(_liveInterimLine, endOffset, text);
+        }
+
+        if (isFinal)
+        {
+            LogLiveTranscription(
+                $"Final update applied at {startOffset:mm\\:ss}, chars={text.Trim().Length:N0}, preview='{BuildLogPreview(text)}'.");
+            _liveInterimLine = null;
+            vm.SaveLiveTranscriptSession();
+        }
+        else
+        {
+            LogLiveTranscription(
+                $"Interim update applied at {startOffset:mm\\:ss}, chars={text.Trim().Length:N0}, preview='{BuildLogPreview(text)}'.");
+        }
+    }
+
+    private void DetachLiveTranscriptionSession(PlaybackTranscriptionSession session)
+    {
+        session.PlaybackInterimTranscriptionUpdated -= OnLiveInterimTranscriptionUpdated;
+        session.PlaybackFinalTranscriptionAvailable -= OnLiveFinalTranscriptionAvailable;
+        session.Faulted -= OnLiveTranscriptionFaulted;
     }
 
     private void CancelProcessing_Click(object sender, RoutedEventArgs e)
@@ -508,9 +675,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (IsSegmentBatchTranscribing)
+        if (IsLiveTranscribing)
         {
-            CancelSegmentBatchTranscription(vm);
+            _ = StopLiveTranscriptionAsync(vm, showToast: true);
+            return;
+        }
+
+        if (IsTranscribeAudioBatchTranscribing)
+        {
+            CancelTranscribeAudioBatch(vm);
         }
     }
 
@@ -542,59 +715,44 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private bool ShowOpenAiSettingsDialog()
+    private void SetupEngineModels_Click(object sender, RoutedEventArgs e)
     {
-        if (DataContext is not MainViewModel vm)
+        if (DataContext is not MainViewModel vm || _whisperModelManager is null)
         {
+            return;
+        }
+
+        var dialog = new EngineModelSetupWindow(
+            _whisperModelManager,
+            _processLogService ?? new ProcessLogService())
+        {
+            Owner = this,
+        };
+
+        dialog.ShowDialog();
+        vm.RefreshEngines(_whisperModelManager.GetSelectableTranscriptionModels());
+        if (dialog.HasModelChanges)
+        {
+            ShowCopyToast(
+                "Engine models updated",
+                "Installed engine choices were refreshed.",
+                ToastNotificationType.Success);
+        }
+    }
+
+    private bool EnsureSelectedEngineReady(MainViewModel vm, string operationName)
+    {
+        string selectedEngineId = vm.SelectedEngine?.Id ?? string.Empty;
+        if (!TranscriptionModelCatalog.SupportsFileTranscription(selectedEngineId)
+            && !TranscriptionModelCatalog.SupportsPlaybackTranscription(selectedEngineId))
+        {
+            ShowBlockingMessage(
+                "Transcription engine required",
+                $"{operationName} was stopped because no supported transcription engine is selected.");
             return false;
         }
 
-        if (_isOpenAiDialogOpen)
-        {
-            return !string.IsNullOrWhiteSpace(vm.OpenAiApiKey);
-        }
-
-        var dialog = new OpenAiSettingsWindow
-        {
-            Owner = this,
-            DataContext = vm,
-        };
-
-        try
-        {
-            _isOpenAiDialogOpen = true;
-            dialog.ShowDialog();
-        }
-        finally
-        {
-            _isOpenAiDialogOpen = false;
-        }
-
-        if (string.IsNullOrWhiteSpace(vm.OpenAiApiKey))
-        {
-            vm.AutoTranscribeWithAi = false;
-        }
-
-        return !string.IsNullOrWhiteSpace(vm.OpenAiApiKey);
-    }
-
-    private bool EnsureOpenAiApiKey(MainViewModel vm, string operationName)
-    {
-        if (!string.IsNullOrWhiteSpace(vm.OpenAiApiKey))
-        {
-            return true;
-        }
-
-        ShowOpenAiSettingsDialog();
-        if (!string.IsNullOrWhiteSpace(vm.OpenAiApiKey))
-        {
-            return true;
-        }
-
-        ShowBlockingMessage(
-            "API key required",
-            $"{operationName} was stopped because no OpenAI API key is configured.");
-        return false;
+        return true;
     }
 
     private void ShowBlockingMessage(string title, string message)
@@ -620,9 +778,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _boundViewModel.ConfirmationRequested -= OnConfirmationRequested;
             _boundViewModel.ToastRequested -= OnToastRequested;
             _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
-            _boundViewModel.ProcessLogs.CollectionChanged -= OnProcessLogsCollectionChanged;
             _boundViewModel.FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
-            _boundViewModel.SpeakerTranscriptLines.CollectionChanged -= OnSpeakerTranscriptLinesCollectionChanged;
             _boundViewModel = null;
         }
 
@@ -633,10 +789,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _boundViewModel.ConfirmationRequested += OnConfirmationRequested;
             _boundViewModel.ToastRequested += OnToastRequested;
             _boundViewModel.PropertyChanged += OnViewModelPropertyChanged;
-            _boundViewModel.ProcessLogs.CollectionChanged += OnProcessLogsCollectionChanged;
             _boundViewModel.FinalizedTranscriptLines.CollectionChanged += OnFinalizedTranscriptLinesCollectionChanged;
-            _boundViewModel.SpeakerTranscriptLines.CollectionChanged += OnSpeakerTranscriptLinesCollectionChanged;
-            ScrollLogsToLatest();
             UpdateTranscriptGridPresentation();
             UpdatePlaybackTimelineHighlight();
             UpdateTranscriptRowActionsVisibility();
@@ -737,6 +890,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             pausePlayback: false,
             reason: "window closed",
             discardResults: true);
+        if (_liveTranscriptionSession is not null && _boundViewModel is not null)
+        {
+            StopLiveTranscriptionAsync(_boundViewModel, showToast: false).GetAwaiter().GetResult();
+        }
         if (_boundViewModel is null)
         {
             return;
@@ -746,9 +903,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _boundViewModel.ConfirmationRequested -= OnConfirmationRequested;
         _boundViewModel.ToastRequested -= OnToastRequested;
         _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
-        _boundViewModel.ProcessLogs.CollectionChanged -= OnProcessLogsCollectionChanged;
         _boundViewModel.FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
-        _boundViewModel.SpeakerTranscriptLines.CollectionChanged -= OnSpeakerTranscriptLinesCollectionChanged;
         _boundViewModel = null;
         ClearTranscriptEditPlaybackLoop();
         SetPlaybackTimelineMatch(null);
@@ -877,6 +1032,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
     {
         ApplyFloatingSurfaceTheme();
+        ApplySelectionControlTheme();
     }
 
     private void CancelCopyToast()
@@ -922,18 +1078,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         CopyToastTransform.Y = ToastHiddenOffsetY;
     }
 
-    private void OnProcessLogsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        ScrollLogsToLatest();
-    }
-
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.SelectedThemePreference))
         {
             // The view-model property changed event is raised before Application.ThemeMode settles.
             // Re-apply after bindings and theme updates complete to keep floating surfaces in sync.
-            Dispatcher.BeginInvoke(new Action(ApplyFloatingSurfaceTheme), DispatcherPriority.Background);
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                ApplyFloatingSurfaceTheme();
+                ApplySelectionControlTheme();
+            }), DispatcherPriority.Background);
             return;
         }
 
@@ -951,25 +1106,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdateTranscriptGridPresentation();
             UpdatePlaybackTimelineHighlight();
             UpdateTranscriptRowActionsVisibility();
-
-            if (_boundViewModel is not null && _boundViewModel.IsSpeakerDiarizationModeSelected)
-            {
-                if (!string.IsNullOrWhiteSpace(_boundViewModel.OpenAiApiKey))
-                {
-                    if (!_boundViewModel.AutoTranscribeWithAi)
-                    {
-                        _boundViewModel.AutoTranscribeWithAi = true;
-                    }
-                }
-                else
-                {
-                    bool hasApiKey = ShowOpenAiSettingsDialog();
-                    if (hasApiKey && !_boundViewModel.AutoTranscribeWithAi)
-                    {
-                        _boundViewModel.AutoTranscribeWithAi = true;
-                    }
-                }
-            }
 
             return;
         }
@@ -1029,10 +1165,29 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             borderBrush.Freeze();
         }
 
-        SegmentBatchCard.Background = backgroundBrush;
-        SegmentBatchCard.BorderBrush = borderBrush;
+        TranscribeAudioBatchCard.Background = backgroundBrush;
+        TranscribeAudioBatchCard.BorderBrush = borderBrush;
         CopyToastCard.Background = backgroundBrush;
         CopyToastCard.BorderBrush = borderBrush;
+    }
+
+    private void ApplySelectionControlTheme()
+    {
+        if (System.Windows.Application.Current is null)
+        {
+            return;
+        }
+
+        var selectionBrush = new SolidColorBrush(
+            IsDarkThemeActive()
+            ? Colors.White
+            : System.Windows.Media.Color.FromRgb(26, 26, 26));
+        if (selectionBrush.CanFreeze)
+        {
+            selectionBrush.Freeze();
+        }
+
+        System.Windows.Application.Current.Resources["SelectionControlForegroundBrush"] = selectionBrush;
     }
 
     private bool IsDarkThemeActive()
@@ -1076,12 +1231,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         UpdateTranscriptRowActionsVisibility();
     }
 
-    private void OnSpeakerTranscriptLinesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        UpdatePlaybackTimelineHighlight();
-        UpdateTranscriptRowActionsVisibility();
-    }
-
     private void FinalizedTranscriptGrid_CurrentCellChanged(object sender, EventArgs e)
     {
         SyncPlaybackToCurrentTranscriptRow();
@@ -1119,36 +1268,100 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
-    private void ScrollLogsToLatest()
-    {
-        if (_boundViewModel is null || _boundViewModel.ProcessLogs.Count == 0)
-        {
-            return;
-        }
-
-        Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (_boundViewModel is null || _boundViewModel.ProcessLogs.Count == 0)
-            {
-                return;
-            }
-
-            ProcessLogsListView.ScrollIntoView(_boundViewModel.ProcessLogs[^1]);
-        }), DispatcherPriority.Background);
-    }
-
     private void ConfigureTranscriptProcessingUi(string title, bool allowMute)
     {
         TranscriptProcessingTitle = title;
         IsTranscriptProcessingMuteAvailable = allowMute;
+        ResetTranscriptProcessingProgress();
     }
 
-    private void ApplySegmentBatchInteractionLock()
+    private void ResetTranscriptProcessingProgress()
     {
-        SegmentBatchOverlay.Visibility = Visibility.Visible;
-        SegmentBatchOverlay.IsHitTestVisible = true;
-        SegmentBatchCancelButton.IsEnabled = true;
-        SegmentBatchOverlay.UpdateLayout();
+        IsTranscriptProcessingCanceling = false;
+        IsTranscriptProcessingIndeterminate = true;
+        TranscriptProcessingPercent = 0;
+        TranscriptProcessingDetail = "Preparing...";
+        TranscriptProcessingChunkText = "Progress 0%";
+        TranscriptProcessingAudioText = "Audio 00:00 / 00:00";
+        TranscriptProcessingElapsedText = "Elapsed 00:00";
+        TranscriptProcessingEtaText = "ETA calculating";
+    }
+
+    private void ApplyTranscriptionProgress(TranscriptionProgressSnapshot snapshot)
+    {
+        if (snapshot.Phase == TranscriptionProgressPhase.Canceling)
+        {
+            ApplyTranscriptProcessingCancelingState();
+            return;
+        }
+
+        TranscriptProcessingPercent = snapshot.Percent;
+        IsTranscriptProcessingIndeterminate = snapshot.TotalAudio <= TimeSpan.Zero
+            && snapshot.Phase != TranscriptionProgressPhase.Completed;
+        TranscriptProcessingDetail = string.IsNullOrWhiteSpace(snapshot.DetailMessage)
+            ? FormatTranscriptionPhase(snapshot.Phase)
+            : snapshot.DetailMessage;
+        TranscriptProcessingChunkText = FormatProgressChunkText(snapshot);
+        TranscriptProcessingAudioText =
+            $"Audio {FormatProgressDuration(snapshot.ProcessedAudio)} / {FormatProgressDuration(snapshot.TotalAudio)}";
+        TranscriptProcessingElapsedText = $"Elapsed {FormatProgressDuration(snapshot.Elapsed)}";
+        TranscriptProcessingEtaText = snapshot.EstimatedRemaining is null
+            ? "ETA calculating"
+            : $"ETA {FormatProgressDuration(snapshot.EstimatedRemaining.Value)}";
+    }
+
+    private void ApplyTranscriptProcessingCancelingState()
+    {
+        IsTranscriptProcessingCanceling = true;
+        IsTranscriptProcessingIndeterminate = true;
+        TranscriptProcessingDetail = "Canceling...";
+        TranscriptProcessingEtaText = "ETA canceled";
+    }
+
+    private static string FormatProgressChunkText(TranscriptionProgressSnapshot snapshot)
+    {
+        string percentText = $"Progress {snapshot.Percent:0}%";
+        if (snapshot.CurrentChunk is null || snapshot.TotalChunks is null || snapshot.TotalChunks <= 1)
+        {
+            return percentText;
+        }
+
+        return $"{percentText} - chunk {snapshot.CurrentChunk:N0} of {snapshot.TotalChunks:N0}";
+    }
+
+    private static string FormatProgressDuration(TimeSpan duration)
+    {
+        if (duration < TimeSpan.Zero)
+        {
+            duration = TimeSpan.Zero;
+        }
+
+        return duration.TotalHours >= 1
+            ? duration.ToString(@"hh\:mm\:ss")
+            : duration.ToString(@"mm\:ss");
+    }
+
+    private static string FormatTranscriptionPhase(TranscriptionProgressPhase phase)
+    {
+        return phase switch
+        {
+            TranscriptionProgressPhase.PreparingAudio => "Preparing audio.",
+            TranscriptionProgressPhase.Chunking => "Preparing audio chunks.",
+            TranscriptionProgressPhase.TranscribingChunk => "Transcribing audio.",
+            TranscriptionProgressPhase.RunningSpeakerDiarization => "Running speaker diarization.",
+            TranscriptionProgressPhase.MergingSpeakerLabels => "Applying speaker labels.",
+            TranscriptionProgressPhase.MergingResults => "Merging transcript rows.",
+            TranscriptionProgressPhase.Completed => "Completed.",
+            TranscriptionProgressPhase.Canceling => "Canceling...",
+            _ => "Working...",
+        };
+    }
+
+    private void ApplyTranscribeAudioBatchInteractionLock()
+    {
+        TranscribeAudioBatchOverlay.Visibility = Visibility.Visible;
+        TranscribeAudioBatchOverlay.IsHitTestVisible = true;
+        TranscribeAudioBatchOverlay.UpdateLayout();
 
         MainContentHost.IsHitTestVisible = false;
 
@@ -1171,16 +1384,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _ = Dispatcher.BeginInvoke(new Action(() =>
         {
-            SegmentBatchCancelButton.Focus();
-            SegmentBatchCancelButton.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
-            SegmentBatchCancelButton.Focus();
+            TranscribeAudioBatchCancelButton.Focus();
+            TranscribeAudioBatchCancelButton.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            TranscribeAudioBatchCancelButton.Focus();
         }), DispatcherPriority.Input);
     }
 
-    private void RestoreSegmentBatchInteractionLock()
+    private void RestoreTranscribeAudioBatchInteractionLock()
     {
-        SegmentBatchOverlay.IsHitTestVisible = false;
-        SegmentBatchOverlay.Visibility = Visibility.Collapsed;
+        TranscribeAudioBatchOverlay.IsHitTestVisible = false;
+        TranscribeAudioBatchOverlay.Visibility = Visibility.Collapsed;
         IsTranscriptProcessingMuteAvailable = true;
         TranscriptProcessingTitle = "Generating Transcript";
 
@@ -1194,23 +1407,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }), DispatcherPriority.Background);
     }
 
-    private void CancelSegmentBatchTranscription(MainViewModel vm)
+    private void CancelTranscribeAudioBatch(MainViewModel vm)
     {
-        if (!IsSegmentBatchTranscribing)
+        if (!IsTranscribeAudioBatchTranscribing)
         {
             return;
         }
 
-        if (_segmentBatchTranscriptionCts is not null && !_segmentBatchTranscriptionCts.IsCancellationRequested)
+        if (_transcribeAudioBatchTranscriptionCts is not null && !_transcribeAudioBatchTranscriptionCts.IsCancellationRequested)
         {
-            _segmentBatchTranscriptionCts.Cancel();
-            LogSegmentBatch("Segment transcription cancellation requested.");
+            ApplyTranscriptProcessingCancelingState();
+            _transcribeAudioBatchTranscriptionCts.Cancel();
+            LogTranscribeAudioBatch("Transcribe Audio cancellation requested.");
         }
 
         StopActivePlaybackEditTranscription(
             vm,
             pausePlayback: true,
-            reason: "segment batch canceled",
+            reason: "transcribe audio batch canceled",
             discardResults: true);
     }
 
@@ -1223,11 +1437,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         MainViewModel? vm = _boundViewModel ?? DataContext as MainViewModel;
         LogPlaybackEdit("Preparing for required update shutdown.");
-        LogSegmentBatch("Preparing for required update shutdown.");
+        LogTranscribeAudioBatch("Preparing for required update shutdown.");
 
-        if (_segmentBatchTranscriptionCts is not null && !_segmentBatchTranscriptionCts.IsCancellationRequested)
+        if (_liveTranscriptionSession is not null && vm is not null)
         {
-            _segmentBatchTranscriptionCts.Cancel();
+            await StopLiveTranscriptionAsync(vm, showToast: false);
+        }
+
+        if (_transcribeAudioBatchTranscriptionCts is not null && !_transcribeAudioBatchTranscriptionCts.IsCancellationRequested)
+        {
+            ApplyTranscriptProcessingCancelingState();
+            _transcribeAudioBatchTranscriptionCts.Cancel();
         }
 
         PlaybackEditTranscriptionState? state = _activePlaybackEditTranscription;
@@ -1243,8 +1463,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         vm?.PrepareForRequiredUpdateShutdown();
 
-        SegmentBatchOverlay.IsHitTestVisible = false;
-        SegmentBatchOverlay.Visibility = Visibility.Collapsed;
+        TranscribeAudioBatchOverlay.IsHitTestVisible = false;
+        TranscribeAudioBatchOverlay.Visibility = Visibility.Collapsed;
         MainContentHost.IsEnabled = false;
         MainContentHost.IsHitTestVisible = false;
 
@@ -1488,20 +1708,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private bool EnsureSegmentRowActionAvailable(MainViewModel vm, string actionTitle)
     {
-        if (IsSegmentBatchTranscribing)
+        if (IsTranscribeAudioBatchTranscribing)
         {
             ShowCopyToast(
-                "Segment transcription in progress",
+                "Transcribe Audio in progress",
                 "Wait for the automated row transcription to finish.",
                 ToastNotificationType.Info);
             return false;
         }
 
-        if (!vm.IsSegmentTranscriptViewSelected)
+        if (!vm.IsTranscribeAudioTranscriptViewSelected)
         {
             ShowCopyToast(
                 actionTitle,
-                "Switch to Segments mode to edit timeline rows.",
+                "Switch to Transcribe Audio mode to edit timeline rows.",
                 ToastNotificationType.Info);
             return false;
         }
@@ -1636,10 +1856,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (IsSegmentBatchTranscribing)
+        if (IsTranscribeAudioBatchTranscribing)
         {
             ShowCopyToast(
-                "Segment transcription in progress",
+                "Transcribe Audio in progress",
                 "Wait for the automated row transcription to finish.",
                 ToastNotificationType.Info);
             return;
@@ -1712,7 +1932,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void FinalizedTranscriptGrid_BeginningEdit(object sender, DataGridBeginningEditEventArgs e)
     {
-        if (IsSegmentBatchTranscribing)
+        if (IsTranscribeAudioBatchTranscribing)
         {
             ClearTranscriptTextEditState();
             e.Cancel = true;
@@ -1758,7 +1978,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (!vm.IsSegmentTranscriptViewSelected)
+        if (!vm.IsTranscribeAudioTranscriptViewSelected)
         {
             ClearTimelineEditState();
             StopActivePlaybackEditTranscription(
@@ -1801,8 +2021,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             reason: "starting another transcript edit",
             discardResults: true);
 
-        if (vm.IsOpenAiEngineSelected
-            && string.IsNullOrWhiteSpace(line.Text)
+        if (string.IsNullOrWhiteSpace(line.Text)
             && TryStartPlaybackEditTranscription(vm, line))
         {
             ClearTranscriptTextEditState();
@@ -1867,7 +2086,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ClearTranscriptTextEditState();
         }
 
-        if (!vm.IsSegmentTranscriptViewSelected)
+        if (!vm.IsTranscribeAudioTranscriptViewSelected)
         {
             if (e.Row?.Item is FinalizedTranscriptLineViewModel speakerEditLoopLine
                 && ReferenceEquals(speakerEditLoopLine, _editLoopLine))
@@ -2135,7 +2354,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         catch (Exception ex)
         {
-            _boundViewModel?.LogHandledException("segment transcription row scroll", ex);
+            _boundViewModel?.LogHandledException("Transcribe Audio row scroll", ex);
         }
     }
 
@@ -2290,16 +2509,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private bool IsManualSegmentKeyboardFlowEnabled(MainViewModel vm)
     {
-        return !IsSegmentBatchTranscribing
-            && vm.IsSegmentTranscriptViewSelected
-            && !vm.IsOpenAiEngineSelected;
+        return !IsTranscribeAudioBatchTranscribing
+            && vm.IsTranscribeAudioTranscriptViewSelected;
     }
 
     private bool TryGetCurrentSegmentLine(MainViewModel vm, out FinalizedTranscriptLineViewModel line)
     {
         line = null!;
 
-        if (!vm.IsSegmentTranscriptViewSelected)
+        if (!vm.IsTranscribeAudioTranscriptViewSelected)
         {
             return false;
         }
@@ -2326,30 +2544,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IList<object> rowItems = GetTranscriptRowItems();
         line = rowItems.OfType<FinalizedTranscriptLineViewModel>().FirstOrDefault()!;
         return line is not null;
-    }
-
-    private void FocusFirstManualSegmentRowForEditing(MainViewModel vm)
-    {
-        if (!IsManualSegmentKeyboardFlowEnabled(vm))
-        {
-            return;
-        }
-
-        IList<object> rows = GetTranscriptRowItems();
-        if (rows.Count == 0)
-        {
-            return;
-        }
-
-        object targetItem = rows
-            .OfType<FinalizedTranscriptLineViewModel>()
-            .FirstOrDefault(line => string.IsNullOrWhiteSpace(line.Text))
-            ?? rows[0];
-
-        FocusGridCell(
-            targetItem,
-            TranscriptTextColumnIndex,
-            beginEdit: true);
     }
 
     private System.Windows.Controls.DataGridCell? TryGetDataCell(object item, int columnIndex)
@@ -2444,18 +2638,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void UpdateTranscriptGridPresentation()
     {
-        bool isSegmentMode = _boundViewModel?.IsSegmentTranscriptViewSelected == true;
-
-        if (SpeakerTranscriptColumn is not null)
-        {
-            SpeakerTranscriptColumn.Visibility = isSegmentMode
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-        }
+        bool showSpeakerColumn = _boundViewModel?.IsTranscribeAudioModeSelected == true;
 
         if (TimelineTranscriptColumn is not null)
         {
             TimelineTranscriptColumn.IsReadOnly = false;
+        }
+
+        if (SpeakerColumn is not null)
+        {
+            SpeakerColumn.Visibility = showSpeakerColumn
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
     }
 
@@ -2664,9 +2858,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         FinalizedTranscriptLineViewModel line,
         TaskCompletionSource<PlaybackEditAutomationResult>? completionSource = null)
     {
-        if (!vm.IsSegmentTranscriptViewSelected)
+        if (!vm.IsTranscribeAudioTranscriptViewSelected)
         {
-            LogPlaybackEdit("Playback transcription for transcript editing is disabled outside Segments mode.");
+            LogPlaybackEdit("Playback transcription for transcript editing is disabled outside Transcribe Audio mode.");
             return false;
         }
 
@@ -2681,19 +2875,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(vm.OpenAiApiKey))
-        {
-            LogPlaybackEdit("Playback transcription for empty transcript cells was skipped because the OpenAI API key is not configured.");
-            return false;
-        }
-
-        if (!vm.IsOpenAiEngineSelected)
-        {
-            LogPlaybackEdit("Playback transcription for empty transcript cells was skipped because Auto Transcribe with AI is turned off.");
-            return false;
-        }
-
-        string selectedModel = vm.SelectedEngine?.Id?.Trim() ?? OpenAiTranscriptionModelCatalog.Gpt4oTranscribe;
+        string selectedModel = TranscriptionModelCatalog.SupportsPlaybackTranscription(vm.SelectedEngine?.Id ?? string.Empty)
+            ? vm.SelectedEngine!.Id
+            : TranscriptionModelCatalog.WhisperSmall;
 
         if (!TryResolvePlaybackEditStopOffset(vm, line, out TimeSpan stopOffset))
         {
@@ -3103,14 +3287,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _processLogService?.Log("PlaybackEdit", message);
     }
 
-    private void LogSegmentBatch(string message)
+    private void LogTranscribeAudioBatch(string message)
     {
-        _processLogService?.Log("SegmentBatch", message);
+        _processLogService?.Log("TranscribeAudioBatch", message);
     }
 
-    private void LogSpeakerDiarization(string message)
+    private void LogLiveTranscription(string message)
     {
-        _processLogService?.Log("SpeakerDiarization", message);
+        _processLogService?.Log("LiveTranscription", message);
+    }
+
+    private static string BuildLogPreview(string text)
+    {
+        string normalized = string.Join(" ", (text ?? string.Empty).Split(
+            Array.Empty<char>(),
+            StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= 80
+            ? normalized
+            : $"{normalized[..80]}...";
     }
 
     private static void PausePlaybackForPlaybackEditStop(MainViewModel vm)
@@ -3906,9 +4100,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SyncPlaybackToCurrentTranscriptRow()
     {
         if (DataContext is not MainViewModel vm
-            || (!vm.IsSegmentTranscriptViewSelected && !vm.IsSpeakerTranscriptViewSelected)
+            || !vm.IsTranscribeAudioTranscriptViewSelected
             || !vm.IsAudioFileLoaded
-            || IsSegmentBatchTranscribing
+            || IsTranscribeAudioBatchTranscribing
             || _activePlaybackEditTranscription is not null)
         {
             _lastPlaybackSyncedLine = null;
@@ -4134,6 +4328,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Exception? Failure
     );
 }
+
+
+
 
 
 

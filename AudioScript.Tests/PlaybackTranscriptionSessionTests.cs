@@ -30,7 +30,7 @@ public sealed class PlaybackTranscriptionSessionTests {
             session.PlaybackInterimTranscriptionUpdated += (_, update) => interimTcs.TrySetResult(update);
             session.PlaybackFinalTranscriptionAvailable += (_, update) => finalTcs.TrySetResult(update);
 
-            session.StartPlaybackTranscription(OpenAiTranscriptionModelCatalog.Gpt4oMiniTranscribe);
+            session.StartPlaybackTranscription(TranscriptionModelCatalog.WhisperSmall);
 
             captureService.EmitFrame(CreatePcmChunk(100), AudioFormatConstants.EngineWaveFormat);
             captureService.EmitFrame(CreatePcmChunk(100), AudioFormatConstants.EngineWaveFormat);
@@ -74,7 +74,7 @@ public sealed class PlaybackTranscriptionSessionTests {
 
         try {
             session.PlaybackFinalTranscriptionAvailable += (_, update) => finals.Add(update);
-            session.StartPlaybackTranscription(OpenAiTranscriptionModelCatalog.Gpt4oTranscribe);
+            session.StartPlaybackTranscription(TranscriptionModelCatalog.WhisperSmall);
 
             for (int index = 0; index < 5; index++) {
                 captureService.EmitFrame(CreatePcmChunk(100), AudioFormatConstants.EngineWaveFormat);
@@ -107,10 +107,10 @@ public sealed class PlaybackTranscriptionSessionTests {
             new FakePlaybackTranscriptionService(),
             new ProcessLogService());
 
-        session.StartPlaybackTranscription(OpenAiTranscriptionModelCatalog.Gpt4oMiniTranscribe);
+        session.StartPlaybackTranscription(TranscriptionModelCatalog.WhisperSmall);
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
-            session.StartPlaybackTranscription(OpenAiTranscriptionModelCatalog.Gpt4oMiniTranscribe));
+            session.StartPlaybackTranscription(TranscriptionModelCatalog.WhisperSmall));
 
         Assert.Contains("single-use", ex.Message, StringComparison.OrdinalIgnoreCase);
     }

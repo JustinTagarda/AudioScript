@@ -1,10 +1,12 @@
 using System.IO;
+using AudioScript.Services;
 using NAudio.Wave;
 
 namespace AudioScript.Audio;
 
 public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybackAudioTapSource {
     private readonly object _sync = new();
+    private readonly ProcessLogService? _processLogService;
     private WaveOutEvent? _output;
     private AudioFileReader? _reader;
     private string? _loadedFilePath;
@@ -13,6 +15,11 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
     public event EventHandler? PlaybackStateChanged;
     public event EventHandler<PlaybackAudioFrameEventArgs>? PlaybackAudioFrameProduced;
     public event EventHandler<Exception>? PlaybackAudioFaulted;
+
+    public NaudioAudioPlaybackService(ProcessLogService? processLogService = null)
+    {
+        _processLogService = processLogService;
+    }
 
     public string? LoadedFilePath {
         get {
@@ -97,29 +104,46 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
             throw new FileNotFoundException("Audio file was not found.", fullPath);
         }
 
-        var reader = new AudioFileReader(fullPath);
-        var tappedProvider = new TappedWaveProvider(
-            reader,
-            OnPlaybackAudioFrameProduced,
-            OnPlaybackAudioFaulted);
-        var output = new WaveOutEvent();
-        output.Init(tappedProvider);
-        ApplyMuteState(output, IsMuted);
-        output.PlaybackStopped += OnPlaybackStopped;
+        Log($"Loading audio preview file '{fullPath}'.");
+        AudioFileReader? reader = null;
+        WaveOutEvent? output = null;
 
-        WaveOutEvent? previousOutput;
-        AudioFileReader? previousReader;
+        try {
+            reader = new AudioFileReader(fullPath);
+            var tappedProvider = new TappedWaveProvider(
+                reader,
+                OnPlaybackAudioFrameProduced,
+                OnPlaybackAudioFaulted);
+            output = new WaveOutEvent();
+            output.Init(tappedProvider);
+            ApplyMuteState(output, IsMuted);
+            output.PlaybackStopped += OnPlaybackStopped;
 
-        lock (_sync) {
-            previousOutput = _output;
-            previousReader = _reader;
-            _reader = reader;
-            _output = output;
-            _loadedFilePath = fullPath;
+            WaveOutEvent? previousOutput;
+            AudioFileReader? previousReader;
+
+            lock (_sync) {
+                previousOutput = _output;
+                previousReader = _reader;
+                _reader = reader;
+                _output = output;
+                _loadedFilePath = fullPath;
+            }
+
+            DisposePlaybackCore(previousOutput, previousReader);
+            PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+            Log($"Audio preview file loaded '{fullPath}'.");
         }
+        catch (Exception ex) {
+            if (output is not null) {
+                output.PlaybackStopped -= OnPlaybackStopped;
+                output.Dispose();
+            }
 
-        DisposePlaybackCore(previousOutput, previousReader);
-        PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+            reader?.Dispose();
+            _processLogService?.LogException("AudioPreview", $"Audio preview load failed for '{fullPath}'.", ex);
+            throw;
+        }
     }
 
     public void UnloadFile() {
@@ -134,6 +158,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
             _loadedFilePath = null;
         }
 
+        Log($"Unloading audio preview file '{_loadedFilePath ?? "(none)"}'.");
         DisposePlaybackCore(output, reader);
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -157,6 +182,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
 
         output.Play();
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+        Log("Audio preview playback started.");
     }
 
     public void Pause() {
@@ -175,6 +201,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         }
 
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+        Log("Audio preview playback paused.");
     }
 
     public void Stop() {
@@ -201,6 +228,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         }
 
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+        Log("Audio preview playback stopped.");
     }
 
     public void Seek(TimeSpan position) {
@@ -233,6 +261,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         }
 
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+        Log($"Audio preview seek applied to {clamped}.");
     }
 
     public void Dispose() {
@@ -263,6 +292,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
     }
 
     private void OnPlaybackAudioFaulted(Exception ex) {
+        _processLogService?.LogException("AudioPreview", "Audio preview frame processing faulted.", ex);
         PlaybackAudioFaulted?.Invoke(this, ex);
     }
 
@@ -272,6 +302,11 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         }
 
         output.Volume = isMuted ? 0f : 1f;
+    }
+
+    private void Log(string message)
+    {
+        _processLogService?.Log("AudioPreview", message);
     }
 
     private sealed class TappedWaveProvider : IWaveProvider {

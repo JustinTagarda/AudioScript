@@ -1,5 +1,7 @@
 using System.IO;
 using System.Text.Json;
+using AudioScript.Abstractions;
+using AudioScript.Audio;
 
 namespace AudioScript.Services;
 
@@ -16,10 +18,7 @@ public sealed class AppPreferencesStore {
             return;
         }
 
-        string appDataDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "AudioScript");
-        _settingsFilePath = Path.Combine(appDataDirectory, "app-preferences.json");
+        _settingsFilePath = AppDataPathProvider.Create().SettingsFilePath;
     }
 
     public AppPreferencesSnapshot Load() {
@@ -28,7 +27,11 @@ public sealed class AppPreferencesStore {
                 CopyFinalizedWithTimeline: false,
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.System,
-                AutoPlayTimelineSelection: true);
+                AutoPlayTimelineSelection: true,
+                SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
+                LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                LiveAudioDeviceNumber: -1,
+                SelectedEngineId: TranscriptionModelCatalog.WhisperSmall);
         }
 
         try {
@@ -40,21 +43,35 @@ public sealed class AppPreferencesStore {
                     CopyFinalizedWithTimeline: false,
                     AutoTranscribeWithAi: false,
                     ThemePreference: AppThemePreference.System,
-                    AutoPlayTimelineSelection: true);
+                    AutoPlayTimelineSelection: true,
+                    SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
+                    LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                    LiveAudioDeviceNumber: -1,
+                    SelectedEngineId: TranscriptionModelCatalog.WhisperSmall);
             }
 
             return new AppPreferencesSnapshot(
                 CopyFinalizedWithTimeline: persisted.CopyFinalizedWithTimeline,
                 AutoTranscribeWithAi: persisted.AutoTranscribeWithAi,
                 ThemePreference: ParseThemePreference(persisted.ThemePreference),
-                AutoPlayTimelineSelection: persisted.AutoPlayTimelineSelection ?? true);
+                AutoPlayTimelineSelection: persisted.AutoPlayTimelineSelection ?? true,
+                SelectedTranscriptMode: string.IsNullOrWhiteSpace(persisted.SelectedTranscriptMode)
+                    ? TranscriptGenerationMode.TranscribeAudio.ToString()
+                    : persisted.SelectedTranscriptMode,
+                LiveAudioSourceKind: ParseLiveAudioSourceKind(persisted.LiveAudioSourceKind),
+                LiveAudioDeviceNumber: persisted.LiveAudioDeviceNumber ?? -1,
+                SelectedEngineId: NormalizeSelectedEngineId(persisted.SelectedEngineId));
         }
         catch {
             return new AppPreferencesSnapshot(
                 CopyFinalizedWithTimeline: false,
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.System,
-                AutoPlayTimelineSelection: true);
+                AutoPlayTimelineSelection: true,
+                SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
+                LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                LiveAudioDeviceNumber: -1,
+                SelectedEngineId: TranscriptionModelCatalog.WhisperSmall);
         }
     }
 
@@ -68,6 +85,10 @@ public sealed class AppPreferencesStore {
                 AutoTranscribeWithAi = snapshot.AutoTranscribeWithAi,
                 ThemePreference = snapshot.ThemePreference.ToString(),
                 AutoPlayTimelineSelection = snapshot.AutoPlayTimelineSelection,
+                SelectedTranscriptMode = snapshot.SelectedTranscriptMode,
+                LiveAudioSourceKind = snapshot.LiveAudioSourceKind.ToString(),
+                LiveAudioDeviceNumber = snapshot.LiveAudioDeviceNumber,
+                SelectedEngineId = snapshot.SelectedEngineId,
             };
 
             string json = JsonSerializer.Serialize(persisted, JsonOptions);
@@ -106,6 +127,27 @@ public sealed class AppPreferencesStore {
             : AppThemePreference.System;
     }
 
+    private static LiveAudioSourceKind ParseLiveAudioSourceKind(string? value) {
+        return Enum.TryParse(value, ignoreCase: true, out LiveAudioSourceKind kind)
+            ? kind
+            : LiveAudioSourceKind.DefaultPlayback;
+    }
+
+    private static string NormalizeSelectedEngineId(string? value) {
+        string trimmed = value?.Trim() ?? string.Empty;
+        if (string.Equals(trimmed, BuildLegacyMinimumWhisperId(), StringComparison.OrdinalIgnoreCase)) {
+            return TranscriptionModelCatalog.WhisperSmall;
+        }
+
+        return TranscriptionModelCatalog.IsRecognizedTranscriptionEngine(trimmed)
+            ? trimmed
+            : TranscriptionModelCatalog.WhisperSmall;
+    }
+
+    private static string BuildLegacyMinimumWhisperId() {
+        return string.Concat("whisper", "-", "base");
+    }
+
     private sealed class PersistedAppPreferences {
         public bool CopyFinalizedWithTimeline { get; init; }
 
@@ -114,6 +156,14 @@ public sealed class AppPreferencesStore {
         public string? ThemePreference { get; init; }
 
         public bool? AutoPlayTimelineSelection { get; init; }
+
+        public string? SelectedTranscriptMode { get; init; }
+
+        public string? LiveAudioSourceKind { get; init; }
+
+        public int? LiveAudioDeviceNumber { get; init; }
+
+        public string? SelectedEngineId { get; init; }
     }
 }
 
@@ -121,7 +171,11 @@ public sealed record AppPreferencesSnapshot(
     bool CopyFinalizedWithTimeline,
     bool AutoTranscribeWithAi,
     AppThemePreference ThemePreference,
-    bool AutoPlayTimelineSelection);
+    bool AutoPlayTimelineSelection,
+    string SelectedTranscriptMode,
+    LiveAudioSourceKind LiveAudioSourceKind,
+    int LiveAudioDeviceNumber,
+    string SelectedEngineId = TranscriptionModelCatalog.WhisperSmall);
 
 
 

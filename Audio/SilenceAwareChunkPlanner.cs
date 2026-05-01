@@ -28,7 +28,7 @@ public sealed class SilenceAwareChunkPlanner {
         _options = options ?? SilenceAwareChunkPlannerOptions.Default;
     }
 
-    public IReadOnlyList<DiarizationChunkPlan> PlanChunks(
+    public IReadOnlyList<AudioChunkPlan> PlanChunks(
         TimeSpan duration,
         IReadOnlyList<TimeSpanRange> silenceIntervals) {
         if (duration <= TimeSpan.Zero) {
@@ -43,7 +43,7 @@ public sealed class SilenceAwareChunkPlanner {
 
         if (duration <= _options.MaximumChunkDuration) {
             return new[] {
-                new DiarizationChunkPlan(
+                new AudioChunkPlan(
                     Index: 0,
                     RequestStart: TimeSpan.Zero,
                     RequestEnd: duration,
@@ -52,7 +52,7 @@ public sealed class SilenceAwareChunkPlanner {
             };
         }
 
-        var chunks = new List<DiarizationChunkPlan>();
+        var chunks = new List<AudioChunkPlan>();
         TimeSpan keepStart = TimeSpan.Zero;
         int chunkIndex = 0;
 
@@ -80,7 +80,7 @@ public sealed class SilenceAwareChunkPlanner {
                 requestEnd = duration;
             }
 
-            chunks.Add(new DiarizationChunkPlan(
+            chunks.Add(new AudioChunkPlan(
                 Index: chunkIndex,
                 RequestStart: requestStart,
                 RequestEnd: requestEnd,

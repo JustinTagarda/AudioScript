@@ -1,7 +1,7 @@
 namespace AudioScript.Abstractions;
 
 public enum TranscriptGenerationMode {
-    Segments = 0,
-    SpeakerDiarization = 1,
+    Live = 1,
+    TranscribeAudio = 2,
 }
 

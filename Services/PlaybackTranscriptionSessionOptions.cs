@@ -5,13 +5,15 @@ public sealed record PlaybackTranscriptionSessionOptions(
     TimeSpan InterimWindowDuration,
     TimeSpan InterimCadence,
     TimeSpan FinalWindowDuration,
-    TimeSpan PollInterval) {
+    TimeSpan PollInterval,
+    double MinimumPeakLevel = 0) {
     public static PlaybackTranscriptionSessionOptions Default { get; } = new(
         MinimumSegmentDuration: TimeSpan.FromSeconds(1.5),
         InterimWindowDuration: TimeSpan.FromSeconds(4),
         InterimCadence: TimeSpan.FromSeconds(2),
         FinalWindowDuration: TimeSpan.FromSeconds(8),
-        PollInterval: TimeSpan.FromMilliseconds(250));
+        PollInterval: TimeSpan.FromMilliseconds(250),
+        MinimumPeakLevel: 0);
 
     public PlaybackTranscriptionSessionOptions Validate() {
         if (MinimumSegmentDuration <= TimeSpan.Zero) {
@@ -32,6 +34,10 @@ public sealed record PlaybackTranscriptionSessionOptions(
 
         if (PollInterval <= TimeSpan.Zero) {
             throw new InvalidOperationException("Playback transcription poll interval must be greater than zero.");
+        }
+
+        if (MinimumPeakLevel < 0 || MinimumPeakLevel > 1) {
+            throw new InvalidOperationException("Minimum playback peak level must be between 0 and 1.");
         }
 
         return this;

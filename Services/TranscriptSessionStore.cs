@@ -1,12 +1,14 @@
 using System.Security.Cryptography;
 using System.IO;
 using System.Text.Json;
+using AudioScript.Abstractions;
 using NAudio.Wave;
 
 namespace AudioScript.Services;
 
 public sealed class TranscriptSessionStore {
     public const int CurrentSchemaVersion = 1;
+    public const string LiveSessionAudioName = "Live Transcription";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         WriteIndented = true,
@@ -17,76 +19,108 @@ public sealed class TranscriptSessionStore {
 
     public TranscriptSessionStore(string? sessionsRootPath = null, ProcessLogService? processLogService = null) {
         _sessionsRootPath = string.IsNullOrWhiteSpace(sessionsRootPath)
-            ? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "AudioScript",
-                "Sessions")
+            ? AppDataPathProvider.Create().SessionsPath
             : Path.GetFullPath(sessionsRootPath);
         _processLogService = processLogService;
     }
 
     public TranscriptSessionLoadResult ImportAudioFile(string sourceFilePath) {
-        string fullPath = ValidateAudioFilePath(sourceFilePath);
-        string fileHash = ComputeSha256(fullPath);
-        string sessionId = BuildSessionId(fileHash);
-        string sessionDirectoryPath = GetSessionDirectoryPath(sessionId);
-        string sessionFilePath = GetSessionFilePath(sessionId);
-        string originalFileName = Path.GetFileName(fullPath);
-        string storedRelativePath = string.IsNullOrWhiteSpace(originalFileName)
-            ? "audio/imported-audio"
-            : Path.Combine("audio", SanitizeFileName(originalFileName));
-        string storedAudioPath = Path.Combine(sessionDirectoryPath, storedRelativePath);
-        var sourceInfo = new FileInfo(fullPath);
+        Log($"ImportAudioFile started. source='{sourceFilePath}'.");
+        try {
+            string fullPath = ValidateAudioFilePath(sourceFilePath);
+            string fileHash = ComputeSha256(fullPath);
+            string sessionId = BuildSessionId(fileHash);
+            string sessionDirectoryPath = GetSessionDirectoryPath(sessionId);
+            string sessionFilePath = GetSessionFilePath(sessionId);
+            string originalFileName = Path.GetFileName(fullPath);
+            string storedRelativePath = string.IsNullOrWhiteSpace(originalFileName)
+                ? "audio/imported-audio"
+                : Path.Combine("audio", SanitizeFileName(originalFileName));
+            string storedAudioPath = Path.Combine(sessionDirectoryPath, storedRelativePath);
+            var sourceInfo = new FileInfo(fullPath);
 
-        Directory.CreateDirectory(Path.Combine(sessionDirectoryPath, "audio"));
+            Log(
+                $"ImportAudioFile validated source. fullPath='{fullPath}', size={sourceInfo.Length:N0}, " +
+                $"sessionId='{sessionId}', sessionFile='{sessionFilePath}'.");
 
-        TranscriptSessionDocument document = File.Exists(sessionFilePath)
-            ? LoadDocument(sessionFilePath)
-            : CreateNewDocument(sessionId, originalFileName);
+            Directory.CreateDirectory(Path.Combine(sessionDirectoryPath, "audio"));
 
-        if (!string.IsNullOrWhiteSpace(document.Audio.StoredRelativePath)) {
-            storedRelativePath = document.Audio.StoredRelativePath;
-            storedAudioPath = Path.Combine(sessionDirectoryPath, storedRelativePath);
+            TranscriptSessionDocument document = File.Exists(sessionFilePath)
+                ? LoadDocument(sessionFilePath)
+                : CreateNewDocument(sessionId, originalFileName);
+
+            if (!string.IsNullOrWhiteSpace(document.Audio.StoredRelativePath)) {
+                storedRelativePath = document.Audio.StoredRelativePath;
+                storedAudioPath = Path.Combine(sessionDirectoryPath, storedRelativePath);
+            }
+
+            bool needsCopy = !File.Exists(storedAudioPath)
+                || document.Audio.FileSizeBytes != sourceInfo.Length
+                || !string.Equals(document.Audio.Sha256, fileHash, StringComparison.OrdinalIgnoreCase);
+
+            Log(
+                $"ImportAudioFile target prepared. storedAudioPath='{storedAudioPath}', needsCopy={needsCopy}.");
+
+            if (needsCopy) {
+                CopyFileAtomic(fullPath, storedAudioPath);
+            }
+
+            document.Audio = new TranscriptSessionAudioDocument {
+                StoredRelativePath = NormalizeRelativePath(storedRelativePath),
+                OriginalFileName = originalFileName,
+                FileSizeBytes = sourceInfo.Length,
+                DurationSeconds = TryGetAudioDurationSeconds(storedAudioPath),
+                Sha256 = fileHash,
+            };
+            document.DisplayName = Path.GetFileNameWithoutExtension(originalFileName);
+            document.UpdatedUtc = DateTimeOffset.UtcNow;
+
+            Save(document);
+            Log($"ImportAudioFile completed. sessionId='{sessionId}', storedAudioPath='{storedAudioPath}'.");
+            return LoadSession(sessionId);
         }
-
-        bool needsCopy = !File.Exists(storedAudioPath)
-            || document.Audio.FileSizeBytes != sourceInfo.Length
-            || !string.Equals(document.Audio.Sha256, fileHash, StringComparison.OrdinalIgnoreCase);
-
-        if (needsCopy) {
-            CopyFileAtomic(fullPath, storedAudioPath);
+        catch (Exception ex) {
+            _processLogService?.LogException("SessionStore", $"ImportAudioFile failed. source='{sourceFilePath}'.", ex);
+            throw;
         }
+    }
 
-        document.Audio = new TranscriptSessionAudioDocument {
-            StoredRelativePath = NormalizeRelativePath(storedRelativePath),
-            OriginalFileName = originalFileName,
-            FileSizeBytes = sourceInfo.Length,
-            DurationSeconds = TryGetAudioDurationSeconds(storedAudioPath),
-            Sha256 = fileHash,
-        };
-        document.DisplayName = Path.GetFileNameWithoutExtension(originalFileName);
-        document.UpdatedUtc = DateTimeOffset.UtcNow;
+    public TranscriptSessionLoadResult CreateLiveSession(string? displayName = null) {
+        Log($"CreateLiveSession started. displayName='{displayName}'.");
+        string sessionId = $"live-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}";
+        TranscriptSessionDocument document = CreateNewDocument(sessionId, LiveSessionAudioName);
+        document.DisplayName = string.IsNullOrWhiteSpace(displayName)
+            ? $"Live Transcription {DateTimeOffset.Now:yyyy-MM-dd HH-mm}"
+            : displayName.Trim();
+        document.Audio.OriginalFileName = LiveSessionAudioName;
+        document.Editing.SelectedTranscriptMode = TranscriptGenerationMode.Live.ToString();
+        document.Editing.SelectedTranscriptViewIndex = 0;
 
         Save(document);
+        Log($"CreateLiveSession completed. sessionId='{sessionId}'.");
         return LoadSession(sessionId);
     }
 
     public bool TryLoadExistingSessionForAudio(string sourceFilePath, out TranscriptSessionLoadResult? loadResult) {
+        Log($"TryLoadExistingSessionForAudio started. source='{sourceFilePath}'.");
         string fullPath = ValidateAudioFilePath(sourceFilePath);
         string fileHash = ComputeSha256(fullPath);
         string sessionId = BuildSessionId(fileHash);
         string sessionFilePath = GetSessionFilePath(sessionId);
 
         if (!File.Exists(sessionFilePath)) {
+            Log($"TryLoadExistingSessionForAudio found no session. sessionFile='{sessionFilePath}'.");
             loadResult = null;
             return false;
         }
 
         loadResult = LoadSession(sessionId);
+        Log($"TryLoadExistingSessionForAudio loaded existing session '{sessionId}'.");
         return true;
     }
 
     public TranscriptSessionLoadResult LoadSession(string sessionId) {
+        Log($"LoadSession started. sessionId='{sessionId}'.");
         if (string.IsNullOrWhiteSpace(sessionId)) {
             throw new ArgumentException("Session id is required.", nameof(sessionId));
         }
@@ -101,7 +135,10 @@ public sealed class TranscriptSessionStore {
         bool audioAvailable = false;
         string? audioIssueMessage = null;
 
-        if (string.IsNullOrWhiteSpace(audioPath)) {
+        if (IsLiveSession(document)) {
+            audioIssueMessage = null;
+        }
+        else if (string.IsNullOrWhiteSpace(audioPath)) {
             audioIssueMessage = "This session does not have a stored audio file path.";
         }
         else if (!File.Exists(audioPath)) {
@@ -122,14 +159,19 @@ public sealed class TranscriptSessionStore {
             audioAvailable = true;
         }
 
-        return new TranscriptSessionLoadResult(
+        TranscriptSessionLoadResult result = new TranscriptSessionLoadResult(
             Document: document,
             AudioFilePath: audioPath,
             AudioAvailable: audioAvailable,
             AudioIssueMessage: audioIssueMessage);
+        Log(
+            $"LoadSession completed. sessionId='{sessionId}', audioAvailable={audioAvailable}, " +
+            $"audioPath='{audioPath ?? "(none)"}', audioIssue='{audioIssueMessage ?? "(none)"}'.");
+        return result;
     }
 
     public TranscriptSessionLoadResult RestoreAudioFile(string sessionId, string replacementAudioPath) {
+        Log($"RestoreAudioFile started. sessionId='{sessionId}', replacement='{replacementAudioPath}'.");
         TranscriptSessionLoadResult loadResult = LoadSessionWithoutAudioValidation(sessionId);
         TranscriptSessionDocument document = loadResult.Document;
         string fullReplacementPath = ValidateAudioFilePath(replacementAudioPath);
@@ -161,6 +203,7 @@ public sealed class TranscriptSessionStore {
         document.UpdatedUtc = DateTimeOffset.UtcNow;
 
         Save(document);
+        Log($"RestoreAudioFile completed. sessionId='{sessionId}', restoredPath='{absolutePath}'.");
         return LoadSession(sessionId);
     }
 
@@ -214,9 +257,11 @@ public sealed class TranscriptSessionStore {
 
         string json = JsonSerializer.Serialize(document, JsonOptions);
         WriteAllTextAtomic(sessionFilePath, json);
+        Log($"Save completed. sessionId='{document.SessionId}', sessionFile='{sessionFilePath}'.");
     }
 
     public void DeleteSession(string sessionId) {
+        Log($"DeleteSession started. sessionId='{sessionId}'.");
         if (string.IsNullOrWhiteSpace(sessionId)) {
             throw new ArgumentException("Session id is required.", nameof(sessionId));
         }
@@ -227,6 +272,7 @@ public sealed class TranscriptSessionStore {
         }
 
         Directory.Delete(sessionDirectoryPath, recursive: true);
+        Log($"DeleteSession completed. sessionId='{sessionId}', directory='{sessionDirectoryPath}'.");
     }
 
     public string GetSessionDirectoryPath(string sessionId) {
@@ -279,8 +325,6 @@ public sealed class TranscriptSessionStore {
 
             document.Transcript ??= new TranscriptSessionTranscriptDocument();
             document.Transcript.Lines ??= new List<TranscriptSessionLineDocument>();
-            document.SpeakerTranscript ??= new TranscriptSessionTranscriptDocument();
-            document.SpeakerTranscript.Lines ??= new List<TranscriptSessionLineDocument>();
             document.Audio ??= new TranscriptSessionAudioDocument();
             document.Editing ??= new TranscriptSessionEditingDocument();
 
@@ -309,9 +353,15 @@ public sealed class TranscriptSessionStore {
                 OriginalFileName = originalFileName,
             },
             Transcript = new TranscriptSessionTranscriptDocument(),
-            SpeakerTranscript = new TranscriptSessionTranscriptDocument(),
             Editing = new TranscriptSessionEditingDocument(),
         };
+    }
+
+    private static bool IsLiveSession(TranscriptSessionDocument document) {
+        return string.Equals(
+            document.Audio?.OriginalFileName,
+            LiveSessionAudioName,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildSessionId(string fileHash) {
@@ -446,8 +496,6 @@ public sealed class TranscriptSessionDocument {
     public TranscriptSessionAudioDocument Audio { get; set; } = new();
 
     public TranscriptSessionTranscriptDocument Transcript { get; set; } = new();
-
-    public TranscriptSessionTranscriptDocument SpeakerTranscript { get; set; } = new();
 
     public TranscriptSessionEditingDocument Editing { get; set; } = new();
 }

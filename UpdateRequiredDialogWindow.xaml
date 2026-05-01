@@ -46,6 +46,8 @@
             <Button Content="OK"
                     Width="104"
                     MinHeight="34"
+                    Tag="&#xE73E;"
+                    Style="{StaticResource ToolbarButtonStyle}"
                     Click="OkButton_Click"/>
         </StackPanel>
     </Grid>

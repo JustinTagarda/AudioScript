@@ -15,7 +15,7 @@
     <Company>Justin Tagarda</Company>
     <Product>AudioScript</Product>
     <Copyright>© 2026 Justin Tagarda. All rights reserved.</Copyright>
-    <Description>Audio transcription for anything playing on your PC, powered by OpenAI.</Description>
+    <Description>Offline audio transcription for local files and live playback capture.</Description>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(StoreSelfContained)' == 'true'">
@@ -27,7 +27,9 @@
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.0" />
     <PackageReference Include="SharpVectors.Wpf" Version="1.8.5" />
+    <PackageReference Include="Whisper.net.AllRuntimes" Version="1.9.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,6 +46,17 @@
   <ItemGroup>
     <Resource Include="assets\AudioScript.ico" />
     <Resource Include="assets\titlebar\*.svg" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="assets\models\ggml-small.bin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="assets\models\sherpa-diarization\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

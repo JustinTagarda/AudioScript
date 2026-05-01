@@ -12,11 +12,9 @@ public sealed class TranscriptModeOptionViewModel : INotifyPropertyChanged {
     public TranscriptModeOptionViewModel(
         TranscriptGenerationMode mode,
         string displayName,
-        string description,
         Action<TranscriptModeOptionViewModel>? selectionRequested = null) {
         Mode = mode;
         DisplayName = displayName;
-        Description = description;
         _selectionRequested = selectionRequested;
     }
 
@@ -25,8 +23,6 @@ public sealed class TranscriptModeOptionViewModel : INotifyPropertyChanged {
     public TranscriptGenerationMode Mode { get; }
 
     public string DisplayName { get; }
-
-    public string Description { get; }
 
     public bool IsSelected {
         get => _isSelected;

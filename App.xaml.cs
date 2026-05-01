@@ -1,7 +1,8 @@
-using System.Net.Http;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 using AudioScript.Audio;
 using AudioScript.Services;
 using AudioScript.ViewModels;
@@ -19,11 +20,8 @@ public partial class App : System.Windows.Application
     private Task? _activationListenerTask;
     private ProcessLogService? _processLogService;
 
-    private HttpClient? _httpClient;
     private MainViewModel? _mainViewModel;
     private WindowPlacementService? _windowPlacementService;
-    private OpenAiCredentialStore? _openAiCredentialStore;
-    private OpenAiApiKeyValidationService? _openAiApiKeyValidationService;
     private AppPreferencesStore? _appPreferencesStore;
     private AppThemeService? _appThemeService;
 
@@ -57,68 +55,80 @@ public partial class App : System.Windows.Application
             () => ListenForActivationRequests(_activationListenerCts.Token),
             _activationListenerCts.Token);
 
-        var openAiOptions = new OpenAiTranscriptionOptions();
-        _openAiCredentialStore = new OpenAiCredentialStore();
-        _appPreferencesStore = new AppPreferencesStore();
+        var appDataPathProvider = AppDataPathProvider.Create();
+        var processLogService = new ProcessLogService(appDataPathProvider.LogsPath);
+        _processLogService = processLogService;
+        RegisterGlobalExceptionLogging(processLogService);
+        processLogService.Log("App", $"Application startup initiated. Log file: {processLogService.LogFilePath}");
+        processLogService.Log(
+            "AppData",
+            $"App data root resolved. root='{appDataPathProvider.RootPath}', packaged={appDataPathProvider.IsPackaged}.");
+
+        var transcriptionOptions = new TranscriptionOptions();
+        var whisperModelManager = new WhisperModelManager(
+            processLogService,
+            appDataPathProvider.ModelsPath);
+        var appDataMigrationService = new AppDataMigrationService(appDataPathProvider, processLogService);
+        appDataMigrationService.MigrateLegacyData(whisperModelManager.Models);
+        _appPreferencesStore = new AppPreferencesStore(appDataPathProvider.SettingsFilePath);
         _appThemeService = new AppThemeService();
 
-        OpenAiCredentialSnapshot openAiSnapshot = _openAiCredentialStore.Load();
         AppPreferencesSnapshot appPreferencesSnapshot = _appPreferencesStore.Load();
-        openAiOptions.ApiKey = openAiSnapshot.ApiKey;
         _appThemeService.Apply(appPreferencesSnapshot.ThemePreference);
-
-        _httpClient = new HttpClient
-        {
-            // Long transcription and diarization uploads use service-level cancellation tokens.
-            // The framework default HttpClient timeout is 100 seconds and cancels valid long requests too early.
-            Timeout = Timeout.InfiniteTimeSpan,
-        };
-        _openAiApiKeyValidationService = new OpenAiApiKeyValidationService(_httpClient);
-        var processLogService = new ProcessLogService();
-        _processLogService = processLogService;
-        var responseParser = new OpenAiTranscriptionResponseParser();
-        var speakerDiarizationResponseParser = new OpenAiSpeakerDiarizationResponseParser();
         var audioStandardizer = new AudioStandardizer();
         var silenceIntervalDetector = new SilenceIntervalDetector();
-        var diarizationChunkPlanner = new SilenceAwareChunkPlanner(
-            ChunkedSpeakerDiarizationService.BuildRecommendedChunkPlannerOptions());
+        var audioChunkingOptions = AudioChunkingOptions.Default;
+        var chunkPlanner = new SilenceAwareChunkPlanner(
+            audioChunkingOptions.BuildRecommendedChunkPlannerOptions());
         var waveClipExtractor = new WaveClipExtractor();
-        var audioPlaybackService = new NaudioAudioPlaybackService();
-        var sessionStore = new TranscriptSessionStore(processLogService: processLogService);
-        var playbackTranscriptionService = new PlaybackTranscriptionService(
-            audioStandardizer,
-            _httpClient,
-            openAiOptions,
-            processLogService,
-            responseParser);
-        var speakerDiarizationService = new OpenAiSpeakerDiarizationService(
-            _httpClient,
-            openAiOptions,
-            processLogService,
-            speakerDiarizationResponseParser);
-        var chunkedSpeakerDiarizationService = new ChunkedSpeakerDiarizationService(
+        var audioChunkingService = new AudioChunkingService(
             audioStandardizer,
             silenceIntervalDetector,
-            diarizationChunkPlanner,
+            chunkPlanner,
             waveClipExtractor,
-            speakerDiarizationService,
+            audioChunkingOptions);
+        var audioPlaybackService = new NaudioAudioPlaybackService(processLogService);
+        var sessionStore = new TranscriptSessionStore(appDataPathProvider.SessionsPath, processLogService);
+        var whisperTranscriptionService = new WhisperAudioTranscriptionService(
+            audioStandardizer,
+            transcriptionOptions,
+            processLogService,
+            whisperModelManager);
+        var sherpaDiarizationModelManager = new SherpaDiarizationModelManager();
+        var sherpaSpeakerDiarizationEngine = new SherpaSpeakerDiarizationEngine(
+            audioStandardizer,
+            sherpaDiarizationModelManager,
+            processLogService);
+        var offlineSpeakerDiarizationService = new OfflineSpeakerDiarizationService(
+            sherpaSpeakerDiarizationEngine,
+            processLogService);
+        var chunkedSpeakerDiarizationService = new ChunkedSpeakerDiarizationService(
+            audioChunkingService,
+            offlineSpeakerDiarizationService,
             processLogService);
         var playbackEditTranscriptionOptions = new PlaybackTranscriptionSessionOptions(
             MinimumSegmentDuration: TimeSpan.FromSeconds(1.5),
             InterimWindowDuration: TimeSpan.FromSeconds(10),
             InterimCadence: TimeSpan.FromSeconds(10),
             FinalWindowDuration: TimeSpan.FromSeconds(10),
-            PollInterval: TimeSpan.FromMilliseconds(100));
+            PollInterval: TimeSpan.FromMilliseconds(100),
+            MinimumPeakLevel: 0);
+        var liveTranscriptionOptions = new PlaybackTranscriptionSessionOptions(
+            MinimumSegmentDuration: TimeSpan.FromSeconds(1.5),
+            InterimWindowDuration: TimeSpan.FromSeconds(4),
+            InterimCadence: TimeSpan.FromSeconds(2),
+            FinalWindowDuration: TimeSpan.FromSeconds(8),
+            PollInterval: TimeSpan.FromMilliseconds(250),
+            MinimumPeakLevel: 0.015);
 
-        _windowPlacementService = new WindowPlacementService();
+        _windowPlacementService = new WindowPlacementService(
+            Path.Combine(appDataPathProvider.SettingsPath, "window-placement.json"));
 
         _mainViewModel = new MainViewModel(
-            OpenAiTranscriptionModelCatalog.Models,
-            audioPlaybackService,
-            openAiOptions,
-            _openAiCredentialStore,
-            _openAiApiKeyValidationService,
+            whisperModelManager.GetSelectableTranscriptionModels(),
+            whisperTranscriptionService,
             chunkedSpeakerDiarizationService,
+            audioPlaybackService,
             processLogService,
             sessionStore,
             _appPreferencesStore,
@@ -128,10 +138,16 @@ public partial class App : System.Windows.Application
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
                 new PlaybackAudioCaptureService(audioPlaybackService),
-                playbackTranscriptionService,
+                whisperTranscriptionService,
                 processLogService,
                 playbackEditTranscriptionOptions),
-            processLogService: processLogService)
+            liveTranscriptionSessionFactory: source => new PlaybackTranscriptionSession(
+                CreateLiveCaptureService(source),
+                whisperTranscriptionService,
+                processLogService,
+                liveTranscriptionOptions),
+            processLogService: processLogService,
+            whisperModelManager: whisperModelManager)
         {
             DataContext = _mainViewModel,
         };
@@ -140,10 +156,26 @@ public partial class App : System.Windows.Application
 
         MainWindow = mainWindow;
         mainWindow.Show();
+        processLogService.Log("App", "Application startup completed.");
+    }
+
+    private static IAudioLoopbackCaptureService CreateLiveCaptureService(AudioInputDeviceOption source)
+    {
+        return source.Kind switch
+        {
+            LiveAudioSourceKind.DefaultPlayback => new StandardizingAudioCaptureService(
+                new WasapiLoopbackCaptureService()),
+            LiveAudioSourceKind.MicrophoneAndDefaultPlayback => new CompositeAudioCaptureService(
+                new StandardizingAudioCaptureService(new MicrophoneAudioCaptureService(source.DeviceNumber)),
+                new StandardizingAudioCaptureService(new WasapiLoopbackCaptureService())),
+            _ => new StandardizingAudioCaptureService(
+                new MicrophoneAudioCaptureService(source.DeviceNumber)),
+        };
     }
 
     protected override void OnExit(System.Windows.ExitEventArgs e)
     {
+        _processLogService?.Log("App", "Application exit initiated.");
         try
         {
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -151,7 +183,6 @@ public partial class App : System.Windows.Application
         finally
         {
             _activationListenerCts?.Cancel();
-            _httpClient?.Dispose();
 
             try
             {
@@ -197,6 +228,39 @@ public partial class App : System.Windows.Application
         }
 
         base.OnExit(e);
+        _processLogService?.Log("App", "Application exit completed.");
+        _processLogService?.Dispose();
+    }
+
+    private void RegisterGlobalExceptionLogging(ProcessLogService processLogService)
+    {
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnCurrentDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+
+        void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
+        {
+            processLogService.LogException("App", "Unhandled dispatcher exception.", e.Exception);
+        }
+
+        void OnCurrentDomainUnhandledException(object? sender, UnhandledExceptionEventArgs e)
+        {
+            if (e.ExceptionObject is Exception exception)
+            {
+                processLogService.LogException("App", $"Unhandled AppDomain exception. IsTerminating={e.IsTerminating}.", exception);
+                return;
+            }
+
+            processLogService.Log(
+                "App",
+                $"Unhandled AppDomain exception object of type '{e.ExceptionObject?.GetType().FullName ?? "unknown"}'. IsTerminating={e.IsTerminating}.",
+                ProcessLogLevel.Error);
+        }
+
+        void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            processLogService.LogException("App", "Unobserved task exception.", e.Exception);
+        }
     }
 
     private void ListenForActivationRequests(CancellationToken cancellationToken)

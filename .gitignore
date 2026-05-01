@@ -7,6 +7,7 @@ artifacts/
 Releases/
 AudioScript.Package/AppPackages/
 AudioScript.Package/BundleArtifacts/
+assets/models/
 
 # User-local IDE files
 *.user

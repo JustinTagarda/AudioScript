@@ -16,7 +16,7 @@ public sealed class SilenceAwareChunkPlannerTests {
             SearchAfterPreferredSplit: TimeSpan.FromSeconds(30),
             MinimumSilenceDuration: TimeSpan.FromMilliseconds(450)));
 
-        IReadOnlyList<DiarizationChunkPlan> chunks = planner.PlanChunks(
+        IReadOnlyList<AudioChunkPlan> chunks = planner.PlanChunks(
             TimeSpan.FromMinutes(32),
             new[] {
                 new TimeSpanRange(TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(6)),
@@ -51,7 +51,7 @@ public sealed class SilenceAwareChunkPlannerTests {
             SearchAfterPreferredSplit: TimeSpan.FromSeconds(30),
             MinimumSilenceDuration: TimeSpan.FromMilliseconds(450)));
 
-        IReadOnlyList<DiarizationChunkPlan> chunks = planner.PlanChunks(
+        IReadOnlyList<AudioChunkPlan> chunks = planner.PlanChunks(
             TimeSpan.FromMinutes(25),
             Array.Empty<TimeSpanRange>());
 

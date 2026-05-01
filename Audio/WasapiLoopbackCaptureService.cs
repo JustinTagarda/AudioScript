@@ -94,7 +94,7 @@ public sealed class WasapiLoopbackCaptureService : IAudioLoopbackCaptureService 
 
         byte[] copied = new byte[e.BytesRecorded];
         Buffer.BlockCopy(e.Buffer, 0, copied, 0, e.BytesRecorded);
-        AudioFrameCaptured?.Invoke(this, new LoopbackAudioFrameEventArgs(copied, capture.WaveFormat));
+        AudioFrameCaptured?.Invoke(this, new LoopbackAudioFrameEventArgs(copied, capture.WaveFormat, "DefaultPlayback"));
     }
 
     private void OnRecordingStopped(object? sender, StoppedEventArgs e) {

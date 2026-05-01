@@ -26,6 +26,11 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
     private long _pendingBytesAtLastInterim;
     private int _interimSequenceIndex;
     private int _finalSequenceIndex;
+    private DateTimeOffset _nextCaptureStatsLogUtc;
+    private long _captureStatsFrames;
+    private long _captureStatsBytes;
+    private double _captureStatsPeak;
+    private readonly Dictionary<string, SourceCaptureStats> _sourceCaptureStats = new(StringComparer.OrdinalIgnoreCase);
 
     public PlaybackTranscriptionSession(
         IAudioLoopbackCaptureService captureService,
@@ -73,6 +78,11 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             _lastInterimText = string.Empty;
             _model = validatedModel;
             _pendingPcm.SetLength(0);
+            _nextCaptureStatsLogUtc = DateTimeOffset.UtcNow.AddSeconds(2);
+            _captureStatsFrames = 0;
+            _captureStatsBytes = 0;
+            _captureStatsPeak = 0;
+            _sourceCaptureStats.Clear();
         }
 
         _processingCts = new CancellationTokenSource();
@@ -235,6 +245,14 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
             if (pendingBytes >= finalWindowBytes) {
                 byte[] finalChunk = DequeuePendingBytes(finalWindowBytes);
+                if (!IsChunkAboveThreshold(finalChunk, out double peak)) {
+                    Log(
+                        $"Dropping final playback window below peak threshold " +
+                        $"(peak={peak:0.0000}, threshold={_options.MinimumPeakLevel:0.0000}, bytes={finalChunk.Length:N0}).");
+                    _pendingBytesAtLastInterim = 0;
+                    _lastInterimText = string.Empty;
+                    return null;
+                }
                 _pendingBytesAtLastInterim = 0;
                 _lastInterimText = string.Empty;
 
@@ -250,12 +268,21 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
             if (pendingBytes >= interimWindowBytes
                 && pendingBytes - _pendingBytesAtLastInterim >= interimCadenceBytes) {
+                byte[] snapshot = SnapshotPendingBytes();
+                if (!IsChunkAboveThreshold(snapshot, out double peak)) {
+                    _pendingBytesAtLastInterim = pendingBytes;
+                    Log(
+                        $"Suppressing interim playback window below peak threshold " +
+                        $"(peak={peak:0.0000}, threshold={_options.MinimumPeakLevel:0.0000}, bytes={snapshot.Length:N0}).");
+                    return null;
+                }
+
                 _pendingBytesAtLastInterim = pendingBytes;
 
                 return new PendingTranscriptionRequest(
                     IsFinal: false,
                     SequenceIndex: _interimSequenceIndex++,
-                    PcmBytes: SnapshotPendingBytes(),
+                    PcmBytes: snapshot,
                     SourceFormat: _captureFormat);
             }
 
@@ -275,6 +302,14 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
             if (pendingBytes >= finalWindowBytes) {
                 byte[] finalChunk = DequeuePendingBytes(finalWindowBytes);
+                if (!IsChunkAboveThreshold(finalChunk, out double peak)) {
+                    Log(
+                        $"Dropping trailing playback final window below peak threshold " +
+                        $"(peak={peak:0.0000}, threshold={_options.MinimumPeakLevel:0.0000}, bytes={finalChunk.Length:N0}).");
+                    _pendingBytesAtLastInterim = 0;
+                    _lastInterimText = string.Empty;
+                    return null;
+                }
                 _pendingBytesAtLastInterim = 0;
                 _lastInterimText = string.Empty;
 
@@ -287,6 +322,14 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
             if (pendingBytes >= minimumSegmentBytes) {
                 byte[] finalChunk = DequeuePendingBytes(pendingBytes);
+                if (!IsChunkAboveThreshold(finalChunk, out double peak)) {
+                    Log(
+                        $"Dropping trailing playback audio below peak threshold " +
+                        $"(peak={peak:0.0000}, threshold={_options.MinimumPeakLevel:0.0000}, bytes={finalChunk.Length:N0}).");
+                    _pendingBytesAtLastInterim = 0;
+                    _lastInterimText = string.Empty;
+                    return null;
+                }
                 _pendingBytesAtLastInterim = 0;
                 _lastInterimText = string.Empty;
 
@@ -323,7 +366,45 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
             _pendingPcm.Position = _pendingPcm.Length;
             _pendingPcm.Write(e.Buffer, 0, e.BytesRecorded);
+            TrackCaptureStats(e);
         }
+    }
+
+    private void TrackCaptureStats(LoopbackAudioFrameEventArgs e) {
+        double peak = CalculatePcm16Peak(e.Buffer);
+        string sourceName = string.IsNullOrWhiteSpace(e.SourceName) ? "Unknown" : e.SourceName;
+
+        _captureStatsFrames++;
+        _captureStatsBytes += e.BytesRecorded;
+        _captureStatsPeak = Math.Max(_captureStatsPeak, peak);
+
+        if (!_sourceCaptureStats.TryGetValue(sourceName, out SourceCaptureStats? sourceStats)) {
+            sourceStats = new SourceCaptureStats();
+            _sourceCaptureStats[sourceName] = sourceStats;
+        }
+
+        sourceStats.Frames++;
+        sourceStats.Bytes += e.BytesRecorded;
+        sourceStats.Peak = Math.Max(sourceStats.Peak, peak);
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (now < _nextCaptureStatsLogUtc) {
+            return;
+        }
+
+        string sourceSummary = string.Join(
+            "; ",
+            _sourceCaptureStats
+                .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(item => $"{item.Key}:frames={item.Value.Frames:N0},bytes={item.Value.Bytes:N0},peak={item.Value.Peak:0.0000}"));
+        Log(
+            $"Capture stats frames={_captureStatsFrames:N0}, bytes={_captureStatsBytes:N0}, peak={_captureStatsPeak:0.0000}, pendingBytes={_pendingPcm.Length:N0}, sources=[{sourceSummary}]");
+
+        _captureStatsFrames = 0;
+        _captureStatsBytes = 0;
+        _captureStatsPeak = 0;
+        _sourceCaptureStats.Clear();
+        _nextCaptureStatsLogUtc = now.AddSeconds(2);
     }
 
     private void OnCaptureFaulted(object? sender, Exception ex) {
@@ -440,13 +521,44 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             && left.AverageBytesPerSecond == right.AverageBytesPerSecond;
     }
 
+    private static double CalculatePcm16Peak(byte[] buffer) {
+        if (buffer.Length < 2) {
+            return 0;
+        }
+
+        short peak = 0;
+        int length = buffer.Length - (buffer.Length % 2);
+        for (int index = 0; index < length; index += 2) {
+            short sample = BitConverter.ToInt16(buffer, index);
+            short magnitude = sample == short.MinValue ? short.MaxValue : Math.Abs(sample);
+            if (magnitude > peak) {
+                peak = magnitude;
+            }
+        }
+
+        return peak / (double)short.MaxValue;
+    }
+
+    private bool IsChunkAboveThreshold(byte[] pcmBytes, out double peak) {
+        peak = CalculatePcm16Peak(pcmBytes);
+        return _options.MinimumPeakLevel <= 0 || peak >= _options.MinimumPeakLevel;
+    }
+
+    private sealed class SourceCaptureStats {
+        public long Frames { get; set; }
+
+        public long Bytes { get; set; }
+
+        public double Peak { get; set; }
+    }
+
     private static string ValidateModel(string model) {
         string trimmed = model?.Trim() ?? string.Empty;
 
-        if (!OpenAiTranscriptionModelCatalog.IsSupported(trimmed)) {
+        if (!TranscriptionModelCatalog.SupportsPlaybackTranscription(trimmed)) {
             throw new InvalidOperationException(
                 $"Unsupported playback transcription model '{model}'. " +
-                $"Use '{OpenAiTranscriptionModelCatalog.Gpt4oTranscribe}' or '{OpenAiTranscriptionModelCatalog.Gpt4oMiniTranscribe}'.");
+                "Use an installed local Whisper model.");
         }
 
         return trimmed;

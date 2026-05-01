@@ -15,7 +15,7 @@ public sealed class TranscriptSessionStoreTests {
             var store = new TranscriptSessionStore(rootPath);
 
             TranscriptSessionLoadResult imported = store.ImportAudioFile(audioPath);
-            imported.Document.Transcript.ModelId = OpenAiTranscriptionModelCatalog.Gpt4oTranscribe;
+            imported.Document.Transcript.ModelId = TranscriptionModelCatalog.WhisperSmall;
             imported.Document.Transcript.FinalText = "hello world";
             imported.Document.Transcript.Lines = new List<TranscriptSessionLineDocument> {
                 new() {
@@ -33,7 +33,7 @@ public sealed class TranscriptSessionStoreTests {
             Assert.True(reloaded.AudioAvailable);
             Assert.NotNull(reloaded.AudioFilePath);
             Assert.Equal("hello world", reloaded.Document.Transcript.FinalText);
-            Assert.Equal(OpenAiTranscriptionModelCatalog.Gpt4oTranscribe, reloaded.Document.Transcript.ModelId);
+            Assert.Equal(TranscriptionModelCatalog.WhisperSmall, reloaded.Document.Transcript.ModelId);
             Assert.Single(reloaded.Document.Transcript.Lines);
             Assert.Equal(1.25, reloaded.Document.Transcript.Lines[0].StartSeconds);
             Assert.Equal(2.75, reloaded.Document.Transcript.Lines[0].EndSeconds);
@@ -107,7 +107,7 @@ public sealed class TranscriptSessionStoreTests {
     }
 
     [Fact]
-    public void SaveLoadRoundTrip_PreservesSpeakerTranscriptAndEditingState() {
+    public void SaveLoadRoundTrip_PreservesTranscriptSpeakerLabels() {
         string rootPath = CreateTempDirectory();
         string audioPath = CreateSilentWaveFile(16000);
 
@@ -115,9 +115,9 @@ public sealed class TranscriptSessionStoreTests {
             var store = new TranscriptSessionStore(rootPath);
             TranscriptSessionLoadResult imported = store.ImportAudioFile(audioPath);
 
-            imported.Document.SpeakerTranscript.ModelId = OpenAiTranscriptionModelCatalog.Gpt4oTranscribeDiarize;
-            imported.Document.SpeakerTranscript.FinalText = "00:00:01 Speaker 1: hello";
-            imported.Document.SpeakerTranscript.Lines = new List<TranscriptSessionLineDocument> {
+            imported.Document.Transcript.ModelId = TranscriptionModelCatalog.WhisperSmall;
+            imported.Document.Transcript.FinalText = "Speaker 1: hello";
+            imported.Document.Transcript.Lines = new List<TranscriptSessionLineDocument> {
                 new() {
                     Text = "hello",
                     SpeakerLabel = "Speaker 1",
@@ -125,21 +125,21 @@ public sealed class TranscriptSessionStoreTests {
                     EndSeconds = 2.5,
                 },
             };
-            imported.Document.Editing.SelectedTranscriptMode = TranscriptGenerationMode.SpeakerDiarization.ToString();
-            imported.Document.Editing.SelectedTranscriptViewIndex = 1;
+            imported.Document.Editing.SelectedTranscriptMode = TranscriptGenerationMode.TranscribeAudio.ToString();
+            imported.Document.Editing.SelectedTranscriptViewIndex = 0;
 
             store.Save(imported.Document);
 
             TranscriptSessionLoadResult reloaded = store.LoadSession(imported.Document.SessionId);
 
-            Assert.Equal(OpenAiTranscriptionModelCatalog.Gpt4oTranscribeDiarize, reloaded.Document.SpeakerTranscript.ModelId);
-            Assert.Equal("00:00:01 Speaker 1: hello", reloaded.Document.SpeakerTranscript.FinalText);
-            Assert.Single(reloaded.Document.SpeakerTranscript.Lines);
-            Assert.Equal("Speaker 1", reloaded.Document.SpeakerTranscript.Lines[0].SpeakerLabel);
-            Assert.Equal(1, reloaded.Document.SpeakerTranscript.Lines[0].StartSeconds);
-            Assert.Equal(2.5, reloaded.Document.SpeakerTranscript.Lines[0].EndSeconds);
-            Assert.Equal(TranscriptGenerationMode.SpeakerDiarization.ToString(), reloaded.Document.Editing.SelectedTranscriptMode);
-            Assert.Equal(1, reloaded.Document.Editing.SelectedTranscriptViewIndex);
+            Assert.Equal(TranscriptionModelCatalog.WhisperSmall, reloaded.Document.Transcript.ModelId);
+            Assert.Equal("Speaker 1: hello", reloaded.Document.Transcript.FinalText);
+            Assert.Single(reloaded.Document.Transcript.Lines);
+            Assert.Equal("Speaker 1", reloaded.Document.Transcript.Lines[0].SpeakerLabel);
+            Assert.Equal(1, reloaded.Document.Transcript.Lines[0].StartSeconds);
+            Assert.Equal(2.5, reloaded.Document.Transcript.Lines[0].EndSeconds);
+            Assert.Equal(TranscriptGenerationMode.TranscribeAudio.ToString(), reloaded.Document.Editing.SelectedTranscriptMode);
+            Assert.Equal(0, reloaded.Document.Editing.SelectedTranscriptViewIndex);
         }
         finally {
             DeleteDirectory(rootPath);
