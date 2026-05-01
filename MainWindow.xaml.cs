@@ -217,6 +217,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         await RunTranscribeAudioAsync(vm);
     }
 
+    private async void StartLivePrimaryAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        if (vm.IsGenerationRunning)
+        {
+            return;
+        }
+
+        SelectTranscriptMode(vm, TranscriptGenerationMode.Live);
+        await StartLiveTranscriptionAsync(vm);
+    }
+
+    private async void TranscribeAudioPrimaryAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm || IsTranscribeAudioBatchTranscribing)
+        {
+            return;
+        }
+
+        SelectTranscriptMode(vm, TranscriptGenerationMode.TranscribeAudio);
+        await RunTranscribeAudioAsync(vm);
+    }
+
     private async void TranscribeAudio_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm || IsTranscribeAudioBatchTranscribing)
@@ -225,6 +252,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         await RunTranscribeAudioAsync(vm);
+    }
+
+    private static void SelectTranscriptMode(MainViewModel vm, TranscriptGenerationMode mode)
+    {
+        TranscriptModeOptionViewModel? option = vm.TranscriptModes
+            .FirstOrDefault(candidate => candidate.Mode == mode);
+
+        if (option is not null && !ReferenceEquals(vm.SelectedTranscriptMode, option))
+        {
+            vm.SelectedTranscriptMode = option;
+        }
     }
 
     private async Task RunTranscribeAudioAsync(MainViewModel vm)
@@ -815,13 +853,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Effects = canAccept ? System.Windows.DragDropEffects.Copy : System.Windows.DragDropEffects.None;
         e.Handled = true;
 
-        SetDropTargetVisualState(AudioDropZoneBorder);
         SetDropTargetVisualState(TranscriptEmptyStateBorder);
     }
 
     private void ResetAudioFileDropState()
     {
-        SetDropTargetVisualState(AudioDropZoneBorder);
         SetDropTargetVisualState(TranscriptEmptyStateBorder);
     }
 

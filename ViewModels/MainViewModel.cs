@@ -57,7 +57,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private double _audioSeekPositionSeconds;
     private string _audioElapsedText = "00:00";
     private string _audioRemainingText = "-00:00";
-    private bool _copyFinalizedWithTimeline;
     private bool _autoPlayTimelineSelection;
     private bool _isGenerationRunning;
     private bool _isLiveTranscriptionRunning;
@@ -90,7 +89,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _appThemeService = appThemeService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
 
-        _copyFinalizedWithTimeline = appPreferencesSnapshot.CopyFinalizedWithTimeline;
         _autoPlayTimelineSelection = appPreferencesSnapshot.AutoPlayTimelineSelection;
         _selectedThemePreference = appPreferencesSnapshot.ThemePreference;
         _preferredLiveAudioSourceKind = appPreferencesSnapshot.LiveAudioSourceKind;
@@ -405,7 +403,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(IsTranscribeAudioModeSelected));
             NotifyPropertyChanged(nameof(CurrentTranscriptLines));
             NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptViewSelected));
-            NotifyPropertyChanged(nameof(IsCopyWithTimelineOptionVisible));
             NotifyCurrentTranscriptStateChanged();
             NotifyPropertyChanged(nameof(PrimaryActionButtonText));
             NotifyPropertyChanged(nameof(CancelActionButtonText));
@@ -454,9 +451,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool IsTranscribeAudioTranscriptViewSelected =>
         IsTranscribeAudioModeSelected;
 
-    public bool IsCopyWithTimelineOptionVisible =>
-        IsTranscribeAudioTranscriptViewSelected;
-
     public bool HasCurrentTranscriptLines =>
         CurrentTranscriptLines.Any();
 
@@ -490,8 +484,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public string GenerateTranscriptButtonText => PrimaryActionButtonText;
 
-    public string CancelActionButtonText =>
-        IsLiveTranscriptionModeSelected ? "Stop" : "Cancel";
+    public string CancelActionButtonText => "Cancel";
+
+    public bool CanRunLivePrimaryAction =>
+        !IsGenerationRunning && !IsBusy;
+
+    public bool CanRunTranscribeAudioPrimaryAction =>
+        !IsGenerationRunning && IsTranscribeAudioTranscriptionEnabled;
 
     public bool CanRunPrimaryAction =>
         SelectedTranscriptMode is not null
@@ -571,21 +570,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool HasFinalizedTranscriptLines =>
         FinalizedTranscriptLines.Count > 0;
-
-    public bool CopyFinalizedWithTimeline
-    {
-        get => _copyFinalizedWithTimeline;
-        set
-        {
-            if (!SetProperty(ref _copyFinalizedWithTimeline, value))
-            {
-                return;
-            }
-
-            SaveAppPreferences();
-            AppendLog($"Copy finalized transcript with timeline: {(value ? "ON" : "OFF")}.");
-        }
-    }
 
     public bool AutoPlayTimelineSelection
     {
@@ -1090,7 +1074,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public string BuildClipboardTranscriptText()
     {
-        return BuildTranscribeAudioTranscriptText(includeTimeline: CopyFinalizedWithTimeline);
+        return BuildTranscribeAudioTranscriptText(includeTimeline: true);
     }
 
     private Task OpenAudioFileAsync()
@@ -1389,6 +1373,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(IsTranscriptModeSelectionEnabled));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptionEnabled));
         NotifyPropertyChanged(nameof(IsTranscriptGenerationEnabled));
+        NotifyPropertyChanged(nameof(CanRunLivePrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunTranscribeAudioPrimaryAction));
         NotifyPropertyChanged(nameof(CanRunPrimaryAction));
         NotifyPropertyChanged(nameof(CanCancelCurrentAction));
     }
@@ -1400,7 +1386,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
         NotifyPropertyChanged(nameof(CanCopyTranscript));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptViewSelected));
-        NotifyPropertyChanged(nameof(IsCopyWithTimelineOptionVisible));
         NotifyPropertyChanged(nameof(GenerateTranscriptButtonText));
         NotifyPropertyChanged(nameof(PrimaryActionButtonText));
         NotifyPropertyChanged(nameof(CancelActionButtonText));
@@ -1412,7 +1397,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private void SaveAppPreferences()
     {
         _appPreferencesStore.Save(new AppPreferencesSnapshot(
-            CopyFinalizedWithTimeline: _copyFinalizedWithTimeline,
+            CopyFinalizedWithTimeline: false,
             AutoTranscribeWithAi: true,
             ThemePreference: _selectedThemePreference,
             AutoPlayTimelineSelection: _autoPlayTimelineSelection,
