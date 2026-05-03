@@ -8,6 +8,8 @@ Releases/
 AudioScript.Package/AppPackages/
 AudioScript.Package/BundleArtifacts/
 assets/models/
+assets/pyannote/
+assets/python/
 
 # User-local IDE files
 *.user
