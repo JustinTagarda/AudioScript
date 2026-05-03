@@ -9,6 +9,7 @@ namespace AudioScript.Services;
 
 public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionService, IPlaybackTranscriptionService
 {
+    internal static readonly TimeSpan ShortAudioPromptSuppressionDuration = TimeSpan.FromSeconds(10);
     private readonly AudioStandardizer _audioStandardizer;
     private readonly TranscriptionOptions _options;
     private readonly ProcessLogService _processLogService;
@@ -166,7 +167,7 @@ public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionServic
                 .WithPrintTimestamps(true);
 
             string prompt = _options.Prompt.Trim();
-            if (!string.IsNullOrWhiteSpace(prompt))
+            if (ShouldApplyPrompt(duration) && !string.IsNullOrWhiteSpace(prompt))
             {
                 builder.WithPrompt(prompt);
             }
@@ -306,6 +307,11 @@ public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionServic
         return string.Join(
             Environment.NewLine,
             timedLines.Select(line => line.Text.Trim()).Where(text => !string.IsNullOrWhiteSpace(text)));
+    }
+
+    internal static bool ShouldApplyPrompt(TimeSpan? duration)
+    {
+        return duration is null || duration.Value > ShortAudioPromptSuppressionDuration;
     }
 
     private static void DeleteTemporaryFile(string filePath)

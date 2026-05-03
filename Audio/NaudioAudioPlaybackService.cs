@@ -8,7 +8,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
     private readonly object _sync = new();
     private readonly ProcessLogService? _processLogService;
     private WaveOutEvent? _output;
-    private AudioFileReader? _reader;
+    private WaveStream? _reader;
     private string? _loadedFilePath;
     private bool _isMuted;
 
@@ -105,7 +105,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         }
 
         Log($"Loading audio preview file '{fullPath}'.");
-        AudioFileReader? reader = null;
+            WaveStream? reader = null;
         WaveOutEvent? output = null;
 
         try {
@@ -120,7 +120,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
             output.PlaybackStopped += OnPlaybackStopped;
 
             WaveOutEvent? previousOutput;
-            AudioFileReader? previousReader;
+            WaveStream? previousReader;
 
             lock (_sync) {
                 previousOutput = _output;
@@ -146,9 +146,68 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         }
     }
 
+    public void LoadLiveRecordingManifest(string manifestPath)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath))
+        {
+            throw new ArgumentException("Live recording manifest path is required.", nameof(manifestPath));
+        }
+
+        string fullPath = Path.GetFullPath(manifestPath.Trim());
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException("Live recording manifest was not found.", fullPath);
+        }
+
+        Log($"Loading live recording manifest '{fullPath}'.");
+        WaveStream? reader = null;
+        WaveOutEvent? output = null;
+
+        try
+        {
+            reader = new SegmentedLiveRecordingWaveStream(fullPath);
+            var tappedProvider = new TappedWaveProvider(
+                reader,
+                OnPlaybackAudioFrameProduced,
+                OnPlaybackAudioFaulted);
+            output = new WaveOutEvent();
+            output.Init(tappedProvider);
+            ApplyMuteState(output, IsMuted);
+            output.PlaybackStopped += OnPlaybackStopped;
+
+            WaveOutEvent? previousOutput;
+            WaveStream? previousReader;
+
+            lock (_sync)
+            {
+                previousOutput = _output;
+                previousReader = _reader;
+                _reader = reader;
+                _output = output;
+                _loadedFilePath = fullPath;
+            }
+
+            DisposePlaybackCore(previousOutput, previousReader);
+            PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+            Log($"Live recording manifest loaded '{fullPath}'.");
+        }
+        catch (Exception ex)
+        {
+            if (output is not null)
+            {
+                output.PlaybackStopped -= OnPlaybackStopped;
+                output.Dispose();
+            }
+
+            reader?.Dispose();
+            _processLogService?.LogException("AudioPreview", $"Live recording manifest load failed for '{fullPath}'.", ex);
+            throw;
+        }
+    }
+
     public void UnloadFile() {
         WaveOutEvent? output;
-        AudioFileReader? reader;
+        WaveStream? reader;
 
         lock (_sync) {
             output = _output;
@@ -165,7 +224,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
 
     public void Play() {
         WaveOutEvent? output;
-        AudioFileReader? reader;
+        WaveStream? reader;
 
         lock (_sync) {
             output = _output;
@@ -206,7 +265,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
 
     public void Stop() {
         WaveOutEvent? output;
-        AudioFileReader? reader;
+        WaveStream? reader;
 
         lock (_sync) {
             output = _output;
@@ -232,7 +291,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
     }
 
     public void Seek(TimeSpan position) {
-        AudioFileReader? reader;
+        WaveStream? reader;
         TimeSpan clamped = position;
 
         lock (_sync) {
@@ -278,7 +337,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void DisposePlaybackCore(WaveOutEvent? output, AudioFileReader? reader) {
+    private void DisposePlaybackCore(WaveOutEvent? output, WaveStream? reader) {
         if (output is not null) {
             output.PlaybackStopped -= OnPlaybackStopped;
         }
@@ -294,6 +353,16 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
     private void OnPlaybackAudioFaulted(Exception ex) {
         _processLogService?.LogException("AudioPreview", "Audio preview frame processing faulted.", ex);
         PlaybackAudioFaulted?.Invoke(this, ex);
+    }
+
+    private static bool WaveFormatsMatch(WaveFormat left, WaveFormat right)
+    {
+        return left.Encoding == right.Encoding
+            && left.SampleRate == right.SampleRate
+            && left.BitsPerSample == right.BitsPerSample
+            && left.Channels == right.Channels
+            && left.BlockAlign == right.BlockAlign
+            && left.AverageBytesPerSecond == right.AverageBytesPerSecond;
     }
 
     private static void ApplyMuteState(WaveOutEvent? output, bool isMuted) {
@@ -343,6 +412,7 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
             }
         }
     }
+
 }
 
 

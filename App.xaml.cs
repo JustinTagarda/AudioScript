@@ -94,13 +94,13 @@ public partial class App : System.Windows.Application
             transcriptionOptions,
             processLogService,
             whisperModelManager);
-        var sherpaDiarizationModelManager = new SherpaDiarizationModelManager();
-        var sherpaSpeakerDiarizationEngine = new SherpaSpeakerDiarizationEngine(
+        var pyannoteCommunityModelManager = new PyannoteCommunityModelManager();
+        var pyannoteCommunityDiarizationEngine = new PyannoteCommunityDiarizationEngine(
             audioStandardizer,
-            sherpaDiarizationModelManager,
+            pyannoteCommunityModelManager,
             processLogService);
         var offlineSpeakerDiarizationService = new OfflineSpeakerDiarizationService(
-            sherpaSpeakerDiarizationEngine,
+            pyannoteCommunityDiarizationEngine,
             processLogService);
         var chunkedSpeakerDiarizationService = new ChunkedSpeakerDiarizationService(
             audioChunkingService,
@@ -141,11 +141,15 @@ public partial class App : System.Windows.Application
                 whisperTranscriptionService,
                 processLogService,
                 playbackEditTranscriptionOptions),
-            liveTranscriptionSessionFactory: source => new PlaybackTranscriptionSession(
-                CreateLiveCaptureService(source),
+            liveTranscriptionSessionFactory: (source, gainOptions, recordingSession) => new PlaybackTranscriptionSession(
+                CreateLiveCaptureService(source, audioPlaybackService, gainOptions),
                 whisperTranscriptionService,
                 processLogService,
-                liveTranscriptionOptions),
+                liveTranscriptionOptions,
+                recordingSession),
+            rowAudioTranscriptionService: whisperTranscriptionService,
+            rowAudioStandardizer: audioStandardizer,
+            rowWaveClipExtractor: waveClipExtractor,
             processLogService: processLogService,
             whisperModelManager: whisperModelManager)
         {
@@ -159,12 +163,29 @@ public partial class App : System.Windows.Application
         processLogService.Log("App", "Application startup completed.");
     }
 
-    private static IAudioLoopbackCaptureService CreateLiveCaptureService(AudioInputDeviceOption source)
+    private static IAudioLoopbackCaptureService CreateLiveCaptureService(
+        AudioInputDeviceOption source,
+        IPlaybackAudioTapSource playbackTapSource,
+        LiveAudioGainOptions gainOptions)
+    {
+        return new AutomaticGainAudioCaptureService(
+            CreateStandardizedLiveCaptureService(source, playbackTapSource),
+            gainOptions);
+    }
+
+    private static IAudioLoopbackCaptureService CreateStandardizedLiveCaptureService(
+        AudioInputDeviceOption source,
+        IPlaybackAudioTapSource playbackTapSource)
     {
         return source.Kind switch
         {
+            LiveAudioSourceKind.AudioScriptPlayback => new StandardizingAudioCaptureService(
+                new PlaybackAudioCaptureService(playbackTapSource)),
             LiveAudioSourceKind.DefaultPlayback => new StandardizingAudioCaptureService(
                 new WasapiLoopbackCaptureService()),
+            LiveAudioSourceKind.MicrophoneAndAudioScriptPlayback => new CompositeAudioCaptureService(
+                new StandardizingAudioCaptureService(new MicrophoneAudioCaptureService(source.DeviceNumber)),
+                new StandardizingAudioCaptureService(new PlaybackAudioCaptureService(playbackTapSource))),
             LiveAudioSourceKind.MicrophoneAndDefaultPlayback => new CompositeAudioCaptureService(
                 new StandardizingAudioCaptureService(new MicrophoneAudioCaptureService(source.DeviceNumber)),
                 new StandardizingAudioCaptureService(new WasapiLoopbackCaptureService())),

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Reflection;
 using AudioScript.Abstractions;
 using AudioScript.Audio;
 using AudioScript.Services;
@@ -44,7 +45,6 @@ public sealed class MainViewModelTests
                         AutoTranscribeWithAi: false,
                         ThemePreference: AppThemePreference.System,
                         AutoPlayTimelineSelection: true,
-                        SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
                         LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                         LiveAudioDeviceNumber: -1,
                         SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
@@ -80,6 +80,302 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task TryImportAudioFileFromPath_NewAudio_RaisesTranscribeAudioStagedEvent()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int eventCount = 0;
+                    viewModel.NewAudioFileStagedForTranscribeAudio += (_, _) => eventCount++;
+
+                    Assert.True(viewModel.TryImportAudioFileFromPath(audioPath));
+                    queuedContext.Drain();
+
+                    Assert.Equal(1, eventCount);
+                    Assert.True(viewModel.IsAudioFileLoaded);
+                    Assert.False(viewModel.HasCurrentSession);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RefreshEngines_WithPreferredInstalledEngine_SelectsAndPersistsPreferredEngine()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string settingsPath = Path.Combine(rootPath, "app-preferences.json");
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var preferencesStore = new AppPreferencesStore(settingsPath);
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var smallModel = TranscriptionModelCatalog.Find(TranscriptionModelCatalog.WhisperSmall)!;
+                var mediumModel = TranscriptionModelCatalog.Find(TranscriptionModelCatalog.WhisperMedium)!;
+                var viewModel = new MainViewModel(
+                    [smallModel],
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    preferencesStore,
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    viewModel.RefreshEngines(
+                        [smallModel, mediumModel],
+                        TranscriptionModelCatalog.WhisperMedium);
+
+                    Assert.Equal(TranscriptionModelCatalog.WhisperMedium, viewModel.SelectedEngineId);
+                    Assert.Equal(TranscriptionModelCatalog.WhisperMedium, preferencesStore.Load().SelectedEngineId);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task TryImportAudioFileFromPath_ExistingSession_DoesNotRaiseTranscribeAudioStagedEvent()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                sessionStore.ImportAudioFile(audioPath);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int eventCount = 0;
+                    viewModel.NewAudioFileStagedForTranscribeAudio += (_, _) => eventCount++;
+
+                    Assert.True(viewModel.TryImportAudioFileFromPath(audioPath));
+                    queuedContext.Drain();
+
+                    Assert.Equal(0, eventCount);
+                    Assert.True(viewModel.HasCurrentSession);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task EmptyTranscriptState_WithLoadedAudio_ShowsTranscribeAction()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.True(viewModel.TryImportAudioFileFromPath(audioPath));
+
+                    Assert.True(viewModel.IsAudioFileLoaded);
+                    Assert.False(viewModel.HasCurrentSession);
+                    Assert.True(viewModel.IsTranscriptEmptyStateVisible);
+                    Assert.Equal("Ready to transcribe", viewModel.TranscriptEmptyStateTitle);
+                    Assert.Equal("Click the button below to transcribe this audio file.", viewModel.TranscriptEmptyStateMessage);
+                    Assert.False(viewModel.ShouldShowTranscriptChooseFileAction);
+                    Assert.True(viewModel.ShouldShowTranscriptTranscribeAudioAction);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task EmptyTranscriptState_WithoutLoadedAudio_ShowsSelectAudioAction()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.False(viewModel.IsAudioFileLoaded);
+                    Assert.False(viewModel.HasCurrentSession);
+                    Assert.True(viewModel.IsTranscriptEmptyStateVisible);
+                    Assert.Equal("No transcript", viewModel.TranscriptEmptyStateTitle);
+                    Assert.Equal("Drop audio here, choose a file, or open a session.", viewModel.TranscriptEmptyStateMessage);
+                    Assert.True(viewModel.ShouldShowTranscriptChooseFileAction);
+                    Assert.False(viewModel.ShouldShowTranscriptTranscribeAudioAction);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
     public async Task GenerateTranscribeAudioTranscriptAsync_CreatesTimedTranscriptRows()
     {
         await RunInStaAsync(async () =>
@@ -98,10 +394,11 @@ public sealed class MainViewModelTests
                     new TranscriptionTimedLine("hello", TimeSpan.Zero, TimeSpan.FromSeconds(1), false),
                     new TranscriptionTimedLine("world", TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), false),
                 ]);
+                var diarizationEngine = new TestSpeakerDiarizationEngine();
                 var viewModel = new MainViewModel(
                     TranscriptionModelCatalog.Models,
                     transcriptionService,
-                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService, diarizationEngine),
                     playbackService,
                     processLogService,
                     new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
@@ -112,7 +409,6 @@ public sealed class MainViewModelTests
                         AutoTranscribeWithAi: false,
                         ThemePreference: AppThemePreference.System,
                         AutoPlayTimelineSelection: true,
-                        SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
                         LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                         LiveAudioDeviceNumber: -1,
                         SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
@@ -122,22 +418,18 @@ public sealed class MainViewModelTests
                     bool imported = viewModel.TryImportAudioFileFromPath(audioPath);
                     Assert.True(imported);
 
-                    TranscriptModeOptionViewModel transcribeMode = viewModel.TranscriptModes
-                        .Single(mode => mode.Mode == TranscriptGenerationMode.TranscribeAudio);
-                    viewModel.SelectedTranscriptMode = transcribeMode;
-
                     bool created = await viewModel.GenerateTranscribeAudioTranscriptAsync(CancellationToken.None);
 
                     Assert.True(created);
-                    Assert.Same(transcribeMode, viewModel.SelectedTranscriptMode);
-                    Assert.True(viewModel.IsTranscribeAudioModeSelected);
+                    Assert.False(viewModel.HasSpeakerLabels);
+                    Assert.Equal(0, diarizationEngine.RequestCount);
                     Assert.Equal(2, viewModel.FinalizedTranscriptLines.Count);
                     Assert.Equal("hello", viewModel.FinalizedTranscriptLines[0].Text);
-                    Assert.Equal("Speaker 1", viewModel.FinalizedTranscriptLines[0].SpeakerLabel);
-                    Assert.Equal("Speaker 2", viewModel.FinalizedTranscriptLines[1].SpeakerLabel);
+                    Assert.Equal(string.Empty, viewModel.FinalizedTranscriptLines[0].SpeakerLabel);
+                    Assert.Equal(string.Empty, viewModel.FinalizedTranscriptLines[1].SpeakerLabel);
                     Assert.Equal(TimeSpan.Zero, viewModel.FinalizedTranscriptLines[0].StartOffset);
                     Assert.Equal(TimeSpan.FromSeconds(2), viewModel.FinalizedTranscriptLines[1].StartOffset);
-                    Assert.Contains("Speaker 1: hello", viewModel.BuildClipboardTranscriptText());
+                    Assert.Contains("hello", viewModel.BuildClipboardTranscriptText());
                 }
                 finally
                 {
@@ -185,7 +477,6 @@ public sealed class MainViewModelTests
                         AutoTranscribeWithAi: false,
                         ThemePreference: AppThemePreference.System,
                         AutoPlayTimelineSelection: true,
-                        SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
                         LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                         LiveAudioDeviceNumber: -1,
                         SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
@@ -216,7 +507,7 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task TranscriptModes_DoesNotExposeSeparateSpeakerDiarizationMode()
+    public async Task CanRunDetectSpeakersPrimaryAction_RequiresLoadedSessionWithTranscriptRows()
     {
         await RunInStaAsync(async () =>
         {
@@ -230,10 +521,251 @@ public sealed class MainViewModelTests
             {
                 var playbackService = new FakeAudioPlaybackService();
                 var processLogService = new ProcessLogService();
-                var transcriptionService = new StubAudioTranscriptionService([
-                    new TranscriptionTimedLine("hello.", TimeSpan.Zero, TimeSpan.FromSeconds(1), false),
-                    new TranscriptionTimedLine("reply", TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3), false),
-                ]);
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.False(viewModel.CanRunDetectSpeakersPrimaryAction);
+
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+                    queuedContext.Drain();
+
+                    Assert.False(viewModel.CanRunDetectSpeakersPrimaryAction);
+
+                    viewModel.FinalizedTranscriptLines.Add(new FinalizedTranscriptLineViewModel(
+                        TimeSpan.Zero,
+                        TimeSpan.FromSeconds(1),
+                        false,
+                        "hello"));
+
+                    Assert.True(viewModel.CanRunDetectSpeakersPrimaryAction);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RunSpeakerDetectionAsync_UpdatesSpeakerLabelsAndSavesSession()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var diarizationEngine = new TestSpeakerDiarizationEngine();
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "hello",
+                    StartSeconds = 0,
+                    EndSeconds = 1,
+                });
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "reply",
+                    StartSeconds = 1.3,
+                    EndSeconds = 2.4,
+                });
+                sessionStore.Save(imported.Document);
+
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService, diarizationEngine),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+                    queuedContext.Drain();
+
+                    bool completed = await viewModel.RunSpeakerDetectionAsync(CancellationToken.None);
+
+                    Assert.True(completed);
+                    Assert.Equal(1, diarizationEngine.RequestCount);
+                    Assert.Equal("Speaker 1", viewModel.FinalizedTranscriptLines[0].SpeakerLabel);
+                    Assert.Equal("Speaker 2", viewModel.FinalizedTranscriptLines[1].SpeakerLabel);
+
+                    TranscriptSessionLoadResult saved = sessionStore.LoadSession(imported.Document.SessionId);
+                    Assert.Equal("Speaker 1", saved.Document.Transcript.Lines[0].SpeakerLabel);
+                    Assert.Equal("Speaker 2", saved.Document.Transcript.Lines[1].SpeakerLabel);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RenameSpeakerAcrossTranscript_RenamesMatchingRowsAndMarksManual()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "one",
+                    SpeakerLabel = "Speaker 1",
+                    SpeakerLabelSource = SpeakerLabelSources.DiarizationFinal,
+                    StartSeconds = 0,
+                    EndSeconds = 1,
+                });
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "two",
+                    SpeakerLabel = "Speaker 2",
+                    SpeakerLabelSource = SpeakerLabelSources.DiarizationFinal,
+                    StartSeconds = 1,
+                    EndSeconds = 2,
+                });
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "three",
+                    SpeakerLabel = "Speaker 1",
+                    SpeakerLabelSource = SpeakerLabelSources.DiarizationFinal,
+                    StartSeconds = 2,
+                    EndSeconds = 3,
+                });
+                sessionStore.Save(imported.Document);
+
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+                    queuedContext.Drain();
+
+                    int changed = viewModel.RenameSpeakerAcrossTranscript("Speaker 1", " Clinician ");
+
+                    Assert.Equal(2, changed);
+                    Assert.Equal("Clinician", viewModel.FinalizedTranscriptLines[0].SpeakerLabel);
+                    Assert.Equal("Speaker 2", viewModel.FinalizedTranscriptLines[1].SpeakerLabel);
+                    Assert.Equal("Clinician", viewModel.FinalizedTranscriptLines[2].SpeakerLabel);
+                    Assert.Equal(SpeakerLabelSources.Manual, viewModel.FinalizedTranscriptLines[0].SpeakerLabelSource);
+                    Assert.Equal(SpeakerLabelSources.Manual, viewModel.FinalizedTranscriptLines[2].SpeakerLabelSource);
+
+                    TranscriptSessionLoadResult saved = sessionStore.LoadSession(imported.Document.SessionId);
+                    Assert.Equal("Clinician", saved.Document.Transcript.Lines[0].SpeakerLabel);
+                    Assert.Equal("Speaker 2", saved.Document.Transcript.Lines[1].SpeakerLabel);
+                    Assert.Equal("Clinician", saved.Document.Transcript.Lines[2].SpeakerLabel);
+                    Assert.Equal(SpeakerLabelSources.Manual, saved.Document.Transcript.Lines[0].SpeakerLabelSource);
+                    Assert.Contains("Clinician: one", saved.Document.Transcript.FinalText);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RenameSpeakerAcrossTranscript_RejectsBlankOrUnchangedTarget()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
                 var viewModel = new MainViewModel(
                     TranscriptionModelCatalog.Models,
                     transcriptionService,
@@ -248,16 +780,625 @@ public sealed class MainViewModelTests
                         AutoTranscribeWithAi: false,
                         ThemePreference: AppThemePreference.System,
                         AutoPlayTimelineSelection: true,
-                        SelectedTranscriptMode: "SpeakerDiarization",
                         LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                         LiveAudioDeviceNumber: -1,
                         SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
 
                 try
                 {
-                    Assert.DoesNotContain(viewModel.TranscriptModes, mode =>
-                        string.Equals(mode.DisplayName, "Speaker diarization", StringComparison.OrdinalIgnoreCase));
-                    Assert.True(viewModel.IsTranscribeAudioModeSelected);
+                    Assert.Throws<ArgumentException>(() =>
+                        viewModel.RenameSpeakerAcrossTranscript("Speaker 1", " "));
+                    Assert.Throws<ArgumentException>(() =>
+                        viewModel.RenameSpeakerAcrossTranscript("Speaker 1", "Speaker 1"));
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ConfirmSpeakerLabelOverwrite_ReturnsFalseWhenUserCancels()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "hello",
+                    SpeakerLabel = "Speaker 9",
+                    StartSeconds = 0,
+                    EndSeconds = 1,
+                });
+                sessionStore.Save(imported.Document);
+
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+                    queuedContext.Drain();
+                    viewModel.ConfirmationRequested += (_, request) => request.IsConfirmed = false;
+
+                    Assert.False(viewModel.ConfirmSpeakerLabelOverwrite());
+                    Assert.Equal("Speaker 9", viewModel.FinalizedTranscriptLines.Single().SpeakerLabel);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RunSpeakerDetectionAsync_ErrorKeepsExistingSpeakerLabels()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "hello",
+                    SpeakerLabel = "Existing",
+                    StartSeconds = 0,
+                    EndSeconds = 1,
+                });
+                sessionStore.Save(imported.Document);
+
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(
+                        transcriptionService,
+                        processLogService,
+                        new TestSpeakerDiarizationEngine(new ApplicationException("Synthetic diarization failure."))),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+                    queuedContext.Drain();
+
+                    await Assert.ThrowsAsync<ApplicationException>(async () =>
+                        await viewModel.RunSpeakerDetectionAsync(CancellationToken.None));
+
+                    Assert.Equal("Existing", viewModel.FinalizedTranscriptLines.Single().SpeakerLabel);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task SaveLiveTranscriptSession_PreservesLiveRecordingManifestPath()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.True(viewModel.InitializeNewLiveTranscriptSession("Test Source"));
+                    await using LiveRecordingSession recording = viewModel.CreateLiveRecordingSession("Test Source");
+
+                    viewModel.SaveLiveTranscriptSession();
+
+                    string sessionId = Assert.Single(sessionStore.ListRecentSessions()).SessionId;
+                    TranscriptSessionLoadResult loaded = sessionStore.LoadSession(sessionId);
+                    Assert.Equal(AudioStorageKinds.LiveRecordingManifest, loaded.Document.Audio.StorageKind);
+                    Assert.Equal(
+                        TranscriptSessionStore.LiveRecordingManifestRelativePath,
+                        loaded.Document.Audio.StoredRelativePath);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task LoadedAudioFileName_ForLiveRecordingManifest_UsesSessionLabel()
+    {
+        string rootPath = CreateTempDirectory();
+
+        try
+        {
+            var playbackService = new FakeAudioPlaybackService();
+            var processLogService = new ProcessLogService();
+            var transcriptionService = new StubAudioTranscriptionService([]);
+            var viewModel = new MainViewModel(
+                TranscriptionModelCatalog.Models,
+                transcriptionService,
+                CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                playbackService,
+                processLogService,
+                new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                new AppThemeService(),
+                new AppPreferencesSnapshot(
+                    CopyFinalizedWithTimeline: false,
+                    AutoTranscribeWithAi: false,
+                    ThemePreference: AppThemePreference.System,
+                    AutoPlayTimelineSelection: true,
+                    LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                    LiveAudioDeviceNumber: -1,
+                    SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+            try
+            {
+                TranscriptSessionDocument liveSession = new()
+                {
+                    DisplayName = "Live Transcription 2026-05-02 10-00",
+                    Audio = new TranscriptSessionAudioDocument
+                    {
+                        StorageKind = AudioStorageKinds.LiveRecordingManifest,
+                        StoredRelativePath = TranscriptSessionStore.LiveRecordingManifestRelativePath,
+                        OriginalFileName = TranscriptSessionStore.LiveSessionAudioName,
+                    },
+                };
+
+                typeof(MainViewModel)
+                    .GetField("_currentSessionDocument", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(viewModel, liveSession);
+                typeof(MainViewModel)
+                    .GetField("_loadedAudioFilePath", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(viewModel, Path.Combine(rootPath, "sessions", "live-1", "audio", "live", "manifest.json"));
+
+                Assert.Equal(TranscriptSessionStore.LiveSessionAudioName, viewModel.LoadedAudioFileName);
+                Assert.DoesNotContain("manifest.json", viewModel.LoadedAudioFileName, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                await viewModel.DisposeAsync();
+            }
+        }
+        finally
+        {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteSelectedSessionCommand_IsDisabled_WhenOnlyRecentSessionIsSelected()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.False(viewModel.HasCurrentSession);
+
+                    viewModel.SelectedRecentSession = Assert.Single(sessionStore.ListRecentSessions());
+
+                    Assert.False(viewModel.DeleteSelectedSessionCommand.CanExecute(null));
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task DeleteSelectedSessionAsync_RemovesLoadedSession()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+
+                    queuedContext.Drain();
+
+                    Assert.True(viewModel.HasCurrentSession);
+                    Assert.True(viewModel.DeleteSelectedSessionCommand.CanExecute(null));
+
+                    EventHandler<ConfirmationRequest>? handler = null;
+                    handler = (_, request) => request.IsConfirmed = true;
+                    viewModel.ConfirmationRequested += handler;
+
+                    try
+                    {
+                        MethodInfo deleteMethod = typeof(MainViewModel)
+                            .GetMethod("DeleteSelectedSessionAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                        await (Task)deleteMethod.Invoke(viewModel, null)!;
+                        queuedContext.Drain();
+                    }
+                    finally
+                    {
+                        viewModel.ConfirmationRequested -= handler;
+                    }
+
+                    Assert.False(viewModel.HasCurrentSession);
+                    Assert.Empty(sessionStore.ListRecentSessions());
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ClosePendingTranscribeAudioWorkflow_ExistingSession_RestoresClearedTranscript()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "original transcript",
+                    SpeakerLabel = "Speaker 1",
+                    StartSeconds = 0,
+                    EndSeconds = 1,
+                });
+                imported.Document.Transcript.FinalText = "Speaker 1: original transcript";
+                sessionStore.Save(imported.Document);
+
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+                    queuedContext.Drain();
+                    viewModel.ConfirmationRequested += ConfirmRequest;
+
+                    try
+                    {
+                        Assert.True(viewModel.TryPrepareTranscribeAudioWorkflow());
+                        Assert.Empty(viewModel.FinalizedTranscriptLines);
+
+                        viewModel.ClosePendingTranscribeAudioWorkflow();
+                        queuedContext.Drain();
+                    }
+                    finally
+                    {
+                        viewModel.ConfirmationRequested -= ConfirmRequest;
+                    }
+
+                    FinalizedTranscriptLineViewModel line = Assert.Single(viewModel.FinalizedTranscriptLines);
+                    Assert.Equal("original transcript", line.Text);
+                    TranscriptSessionLoadResult restored = sessionStore.LoadSession(imported.Document.SessionId);
+                    Assert.Equal("original transcript", Assert.Single(restored.Document.Transcript.Lines).Text);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+
+        static void ConfirmRequest(object? sender, ConfirmationRequest request)
+        {
+            request.IsConfirmed = true;
+        }
+    }
+
+    [Fact]
+    public async Task ClosePendingTranscribeAudioWorkflow_NewFile_ClearsPreviewWithoutCreatingSession()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.True(viewModel.TryImportAudioFileFromPath(audioPath));
+                    Assert.True(viewModel.IsAudioFileLoaded);
+                    Assert.Empty(sessionStore.ListRecentSessions());
+
+                    Assert.True(viewModel.TryPrepareTranscribeAudioWorkflow());
+                    viewModel.ClosePendingTranscribeAudioWorkflow();
+                    queuedContext.Drain();
+
+                    Assert.False(viewModel.IsAudioFileLoaded);
+                    Assert.Empty(sessionStore.ListRecentSessions());
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task FailPreparedTranscribeAudioWorkflow_NewFile_DeletesTransientSessionAndClearsPreview()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService(
+                    [],
+                    new InvalidOperationException("Synthetic transcription failure."));
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.True(viewModel.TryImportAudioFileFromPath(audioPath));
+                    Assert.True(viewModel.TryPrepareTranscribeAudioWorkflow());
+
+                    await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                        await viewModel.RunPreparedTranscribeAudioWorkflowAsync(CancellationToken.None));
+                    viewModel.FailPreparedTranscribeAudioWorkflow();
+                    queuedContext.Drain();
+
+                    Assert.False(viewModel.IsAudioFileLoaded);
+                    Assert.Empty(sessionStore.ListRecentSessions());
                 }
                 finally
                 {
@@ -303,7 +1444,8 @@ public sealed class MainViewModelTests
 
     private static ChunkedSpeakerDiarizationService CreateChunkedSpeakerDiarizationService(
         IAudioTranscriptionService audioTranscriptionService,
-        ProcessLogService processLogService)
+        ProcessLogService processLogService,
+        TestSpeakerDiarizationEngine? diarizationEngine = null)
     {
         var waveClipExtractor = new WaveClipExtractor();
         var audioChunkingService = new AudioChunkingService(
@@ -312,7 +1454,7 @@ public sealed class MainViewModelTests
             new SilenceAwareChunkPlanner(),
             waveClipExtractor);
         var offlineDiarizationService = new OfflineSpeakerDiarizationService(
-            new TestSpeakerDiarizationEngine(),
+            diarizationEngine ?? new TestSpeakerDiarizationEngine(),
             processLogService);
 
         return new ChunkedSpeakerDiarizationService(
@@ -324,10 +1466,12 @@ public sealed class MainViewModelTests
     private sealed class StubAudioTranscriptionService : IAudioTranscriptionService
     {
         private readonly IReadOnlyList<TranscriptionTimedLine> _timedLines;
+        private readonly Exception? _exception;
 
-        public StubAudioTranscriptionService(IReadOnlyList<TranscriptionTimedLine> timedLines)
+        public StubAudioTranscriptionService(IReadOnlyList<TranscriptionTimedLine> timedLines, Exception? exception = null)
         {
             _timedLines = timedLines;
+            _exception = exception;
         }
 
         public int RequestCount { get; private set; }
@@ -342,6 +1486,11 @@ public sealed class MainViewModelTests
         {
             RequestCount++;
             LastAudioFilePath = audioFilePath;
+            if (_exception is not null)
+            {
+                return Task.FromException<TranscriptionResult>(_exception);
+            }
+
             return Task.FromResult(new TranscriptionResult(
                 Text: string.Join(Environment.NewLine, _timedLines.Select(line => line.Text)),
                 Model: model,
@@ -355,11 +1504,26 @@ public sealed class MainViewModelTests
 
     private sealed class TestSpeakerDiarizationEngine : ISpeakerDiarizationEngine
     {
+        private readonly Exception? _exception;
+
+        public TestSpeakerDiarizationEngine(Exception? exception = null)
+        {
+            _exception = exception;
+        }
+
+        public int RequestCount { get; private set; }
+
         public Task<IReadOnlyList<SpeakerDiarizationTurn>> DiarizeAudioFileAsync(
             string audioFilePath,
             CancellationToken cancellationToken,
             IProgress<SpeakerDiarizationProgress>? progress = null)
         {
+            RequestCount++;
+            if (_exception is not null)
+            {
+                return Task.FromException<IReadOnlyList<SpeakerDiarizationTurn>>(_exception);
+            }
+
             progress?.Report(new SpeakerDiarizationProgress(1, 2));
             progress?.Report(new SpeakerDiarizationProgress(2, 2));
             IReadOnlyList<SpeakerDiarizationTurn> turns = [
@@ -480,6 +1644,11 @@ public sealed class MainViewModelTests
             _isPlaying = false;
             LoadFileCallCount++;
             PlaybackStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        public void LoadLiveRecordingManifest(string manifestPath)
+        {
+            LoadFile(manifestPath);
         }
 
         public void UnloadFile()

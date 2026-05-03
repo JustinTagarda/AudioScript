@@ -11,6 +11,7 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
     private readonly IPlaybackTranscriptionService _transcriptionService;
     private readonly ProcessLogService _processLogService;
     private readonly PlaybackTranscriptionSessionOptions _options;
+    private readonly LiveRecordingSession? _liveRecordingSession;
     private readonly MemoryStream _pendingPcm = new();
 
     private CancellationTokenSource? _processingCts;
@@ -31,20 +32,25 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
     private long _captureStatsBytes;
     private double _captureStatsPeak;
     private readonly Dictionary<string, SourceCaptureStats> _sourceCaptureStats = new(StringComparer.OrdinalIgnoreCase);
+    private long _capturedAudioBytes;
+    private long _droppedAudioBytes;
 
     public PlaybackTranscriptionSession(
         IAudioLoopbackCaptureService captureService,
         IPlaybackTranscriptionService transcriptionService,
         ProcessLogService processLogService,
-        PlaybackTranscriptionSessionOptions? options = null) {
+        PlaybackTranscriptionSessionOptions? options = null,
+        LiveRecordingSession? liveRecordingSession = null) {
         _captureService = captureService;
         _transcriptionService = transcriptionService;
         _processLogService = processLogService;
         _options = (options ?? PlaybackTranscriptionSessionOptions.Default).Validate();
+        _liveRecordingSession = liveRecordingSession;
     }
 
     public event EventHandler<PlaybackTranscriptionUpdate>? PlaybackInterimTranscriptionUpdated;
     public event EventHandler<PlaybackTranscriptionUpdate>? PlaybackFinalTranscriptionAvailable;
+    public event EventHandler<PlaybackAudioLevelChangedEventArgs>? AudioLevelChanged;
     public event EventHandler<Exception>? Faulted;
 
     public string SessionId { get; } = Guid.NewGuid().ToString("N");
@@ -83,19 +89,33 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             _captureStatsBytes = 0;
             _captureStatsPeak = 0;
             _sourceCaptureStats.Clear();
+            _capturedAudioBytes = 0;
+            _droppedAudioBytes = 0;
         }
 
         _processingCts = new CancellationTokenSource();
         _captureService.AudioFrameCaptured += OnAudioFrameCaptured;
         _captureService.CaptureFaulted += OnCaptureFaulted;
+        if (_liveRecordingSession is not null) {
+            _liveRecordingSession.Faulted += OnLiveRecordingFaulted;
+        }
 
         try {
+            _liveRecordingSession?.Start();
             _captureService.StartCapture();
             _processingTask = Task.Run(() => RunProcessingLoopAsync(_processingCts.Token));
-            Log($"Playback transcription session '{SessionId}' started using model '{validatedModel}'.");
+            Log(
+                $"Playback transcription session '{SessionId}' started using model '{validatedModel}'. " +
+                $"recordingAttached={_liveRecordingSession is not null}, pollInterval='{_options.PollInterval}', " +
+                $"interimWindow='{_options.InterimWindowDuration}', finalWindow='{_options.FinalWindowDuration}', " +
+                $"minimumSegment='{_options.MinimumSegmentDuration}', interimCadence='{_options.InterimCadence}', " +
+                $"minimumPeak={_options.MinimumPeakLevel:0.0000}.");
         }
         catch {
             StopCaptureCore();
+            if (_liveRecordingSession is not null) {
+                _liveRecordingSession.Faulted -= OnLiveRecordingFaulted;
+            }
             _processingCts.Dispose();
             _processingCts = null;
 
@@ -129,8 +149,14 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             return;
         }
 
-        Log($"Stopping playback transcription session '{SessionId}'.");
+        Log(
+            $"Stopping playback transcription session '{SessionId}'. " +
+            $"capturedAudioBytes={_capturedAudioBytes:N0}, droppedAudioBytes={_droppedAudioBytes:N0}, " +
+            $"pendingBytes={GetPendingByteCount():N0}.");
         StopCaptureCore();
+        if (_liveRecordingSession is not null) {
+            _liveRecordingSession.Faulted -= OnLiveRecordingFaulted;
+        }
 
         try {
             if (processingTask is not null) {
@@ -151,7 +177,10 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             }
         }
 
-        Log($"Playback transcription session '{SessionId}' stopped.");
+        Log(
+            $"Playback transcription session '{SessionId}' stopped. " +
+            $"capturedAudioBytes={_capturedAudioBytes:N0}, droppedAudioBytes={_droppedAudioBytes:N0}, " +
+            $"pendingBytes={GetPendingByteCount():N0}.");
     }
 
     public async ValueTask DisposeAsync() {
@@ -168,6 +197,9 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
         finally {
             _isDisposed = true;
             _captureService.Dispose();
+            if (_liveRecordingSession is not null) {
+                await _liveRecordingSession.DisposeAsync().ConfigureAwait(false);
+            }
             _pendingPcm.Dispose();
         }
     }
@@ -196,7 +228,10 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             // Session shutdown canceled the worker.
         }
         catch (Exception ex) {
-            Log($"Playback transcription session '{SessionId}' failed: {ex.Message}");
+            LogError(
+                $"Playback transcription session '{SessionId}' failed: {ex.GetType().Name}: {ex.Message}. " +
+                $"pendingBytes={GetPendingByteCount():N0}, capturedAudioBytes={_capturedAudioBytes:N0}, " +
+                $"droppedAudioBytes={_droppedAudioBytes:N0}.");
             Faulted?.Invoke(this, ex);
             StopCaptureCore();
             throw;
@@ -220,6 +255,11 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
     }
 
     private async Task ExecuteRequestAsync(PendingTranscriptionRequest request, CancellationToken cancellationToken) {
+        double requestDurationSeconds = request.PcmBytes.Length / (double)Math.Max(request.SourceFormat.AverageBytesPerSecond, 1);
+        LogDebug(
+            $"Dispatching {(request.IsFinal ? "final" : "interim")} transcription request seq={request.SequenceIndex:N0}, " +
+            $"bytes={request.PcmBytes.Length:N0}, duration={requestDurationSeconds:0.###}s, " +
+            $"pendingBytesAfterDequeue={GetPendingByteCount():N0}.");
         string text = await _transcriptionService.TranscribePcmChunkAsync(
             request.PcmBytes,
             request.SourceFormat,
@@ -246,6 +286,7 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             if (pendingBytes >= finalWindowBytes) {
                 byte[] finalChunk = DequeuePendingBytes(finalWindowBytes);
                 if (!IsChunkAboveThreshold(finalChunk, out double peak)) {
+                    _droppedAudioBytes += finalChunk.Length;
                     Log(
                         $"Dropping final playback window below peak threshold " +
                         $"(peak={peak:0.0000}, threshold={_options.MinimumPeakLevel:0.0000}, bytes={finalChunk.Length:N0}).");
@@ -298,11 +339,11 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
             long pendingBytes = _pendingPcm.Length;
             long finalWindowBytes = GetAlignedByteCount(_options.FinalWindowDuration, _captureFormat);
-            long minimumSegmentBytes = GetAlignedByteCount(_options.MinimumSegmentDuration, _captureFormat);
 
             if (pendingBytes >= finalWindowBytes) {
                 byte[] finalChunk = DequeuePendingBytes(finalWindowBytes);
                 if (!IsChunkAboveThreshold(finalChunk, out double peak)) {
+                    _droppedAudioBytes += finalChunk.Length;
                     Log(
                         $"Dropping trailing playback final window below peak threshold " +
                         $"(peak={peak:0.0000}, threshold={_options.MinimumPeakLevel:0.0000}, bytes={finalChunk.Length:N0}).");
@@ -320,37 +361,31 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
                     SourceFormat: _captureFormat);
             }
 
-            if (pendingBytes >= minimumSegmentBytes) {
-                byte[] finalChunk = DequeuePendingBytes(pendingBytes);
-                if (!IsChunkAboveThreshold(finalChunk, out double peak)) {
-                    Log(
-                        $"Dropping trailing playback audio below peak threshold " +
-                        $"(peak={peak:0.0000}, threshold={_options.MinimumPeakLevel:0.0000}, bytes={finalChunk.Length:N0}).");
-                    _pendingBytesAtLastInterim = 0;
-                    _lastInterimText = string.Empty;
-                    return null;
-                }
+            byte[] trailingChunk = DequeuePendingBytes(pendingBytes);
+            if (!IsChunkAboveThreshold(trailingChunk, out double trailingPeak)) {
+                _droppedAudioBytes += trailingChunk.Length;
+                Log(
+                    $"Dropping trailing playback audio below peak threshold " +
+                    $"(peak={trailingPeak:0.0000}, threshold={_options.MinimumPeakLevel:0.0000}, bytes={trailingChunk.Length:N0}).");
                 _pendingBytesAtLastInterim = 0;
                 _lastInterimText = string.Empty;
-
-                return new PendingTranscriptionRequest(
-                    IsFinal: true,
-                    SequenceIndex: _finalSequenceIndex++,
-                    PcmBytes: finalChunk,
-                    SourceFormat: _captureFormat);
+                return null;
             }
 
-            Log(
-                $"Dropping trailing playback audio shorter than the minimum segment duration " +
-                $"({_pendingPcm.Length} bytes).");
-            _pendingPcm.SetLength(0);
             _pendingBytesAtLastInterim = 0;
             _lastInterimText = string.Empty;
-            return null;
+
+            return new PendingTranscriptionRequest(
+                IsFinal: true,
+                SequenceIndex: _finalSequenceIndex++,
+                PcmBytes: trailingChunk,
+                SourceFormat: _captureFormat);
         }
     }
 
     private void OnAudioFrameCaptured(object? sender, LoopbackAudioFrameEventArgs e) {
+        double peak;
+
         lock (_sync) {
             if (_stopRequested) {
                 return;
@@ -366,11 +401,28 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
             _pendingPcm.Position = _pendingPcm.Length;
             _pendingPcm.Write(e.Buffer, 0, e.BytesRecorded);
-            TrackCaptureStats(e);
+            _capturedAudioBytes += e.BytesRecorded;
+            peak = TrackCaptureStats(e);
         }
+
+        _liveRecordingSession?.WriteFrame(e);
+        AudioLevelChanged?.Invoke(
+            this,
+            new PlaybackAudioLevelChangedEventArgs(
+                SessionId,
+                peak,
+                e.SourceName,
+                e.AppliedGain,
+                e.AutomaticGainApplied));
     }
 
-    private void TrackCaptureStats(LoopbackAudioFrameEventArgs e) {
+    private void OnLiveRecordingFaulted(object? sender, Exception ex) {
+        LogWarning(
+            $"Live recording failed while transcription continued for playback session '{SessionId}': " +
+            $"{ex.GetType().Name}: {ex.Message}. pendingBytes={GetPendingByteCount():N0}.");
+    }
+
+    private double TrackCaptureStats(LoopbackAudioFrameEventArgs e) {
         double peak = CalculatePcm16Peak(e.Buffer);
         string sourceName = string.IsNullOrWhiteSpace(e.SourceName) ? "Unknown" : e.SourceName;
 
@@ -389,7 +441,7 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         if (now < _nextCaptureStatsLogUtc) {
-            return;
+            return peak;
         }
 
         string sourceSummary = string.Join(
@@ -405,6 +457,8 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
         _captureStatsPeak = 0;
         _sourceCaptureStats.Clear();
         _nextCaptureStatsLogUtc = now.AddSeconds(2);
+
+        return peak;
     }
 
     private void OnCaptureFaulted(object? sender, Exception ex) {
@@ -413,6 +467,9 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             _stopRequested = true;
             _isRunning = false;
         }
+        LogError(
+            $"Capture fault received for playback session '{SessionId}': {ex.GetType().Name}: {ex.Message}. " +
+            $"pendingBytes={GetPendingByteCount():N0}, capturedAudioBytes={_capturedAudioBytes:N0}.");
     }
 
     private bool IsStopRequested() {
@@ -501,7 +558,13 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
             _captureService.StopCapture();
         }
         catch (Exception ex) {
-            Log($"Playback audio capture stop failed: {ex.Message}");
+            LogWarning($"Playback audio capture stop failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private long GetPendingByteCount() {
+        lock (_sync) {
+            return _pendingPcm.Length;
         }
     }
 
@@ -566,6 +629,18 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
     private void Log(string message) {
         _processLogService.Log("PlaybackSession", message);
+    }
+
+    private void LogDebug(string message) {
+        _processLogService.Log("PlaybackSession", message, ProcessLogLevel.Debug);
+    }
+
+    private void LogWarning(string message) {
+        _processLogService.Log("PlaybackSession", message, ProcessLogLevel.Warning);
+    }
+
+    private void LogError(string message) {
+        _processLogService.Log("PlaybackSession", message, ProcessLogLevel.Error);
     }
 
     private void ThrowIfDisposed() {

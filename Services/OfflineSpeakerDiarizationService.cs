@@ -35,6 +35,13 @@ public sealed class OfflineSpeakerDiarizationService {
         Log($"Offline speaker-label generation requested for {timedLines.Count:N0} timed line(s).");
 
         IReadOnlyList<SpeakerDiarizationTurn> speakerTurns;
+        double latestDiarizationPercent = 0;
+        using var diarizationHeartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task diarizationHeartbeatTask = ReportDiarizationHeartbeatAsync(
+            progressReporter,
+            totalAudio,
+            () => latestDiarizationPercent,
+            diarizationHeartbeatCts.Token);
         try {
             progressReporter.Report(
                 TranscriptionProgressPhase.RunningSpeakerDiarization,
@@ -43,23 +50,36 @@ public sealed class OfflineSpeakerDiarizationService {
                 totalAudio,
                 "Running speaker diarization.",
                 force: true);
-            speakerTurns = await _diarizationEngine.DiarizeAudioFileAsync(
-                audioFilePath,
-                cancellationToken,
-                new Progress<SpeakerDiarizationProgress>(diarizationProgress =>
-                {
-                    double percent = diarizationProgress.Percent;
-                    TimeSpan processedAudio = totalAudio > TimeSpan.Zero
-                        ? TimeSpan.FromTicks((long)(totalAudio.Ticks * (percent / 100d)))
-                        : TimeSpan.Zero;
-                    progressReporter.Report(
-                        TranscriptionProgressPhase.RunningSpeakerDiarization,
-                        percent,
-                        processedAudio,
-                        totalAudio,
-                        "Running speaker diarization.",
-                        force: percent >= 100);
-                }));
+            try {
+                speakerTurns = await _diarizationEngine.DiarizeAudioFileAsync(
+                    audioFilePath,
+                    cancellationToken,
+                    new Progress<SpeakerDiarizationProgress>(diarizationProgress =>
+                    {
+                        double percent = diarizationProgress.Percent;
+                        latestDiarizationPercent = percent;
+                        TimeSpan processedAudio = totalAudio > TimeSpan.Zero
+                            ? TimeSpan.FromTicks((long)(totalAudio.Ticks * (percent / 100d)))
+                            : TimeSpan.Zero;
+                        progressReporter.Report(
+                            TranscriptionProgressPhase.RunningSpeakerDiarization,
+                            percent,
+                            processedAudio,
+                            totalAudio,
+                            "Running speaker diarization.",
+                            force: percent >= 100);
+                    }));
+            }
+            finally {
+                diarizationHeartbeatCts.Cancel();
+                try {
+                    await diarizationHeartbeatTask;
+                }
+                catch (OperationCanceledException) {
+                }
+            }
+
+            latestDiarizationPercent = 100;
         }
         catch (Exception ex) when (IsEmergencyFallbackException(ex)) {
             _processLogService.LogException(
@@ -79,7 +99,8 @@ public sealed class OfflineSpeakerDiarizationService {
                 Model: transcriptionResult.Model,
                 CreatedAt: transcriptionResult.CreatedAt,
                 Duration: transcriptionResult.Duration,
-                Segments: fallbackSegments);
+                Segments: fallbackSegments,
+                UsedHeuristicFallback: true);
         }
 
         progressReporter.Report(
@@ -98,7 +119,8 @@ public sealed class OfflineSpeakerDiarizationService {
             Model: transcriptionResult.Model,
             CreatedAt: transcriptionResult.CreatedAt,
             Duration: transcriptionResult.Duration,
-            Segments: mergedSegments);
+            Segments: mergedSegments,
+            UsedHeuristicFallback: false);
     }
 
     public static IReadOnlyList<SpeakerDiarizationSegment> MergeTranscriptWithSpeakerTurns(
@@ -227,9 +249,32 @@ public sealed class OfflineSpeakerDiarizationService {
 
     private static bool IsEmergencyFallbackException(Exception exception) {
         return exception is FileNotFoundException
+            or DirectoryNotFoundException
             or DllNotFoundException
             or BadImageFormatException
             or InvalidOperationException;
+    }
+
+    private static async Task ReportDiarizationHeartbeatAsync(
+        TranscriptionProgressReporter progressReporter,
+        TimeSpan totalAudio,
+        Func<double> resolveLatestPercent,
+        CancellationToken cancellationToken) {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        while (await timer.WaitForNextTickAsync(cancellationToken)) {
+            double percent = Math.Clamp(resolveLatestPercent(), 0, 99);
+            TimeSpan processedAudio = totalAudio > TimeSpan.Zero
+                ? TimeSpan.FromTicks((long)(totalAudio.Ticks * (percent / 100d)))
+                : TimeSpan.Zero;
+            progressReporter.Report(
+                TranscriptionProgressPhase.RunningSpeakerDiarization,
+                percent,
+                processedAudio,
+                totalAudio,
+                percent <= 0
+                    ? "Analyzing speaker activity with pyannote Community-1."
+                    : "Running speaker diarization.");
+        }
     }
 
     private static string BuildResultText(IReadOnlyList<SpeakerDiarizationSegment> orderedSegments) {

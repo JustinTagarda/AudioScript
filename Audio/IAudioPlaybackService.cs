@@ -17,6 +17,8 @@ public interface IAudioPlaybackService : IDisposable {
 
     void LoadFile(string filePath);
 
+    void LoadLiveRecordingManifest(string manifestPath);
+
     void UnloadFile();
 
     void Play();

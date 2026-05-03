@@ -101,6 +101,39 @@ public sealed class PlaybackTranscriptionSessionTests {
     }
 
     [Fact]
+    public async Task Session_StopFlushesTrailingAudioShorterThanMinimumSegment() {
+        var captureService = new FakeLoopbackCaptureService();
+        var transcriptionService = new FakePlaybackTranscriptionService();
+        var session = new PlaybackTranscriptionSession(
+            captureService,
+            transcriptionService,
+            new ProcessLogService(),
+            new PlaybackTranscriptionSessionOptions(
+                MinimumSegmentDuration: TimeSpan.FromMilliseconds(500),
+                InterimWindowDuration: TimeSpan.FromMilliseconds(500),
+                InterimCadence: TimeSpan.FromMilliseconds(500),
+                FinalWindowDuration: TimeSpan.FromSeconds(1),
+                PollInterval: TimeSpan.FromMilliseconds(20)));
+
+        try {
+            var finalTcs = new TaskCompletionSource<PlaybackTranscriptionUpdate>(TaskCreationOptions.RunContinuationsAsynchronously);
+            session.PlaybackFinalTranscriptionAvailable += (_, update) => finalTcs.TrySetResult(update);
+
+            session.StartPlaybackTranscription(TranscriptionModelCatalog.WhisperSmall);
+            captureService.EmitFrame(CreatePcmChunk(100), AudioFormatConstants.EngineWaveFormat);
+
+            await session.StopPlaybackTranscriptionAsync();
+
+            PlaybackTranscriptionUpdate final = await finalTcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal("bytes:3200", final.Text);
+            Assert.Contains(transcriptionService.SeenByteCounts, count => count == 3200);
+        }
+        finally {
+            await session.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public void Session_StartsOnlyOnce() {
         var session = new PlaybackTranscriptionSession(
             new FakeLoopbackCaptureService(),
@@ -113,6 +146,94 @@ public sealed class PlaybackTranscriptionSessionTests {
             session.StartPlaybackTranscription(TranscriptionModelCatalog.WhisperSmall));
 
         Assert.Contains("single-use", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Session_WithLiveRecordingSink_TranscribesAndWritesManifestSegments() {
+        string rootPath = Path.Combine(Path.GetTempPath(), $"AudioScript-playback-recording-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(rootPath);
+
+        try {
+            var captureService = new FakeLoopbackCaptureService();
+            var transcriptionService = new FakePlaybackTranscriptionService();
+            string manifestPath = Path.Combine(rootPath, "audio", "live", "manifest.json");
+            var recordingSession = new LiveRecordingSession(
+                manifestPath,
+                "audio/live/manifest.json",
+                "Test Source",
+                new ProcessLogService(),
+                TimeSpan.FromMilliseconds(100));
+            var session = new PlaybackTranscriptionSession(
+                captureService,
+                transcriptionService,
+                new ProcessLogService(),
+                new PlaybackTranscriptionSessionOptions(
+                    MinimumSegmentDuration: TimeSpan.FromMilliseconds(100),
+                    InterimWindowDuration: TimeSpan.FromMilliseconds(200),
+                    InterimCadence: TimeSpan.FromMilliseconds(100),
+                    FinalWindowDuration: TimeSpan.FromMilliseconds(400),
+                    PollInterval: TimeSpan.FromMilliseconds(20)),
+                recordingSession);
+
+            try {
+                session.StartPlaybackTranscription(TranscriptionModelCatalog.WhisperSmall);
+                captureService.EmitFrame(CreatePcmChunk(100), AudioFormatConstants.EngineWaveFormat);
+                captureService.EmitFrame(CreatePcmChunk(100), AudioFormatConstants.EngineWaveFormat);
+
+                await session.StopPlaybackTranscriptionAsync();
+                await recordingSession.CompleteAsync();
+
+                LiveRecordingManifest manifest = TranscriptSessionStore.LoadLiveRecordingManifest(manifestPath);
+                Assert.Equal(LiveRecordingManifestStatuses.Completed, manifest.Status);
+                Assert.NotEmpty(manifest.Segments);
+                Assert.Contains(transcriptionService.SeenByteCounts, count => count > 0);
+            }
+            finally {
+                await session.DisposeAsync();
+            }
+        }
+        finally {
+            if (Directory.Exists(rootPath)) {
+                Directory.Delete(rootPath, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Session_WithAutomaticGain_TranscribesQuietAudioAbovePostGainThreshold() {
+        var innerCaptureService = new FakeLoopbackCaptureService();
+        var captureService = new AutomaticGainAudioCaptureService(
+            innerCaptureService,
+            new LiveAudioGainOptions(IsAutomaticGainEnabled: true, ManualGainLevel: 0.5));
+        var transcriptionService = new FakePlaybackTranscriptionService();
+        var session = new PlaybackTranscriptionSession(
+            captureService,
+            transcriptionService,
+            new ProcessLogService(),
+            new PlaybackTranscriptionSessionOptions(
+                MinimumSegmentDuration: TimeSpan.FromMilliseconds(100),
+                InterimWindowDuration: TimeSpan.FromMilliseconds(100),
+                InterimCadence: TimeSpan.FromMilliseconds(100),
+                FinalWindowDuration: TimeSpan.FromMilliseconds(100),
+                PollInterval: TimeSpan.FromMilliseconds(20),
+                MinimumPeakLevel: 0.015));
+
+        try {
+            var finalTcs = new TaskCompletionSource<PlaybackTranscriptionUpdate>(TaskCreationOptions.RunContinuationsAsynchronously);
+            session.PlaybackFinalTranscriptionAvailable += (_, update) => finalTcs.TrySetResult(update);
+
+            session.StartPlaybackTranscription(TranscriptionModelCatalog.WhisperSmall);
+            innerCaptureService.EmitFrame(CreatePcmToneChunk(100, peakLevel: 0.003), AudioFormatConstants.EngineWaveFormat);
+
+            await session.StopPlaybackTranscriptionAsync();
+
+            PlaybackTranscriptionUpdate final = await finalTcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal("bytes:3200", final.Text);
+            Assert.Contains(transcriptionService.SeenByteCounts, count => count == 3200);
+        }
+        finally {
+            await session.DisposeAsync();
+        }
     }
 
     private static async Task AssertEventuallyAsync(Func<bool> predicate, TimeSpan timeout) {
@@ -134,6 +255,23 @@ public sealed class PlaybackTranscriptionSessionTests {
         int byteCount = (int)(bytesPerSecond * (durationMilliseconds / 1000d));
         byteCount -= byteCount % AudioFormatConstants.EngineWaveFormat.BlockAlign;
         return new byte[Math.Max(byteCount, AudioFormatConstants.EngineWaveFormat.BlockAlign)];
+    }
+
+    private static byte[] CreatePcmToneChunk(int durationMilliseconds, double peakLevel) {
+        WaveFormat format = AudioFormatConstants.EngineWaveFormat;
+        int sampleCount = Math.Max((int)(format.SampleRate * (durationMilliseconds / 1000d)), 1);
+        byte[] buffer = new byte[sampleCount * format.BlockAlign];
+        double clampedPeak = Math.Clamp(peakLevel, 0, 1);
+
+        for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+            double phase = (2 * Math.PI * 440 * sampleIndex) / format.SampleRate;
+            short sample = (short)Math.Round(Math.Sin(phase) * clampedPeak * short.MaxValue);
+            int byteIndex = sampleIndex * format.BlockAlign;
+            buffer[byteIndex] = (byte)(sample & 0xFF);
+            buffer[byteIndex + 1] = (byte)((sample >> 8) & 0xFF);
+        }
+
+        return buffer;
     }
 
     private sealed class FakeLoopbackCaptureService : IAudioLoopbackCaptureService {

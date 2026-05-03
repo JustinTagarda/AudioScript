@@ -28,10 +28,11 @@ public sealed class AppPreferencesStore {
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.System,
                 AutoPlayTimelineSelection: true,
-                SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
                 LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                 LiveAudioDeviceNumber: -1,
-                SelectedEngineId: TranscriptionModelCatalog.WhisperSmall);
+                SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
+                LiveAudioAutoGainEnabled: true,
+                LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel);
         }
 
         try {
@@ -44,10 +45,11 @@ public sealed class AppPreferencesStore {
                     AutoTranscribeWithAi: false,
                     ThemePreference: AppThemePreference.System,
                     AutoPlayTimelineSelection: true,
-                    SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
                     LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                     LiveAudioDeviceNumber: -1,
-                    SelectedEngineId: TranscriptionModelCatalog.WhisperSmall);
+                    SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
+                    LiveAudioAutoGainEnabled: true,
+                    LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel);
             }
 
             return new AppPreferencesSnapshot(
@@ -55,12 +57,11 @@ public sealed class AppPreferencesStore {
                 AutoTranscribeWithAi: persisted.AutoTranscribeWithAi,
                 ThemePreference: ParseThemePreference(persisted.ThemePreference),
                 AutoPlayTimelineSelection: persisted.AutoPlayTimelineSelection ?? true,
-                SelectedTranscriptMode: string.IsNullOrWhiteSpace(persisted.SelectedTranscriptMode)
-                    ? TranscriptGenerationMode.TranscribeAudio.ToString()
-                    : persisted.SelectedTranscriptMode,
                 LiveAudioSourceKind: ParseLiveAudioSourceKind(persisted.LiveAudioSourceKind),
                 LiveAudioDeviceNumber: persisted.LiveAudioDeviceNumber ?? -1,
-                SelectedEngineId: NormalizeSelectedEngineId(persisted.SelectedEngineId));
+                SelectedEngineId: NormalizeSelectedEngineId(persisted.SelectedEngineId),
+                LiveAudioAutoGainEnabled: true,
+                LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel);
         }
         catch {
             return new AppPreferencesSnapshot(
@@ -68,10 +69,11 @@ public sealed class AppPreferencesStore {
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.System,
                 AutoPlayTimelineSelection: true,
-                SelectedTranscriptMode: TranscriptGenerationMode.TranscribeAudio.ToString(),
                 LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                 LiveAudioDeviceNumber: -1,
-                SelectedEngineId: TranscriptionModelCatalog.WhisperSmall);
+                SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
+                LiveAudioAutoGainEnabled: true,
+                LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel);
         }
     }
 
@@ -85,10 +87,11 @@ public sealed class AppPreferencesStore {
                 AutoTranscribeWithAi = snapshot.AutoTranscribeWithAi,
                 ThemePreference = snapshot.ThemePreference.ToString(),
                 AutoPlayTimelineSelection = snapshot.AutoPlayTimelineSelection,
-                SelectedTranscriptMode = snapshot.SelectedTranscriptMode,
                 LiveAudioSourceKind = snapshot.LiveAudioSourceKind.ToString(),
                 LiveAudioDeviceNumber = snapshot.LiveAudioDeviceNumber,
                 SelectedEngineId = snapshot.SelectedEngineId,
+                LiveAudioAutoGainEnabled = true,
+                LiveAudioGainLevel = LiveAudioGainOptions.DefaultManualGainLevel,
             };
 
             string json = JsonSerializer.Serialize(persisted, JsonOptions);
@@ -157,13 +160,15 @@ public sealed class AppPreferencesStore {
 
         public bool? AutoPlayTimelineSelection { get; init; }
 
-        public string? SelectedTranscriptMode { get; init; }
-
         public string? LiveAudioSourceKind { get; init; }
 
         public int? LiveAudioDeviceNumber { get; init; }
 
         public string? SelectedEngineId { get; init; }
+
+        public bool? LiveAudioAutoGainEnabled { get; init; }
+
+        public double? LiveAudioGainLevel { get; init; }
     }
 }
 
@@ -172,10 +177,11 @@ public sealed record AppPreferencesSnapshot(
     bool AutoTranscribeWithAi,
     AppThemePreference ThemePreference,
     bool AutoPlayTimelineSelection,
-    string SelectedTranscriptMode,
     LiveAudioSourceKind LiveAudioSourceKind,
     int LiveAudioDeviceNumber,
-    string SelectedEngineId = TranscriptionModelCatalog.WhisperSmall);
+    string SelectedEngineId = TranscriptionModelCatalog.WhisperSmall,
+    bool LiveAudioAutoGainEnabled = true,
+    double LiveAudioGainLevel = LiveAudioGainOptions.DefaultManualGainLevel);
 
 
 

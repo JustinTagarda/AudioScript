@@ -7,8 +7,9 @@ using NAudio.Wave;
 namespace AudioScript.Services;
 
 public sealed class TranscriptSessionStore {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 3;
     public const string LiveSessionAudioName = "Live Transcription";
+    public const string LiveRecordingManifestRelativePath = "audio/live/manifest.json";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         WriteIndented = true,
@@ -53,6 +54,9 @@ public sealed class TranscriptSessionStore {
                 storedRelativePath = document.Audio.StoredRelativePath;
                 storedAudioPath = Path.Combine(sessionDirectoryPath, storedRelativePath);
             }
+            else {
+                document.Audio.StorageKind = AudioStorageKinds.ImportedFile;
+            }
 
             bool needsCopy = !File.Exists(storedAudioPath)
                 || document.Audio.FileSizeBytes != sourceInfo.Length
@@ -66,6 +70,7 @@ public sealed class TranscriptSessionStore {
             }
 
             document.Audio = new TranscriptSessionAudioDocument {
+                StorageKind = AudioStorageKinds.ImportedFile,
                 StoredRelativePath = NormalizeRelativePath(storedRelativePath),
                 OriginalFileName = originalFileName,
                 FileSizeBytes = sourceInfo.Length,
@@ -93,11 +98,64 @@ public sealed class TranscriptSessionStore {
             ? $"Live Transcription {DateTimeOffset.Now:yyyy-MM-dd HH-mm}"
             : displayName.Trim();
         document.Audio.OriginalFileName = LiveSessionAudioName;
-        document.Editing.SelectedTranscriptMode = TranscriptGenerationMode.Live.ToString();
+        document.Audio.StorageKind = AudioStorageKinds.LiveRecordingManifest;
         document.Editing.SelectedTranscriptViewIndex = 0;
 
         Save(document);
         Log($"CreateLiveSession completed. sessionId='{sessionId}'.");
+        return LoadSession(sessionId);
+    }
+
+    public LiveRecordingSessionCreateResult CreateLiveRecordingSession(
+        string sessionId,
+        string inputSource,
+        TimeSpan? segmentDuration = null) {
+        Log($"CreateLiveRecordingSession started. sessionId='{sessionId}', inputSource='{inputSource}'.");
+        TranscriptSessionLoadResult loadResult = LoadSessionWithoutAudioValidation(sessionId);
+        TranscriptSessionDocument document = loadResult.Document;
+        string sessionDirectoryPath = GetSessionDirectoryPath(sessionId);
+        string manifestPath = Path.Combine(sessionDirectoryPath, LiveRecordingManifestRelativePath);
+
+        document.Audio.StorageKind = AudioStorageKinds.LiveRecordingManifest;
+        document.Audio.StoredRelativePath = NormalizeRelativePath(LiveRecordingManifestRelativePath);
+        document.Audio.OriginalFileName = LiveSessionAudioName;
+        document.Audio.FileSizeBytes = 0;
+        document.Audio.DurationSeconds = null;
+        document.Audio.Sha256 = string.Empty;
+        document.UpdatedUtc = DateTimeOffset.UtcNow;
+        Save(document);
+
+        var recordingSession = new LiveRecordingSession(
+            manifestPath,
+            LiveRecordingManifestRelativePath,
+            inputSource,
+            _processLogService,
+            segmentDuration);
+
+        return new LiveRecordingSessionCreateResult(
+            recordingSession,
+            CloneAudioDocument(document.Audio));
+    }
+
+    public TranscriptSessionLoadResult UpdateLiveRecordingMetadata(string sessionId) {
+        Log($"UpdateLiveRecordingMetadata started. sessionId='{sessionId}'.");
+        TranscriptSessionLoadResult loadResult = LoadSessionWithoutAudioValidation(sessionId);
+        TranscriptSessionDocument document = loadResult.Document;
+        if (!IsLiveRecordingManifest(document) || string.IsNullOrWhiteSpace(document.Audio.StoredRelativePath)) {
+            return LoadSession(sessionId);
+        }
+
+        string manifestPath = Path.Combine(GetSessionDirectoryPath(sessionId), document.Audio.StoredRelativePath);
+        if (!File.Exists(manifestPath)) {
+            return LoadSession(sessionId);
+        }
+
+        LiveRecordingManifest manifest = RepairInterruptedLiveRecordingIfNeeded(manifestPath);
+        document.Audio.FileSizeBytes = manifest.TotalFileSizeBytes;
+        document.Audio.DurationSeconds = manifest.TotalDurationSeconds > 0 ? manifest.TotalDurationSeconds : null;
+        document.Audio.Sha256 = string.Empty;
+        document.UpdatedUtc = DateTimeOffset.UtcNow;
+        Save(document);
         return LoadSession(sessionId);
     }
 
@@ -135,8 +193,32 @@ public sealed class TranscriptSessionStore {
         bool audioAvailable = false;
         string? audioIssueMessage = null;
 
-        if (IsLiveSession(document)) {
-            audioIssueMessage = null;
+        if (IsLiveRecordingManifest(document)) {
+            if (string.IsNullOrWhiteSpace(document.Audio.StoredRelativePath)) {
+                audioIssueMessage = null;
+            }
+            else if (string.IsNullOrWhiteSpace(audioPath) || !File.Exists(audioPath)) {
+                audioIssueMessage = "The stored live recording manifest is missing.";
+                audioPath = null;
+            }
+            else {
+                LiveRecordingManifest manifest = RepairInterruptedLiveRecordingIfNeeded(audioPath);
+                string sessionDirectoryPath = GetSessionDirectoryPath(document.SessionId);
+                bool hasMissingSegment = manifest.Segments.Any(segment =>
+                    string.IsNullOrWhiteSpace(segment.RelativePath)
+                    || !File.Exists(Path.Combine(sessionDirectoryPath, segment.RelativePath)));
+                if (manifest.Segments.Count == 0) {
+                    audioIssueMessage = "This live session does not have recorded audio segments.";
+                    audioPath = null;
+                }
+                else if (hasMissingSegment) {
+                    audioIssueMessage = "One or more live recording audio segments are missing.";
+                    audioPath = null;
+                }
+                else {
+                    audioAvailable = true;
+                }
+            }
         }
         else if (string.IsNullOrWhiteSpace(audioPath)) {
             audioIssueMessage = "This session does not have a stored audio file path.";
@@ -192,6 +274,7 @@ public sealed class TranscriptSessionStore {
 
         var info = new FileInfo(fullReplacementPath);
         document.Audio = new TranscriptSessionAudioDocument {
+            StorageKind = AudioStorageKinds.ImportedFile,
             StoredRelativePath = NormalizeRelativePath(relativePath),
             OriginalFileName = string.IsNullOrWhiteSpace(document.Audio.OriginalFileName)
                 ? Path.GetFileName(fullReplacementPath)
@@ -225,6 +308,7 @@ public sealed class TranscriptSessionStore {
                     DisplayName: string.IsNullOrWhiteSpace(document.DisplayName)
                         ? document.Audio.OriginalFileName
                         : document.DisplayName,
+                    CreatedUtc: document.CreatedUtc,
                     UpdatedUtc: document.UpdatedUtc,
                     OriginalFileName: document.Audio.OriginalFileName,
                     HasStoredAudio: hasStoredAudio));
@@ -235,7 +319,7 @@ public sealed class TranscriptSessionStore {
         }
 
         return summaries
-            .OrderByDescending(item => item.UpdatedUtc)
+            .OrderByDescending(item => item.CreatedUtc)
             .Take(Math.Max(maxCount, 1))
             .ToArray();
     }
@@ -273,6 +357,10 @@ public sealed class TranscriptSessionStore {
 
         Directory.Delete(sessionDirectoryPath, recursive: true);
         Log($"DeleteSession completed. sessionId='{sessionId}', directory='{sessionDirectoryPath}'.");
+    }
+
+    public string? ResolveStoredAudioPathForPlayback(TranscriptSessionDocument document) {
+        return ResolveStoredAudioPath(document);
     }
 
     public string GetSessionDirectoryPath(string sessionId) {
@@ -325,8 +413,16 @@ public sealed class TranscriptSessionStore {
 
             document.Transcript ??= new TranscriptSessionTranscriptDocument();
             document.Transcript.Lines ??= new List<TranscriptSessionLineDocument>();
+            document.Transcript.SpeakerDiarizationJob ??= new SpeakerDiarizationJobDocument();
             document.Audio ??= new TranscriptSessionAudioDocument();
+            if (string.IsNullOrWhiteSpace(document.Audio.StorageKind)) {
+                document.Audio.StorageKind = string.IsNullOrWhiteSpace(document.Audio.StoredRelativePath)
+                    && IsLiveSession(document)
+                        ? AudioStorageKinds.LiveRecordingManifest
+                        : AudioStorageKinds.ImportedFile;
+            }
             document.Editing ??= new TranscriptSessionEditingDocument();
+            RepairMissingLiveRecordingManifestPath(document);
 
             return document;
         }
@@ -362,6 +458,47 @@ public sealed class TranscriptSessionStore {
             document.Audio?.OriginalFileName,
             LiveSessionAudioName,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLiveRecordingManifest(TranscriptSessionDocument document) {
+        return string.Equals(
+            document.Audio?.StorageKind,
+            AudioStorageKinds.LiveRecordingManifest,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RepairMissingLiveRecordingManifestPath(TranscriptSessionDocument document) {
+        if (!IsLiveRecordingManifest(document)
+            || !string.IsNullOrWhiteSpace(document.Audio.StoredRelativePath)
+            || string.IsNullOrWhiteSpace(document.SessionId)) {
+            return;
+        }
+
+        string manifestPath = Path.Combine(GetSessionDirectoryPath(document.SessionId), LiveRecordingManifestRelativePath);
+        if (!File.Exists(manifestPath)) {
+            return;
+        }
+
+        document.Audio.StoredRelativePath = NormalizeRelativePath(LiveRecordingManifestRelativePath);
+        document.Audio.OriginalFileName = string.IsNullOrWhiteSpace(document.Audio.OriginalFileName)
+            ? LiveSessionAudioName
+            : document.Audio.OriginalFileName;
+        Log(
+            $"Repaired missing live recording manifest path. sessionId='{document.SessionId}', " +
+            $"relativePath='{document.Audio.StoredRelativePath}'.");
+    }
+
+    public static TranscriptSessionAudioDocument CloneAudioDocument(TranscriptSessionAudioDocument audio) {
+        ArgumentNullException.ThrowIfNull(audio);
+
+        return new TranscriptSessionAudioDocument {
+            StorageKind = audio.StorageKind,
+            StoredRelativePath = audio.StoredRelativePath,
+            OriginalFileName = audio.OriginalFileName,
+            FileSizeBytes = audio.FileSizeBytes,
+            DurationSeconds = audio.DurationSeconds,
+            Sha256 = audio.Sha256,
+        };
     }
 
     private static string BuildSessionId(string fileHash) {
@@ -407,6 +544,38 @@ public sealed class TranscriptSessionStore {
             Log($"Unable to read audio duration for '{filePath}': {ex.Message}");
             return null;
         }
+    }
+
+    private LiveRecordingManifest RepairInterruptedLiveRecordingIfNeeded(string manifestPath) {
+        LiveRecordingManifest manifest = LoadLiveRecordingManifest(manifestPath);
+        if (!string.Equals(manifest.Status, LiveRecordingManifestStatuses.Recording, StringComparison.OrdinalIgnoreCase)) {
+            return manifest;
+        }
+
+        manifest.Status = LiveRecordingManifestStatuses.Interrupted;
+        manifest.EndedUtc ??= DateTimeOffset.UtcNow;
+        manifest.ErrorMessage = string.IsNullOrWhiteSpace(manifest.ErrorMessage)
+            ? "Recording ended unexpectedly."
+            : manifest.ErrorMessage;
+        manifest.TotalDurationSeconds = manifest.Segments.Sum(segment => segment.DurationSeconds);
+        manifest.TotalFileSizeBytes = manifest.Segments.Sum(segment => segment.FileSizeBytes);
+        WriteAllTextAtomic(manifestPath, JsonSerializer.Serialize(manifest, JsonOptions));
+        return manifest;
+    }
+
+    public static LiveRecordingManifest LoadLiveRecordingManifest(string manifestPath) {
+        if (string.IsNullOrWhiteSpace(manifestPath)) {
+            throw new ArgumentException("Manifest path is required.", nameof(manifestPath));
+        }
+
+        string json = File.ReadAllText(manifestPath);
+        LiveRecordingManifest? manifest = JsonSerializer.Deserialize<LiveRecordingManifest>(json, JsonOptions);
+        if (manifest is null) {
+            throw new InvalidOperationException("Live recording manifest did not contain valid data.");
+        }
+
+        manifest.Segments ??= new List<LiveRecordingSegmentManifest>();
+        return manifest;
     }
 
     private static void CopyFileAtomic(string sourcePath, string targetPath) {
@@ -501,6 +670,8 @@ public sealed class TranscriptSessionDocument {
 }
 
 public sealed class TranscriptSessionAudioDocument {
+    public string StorageKind { get; set; } = AudioStorageKinds.ImportedFile;
+
     public string StoredRelativePath { get; set; } = string.Empty;
 
     public string OriginalFileName { get; set; } = string.Empty;
@@ -520,6 +691,8 @@ public sealed class TranscriptSessionTranscriptDocument {
     public DateTimeOffset? LastTranscribedUtc { get; set; }
 
     public List<TranscriptSessionLineDocument> Lines { get; set; } = new();
+
+    public SpeakerDiarizationJobDocument SpeakerDiarizationJob { get; set; } = new();
 }
 
 public sealed class TranscriptSessionLineDocument {
@@ -534,12 +707,71 @@ public sealed class TranscriptSessionLineDocument {
     public bool IsTimestampEstimated { get; set; }
 
     public bool IsManuallyReviewed { get; set; }
+
+    public string SpeakerLabelSource { get; set; } = string.Empty;
+
+    public int? DiarizationRevision { get; set; }
+
+    public int? LastDiarizedChunkIndex { get; set; }
+}
+
+public sealed class SpeakerDiarizationJobDocument {
+    public string Status { get; set; } = SpeakerDiarizationJobStatuses.NotStarted;
+
+    public string Engine { get; set; } = string.Empty;
+
+    public int JobVersion { get; set; }
+
+    public string AudioFingerprint { get; set; } = string.Empty;
+
+    public string TranscriptFingerprint { get; set; } = string.Empty;
+
+    public double ChunkDurationSeconds { get; set; }
+
+    public double OverlapDurationSeconds { get; set; }
+
+    public int TotalChunks { get; set; }
+
+    public int LastCompletedChunkIndex { get; set; } = -1;
+
+    public DateTimeOffset? StartedUtc { get; set; }
+
+    public DateTimeOffset? LastUpdatedUtc { get; set; }
+
+    public DateTimeOffset? CompletedUtc { get; set; }
+
+    public string LastError { get; set; } = string.Empty;
+
+    public int Revision { get; set; }
+
+    public int NextSpeakerIndex { get; set; } = 1;
+
+    public List<SpeakerDiarizationSpeakerMapDocument> SpeakerMappings { get; set; } = new();
+}
+
+public sealed class SpeakerDiarizationSpeakerMapDocument {
+    public string ChunkSpeakerKey { get; set; } = string.Empty;
+
+    public string GlobalSpeakerLabel { get; set; } = string.Empty;
+}
+
+public static class SpeakerDiarizationJobStatuses {
+    public const string NotStarted = "not_started";
+    public const string Running = "running";
+    public const string Canceled = "canceled";
+    public const string Failed = "failed";
+    public const string Completed = "completed";
+}
+
+public static class SpeakerLabelSources {
+    public const string Manual = "manual";
+    public const string Heuristic = "heuristic";
+    public const string DiarizationPartial = "diarization_partial";
+    public const string DiarizationFinal = "diarization_final";
 }
 
 public sealed class TranscriptSessionEditingDocument {
     public int? SelectedRowIndex { get; set; }
-
-    public string SelectedTranscriptMode { get; set; } = string.Empty;
 
     public int SelectedTranscriptViewIndex { get; set; }
 }
@@ -547,6 +779,7 @@ public sealed class TranscriptSessionEditingDocument {
 public sealed record TranscriptSessionSummary(
     string SessionId,
     string DisplayName,
+    DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
     string OriginalFileName,
     bool HasStoredAudio
@@ -557,6 +790,11 @@ public sealed record TranscriptSessionLoadResult(
     string? AudioFilePath,
     bool AudioAvailable,
     string? AudioIssueMessage
+);
+
+public sealed record LiveRecordingSessionCreateResult(
+    LiveRecordingSession RecordingSession,
+    TranscriptSessionAudioDocument Audio
 );
 
 

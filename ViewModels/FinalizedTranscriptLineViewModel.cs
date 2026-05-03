@@ -14,6 +14,9 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     private double _playbackEditProgressPercent;
     private bool _isPlaybackEditProgressIndeterminate;
     private bool _isManuallyReviewed;
+    private string _speakerLabelSource;
+    private int? _diarizationRevision;
+    private int? _lastDiarizedChunkIndex;
 
     public FinalizedTranscriptLineViewModel(
         TimeSpan? startOffset,
@@ -21,13 +24,19 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         bool isTimestampEstimated,
         string text,
         string speakerLabel = "",
-        bool isManuallyReviewed = false) {
+        bool isManuallyReviewed = false,
+        string speakerLabelSource = "",
+        int? diarizationRevision = null,
+        int? lastDiarizedChunkIndex = null) {
         _startOffset = startOffset;
         _endOffset = endOffset;
         IsTimestampEstimated = isTimestampEstimated;
         _speakerLabel = speakerLabel?.Trim() ?? string.Empty;
         _text = text ?? string.Empty;
         _isManuallyReviewed = isManuallyReviewed;
+        _speakerLabelSource = speakerLabelSource?.Trim() ?? string.Empty;
+        _diarizationRevision = diarizationRevision;
+        _lastDiarizedChunkIndex = lastDiarizedChunkIndex;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -56,33 +65,25 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         get => _startOffset is null
             ? string.Empty
             : FormatTimeline(_startOffset.Value);
-        set {
-            if (!TryParseTimeline(value, out TimeSpan parsed)) {
-                OnPropertyChanged(nameof(Timeline));
-                return;
-            }
+    }
 
-            TimeSpan? previousStart = _startOffset;
-            TimeSpan? previousEnd = _endOffset;
-            if (previousStart == parsed) {
-                OnPropertyChanged(nameof(Timeline));
-                return;
-            }
+    public void SetTimelineOffsets(TimeSpan? startOffset, TimeSpan? endOffset) {
+        bool startChanged = _startOffset != startOffset;
+        bool endChanged = _endOffset != endOffset;
 
-            _startOffset = parsed;
+        if (!startChanged && !endChanged) {
+            return;
+        }
 
-            if (previousStart is not null
-                && previousEnd is not null
-                && previousEnd.Value >= previousStart.Value) {
-                TimeSpan duration = previousEnd.Value - previousStart.Value;
-                _endOffset = parsed + duration;
-            }
-            else if (_endOffset is not null && _endOffset.Value < parsed) {
-                _endOffset = parsed;
-            }
+        _startOffset = startOffset;
+        _endOffset = endOffset;
 
-            OnPropertyChanged(nameof(Timeline));
+        if (startChanged) {
             OnPropertyChanged(nameof(StartOffset));
+            OnPropertyChanged(nameof(Timeline));
+        }
+
+        if (endChanged) {
             OnPropertyChanged(nameof(EndOffset));
         }
     }
@@ -173,6 +174,43 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
             }
 
             _isManuallyReviewed = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string SpeakerLabelSource {
+        get => _speakerLabelSource;
+        set {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (string.Equals(_speakerLabelSource, normalized, StringComparison.Ordinal)) {
+                return;
+            }
+
+            _speakerLabelSource = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public int? DiarizationRevision {
+        get => _diarizationRevision;
+        set {
+            if (_diarizationRevision == value) {
+                return;
+            }
+
+            _diarizationRevision = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public int? LastDiarizedChunkIndex {
+        get => _lastDiarizedChunkIndex;
+        set {
+            if (_lastDiarizedChunkIndex == value) {
+                return;
+            }
+
+            _lastDiarizedChunkIndex = value;
             OnPropertyChanged();
         }
     }

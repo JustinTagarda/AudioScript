@@ -29,33 +29,31 @@ public sealed class FinalizedTranscriptLineViewModelTests {
     }
 
     [Fact]
-    public void TimelineSetter_ShiftsStartAndPreservesDuration() {
+    public void Timeline_ReturnsFormattedStartOffset() {
         var line = new FinalizedTranscriptLineViewModel(
             startOffset: TimeSpan.FromSeconds(53),
             endOffset: TimeSpan.FromSeconds(64),
             isTimestampEstimated: false,
             text: "Sample");
 
-        line.Timeline = "01:20";
-
-        Assert.Equal(TimeSpan.FromSeconds(80), line.StartOffset);
-        Assert.Equal(TimeSpan.FromSeconds(91), line.EndOffset);
-        Assert.Equal("01:20", line.Timeline);
+        Assert.Equal("00:53", line.Timeline);
     }
 
     [Fact]
-    public void TimelineSetter_InvalidValue_RevertsToExistingTimeline() {
+    public void SetTimelineOffsets_UpdatesOffsetsAndTimeline() {
         var line = new FinalizedTranscriptLineViewModel(
             startOffset: TimeSpan.FromSeconds(53),
             endOffset: TimeSpan.FromSeconds(64),
             isTimestampEstimated: false,
             text: "Sample");
 
-        line.Timeline = "01:99";
+        line.SetTimelineOffsets(
+            TimeSpan.FromSeconds(75),
+            TimeSpan.FromSeconds(90));
 
-        Assert.Equal(TimeSpan.FromSeconds(53), line.StartOffset);
-        Assert.Equal(TimeSpan.FromSeconds(64), line.EndOffset);
-        Assert.Equal("00:53", line.Timeline);
+        Assert.Equal(TimeSpan.FromSeconds(75), line.StartOffset);
+        Assert.Equal(TimeSpan.FromSeconds(90), line.EndOffset);
+        Assert.Equal("01:15", line.Timeline);
     }
 }
 

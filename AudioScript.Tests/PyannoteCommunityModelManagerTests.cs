@@ -1,0 +1,233 @@
+using System.Runtime.InteropServices;
+using System.Text;
+using AudioScript.Abstractions;
+using AudioScript.Audio;
+using AudioScript.Services;
+using Xunit;
+
+namespace AudioScript.Tests;
+
+public sealed class PyannoteCommunityModelManagerTests
+{
+    [Fact]
+    public void EnsureInstalled_Succeeds_WhenBundledAssetsExist()
+    {
+        string assetsPath = CreateTempDirectory();
+
+        try
+        {
+            CreatePyannoteAssets(assetsPath, Architecture.X64);
+
+            var manager = new PyannoteCommunityModelManager(
+                assetsPath,
+                architectureResolver: () => Architecture.X64);
+
+            manager.EnsureInstalled();
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Fact]
+    public void EnsureInstalled_Throws_WhenModelIsMissing()
+    {
+        string assetsPath = CreateTempDirectory();
+
+        try
+        {
+            CreateRunnerScript(assetsPath);
+            CreatePythonRuntime(assetsPath, "win-x64");
+            var manager = new PyannoteCommunityModelManager(
+                assetsPath,
+                architectureResolver: () => Architecture.X64);
+
+            Assert.Throws<DirectoryNotFoundException>(manager.EnsureInstalled);
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Theory]
+    [InlineData("x64")]
+    [InlineData("arm64")]
+    public void RuntimePaths_SelectArchitectureSpecificRuntime(string architecture)
+    {
+        string assetsPath = CreateTempDirectory();
+
+        try
+        {
+            Architecture processArchitecture = architecture == "arm64"
+                ? Architecture.Arm64
+                : Architecture.X64;
+            string expectedRuntime = architecture == "arm64"
+                ? "win-arm64"
+                : "win-x64";
+            CreatePyannoteAssets(assetsPath, processArchitecture);
+
+            var manager = new PyannoteCommunityModelManager(
+                assetsPath,
+                architectureResolver: () => processArchitecture);
+
+            Assert.Equal(Path.Combine(assetsPath, "python", expectedRuntime), manager.RuntimeDirectoryPath);
+            Assert.Equal(Path.Combine(assetsPath, "python", expectedRuntime, "python.exe"), manager.PythonExecutablePath);
+            manager.EnsureInstalled();
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Fact]
+    public async Task DiarizeAudioFileAsync_UsesBundledPythonAndMapsSpeakers()
+    {
+        string assetsPath = CreateTempDirectory();
+        string audioPath = CreateSilentWaveFile(TimeSpan.FromSeconds(2));
+
+        try
+        {
+            CreatePyannoteAssets(assetsPath, Architecture.X64);
+            var manager = new PyannoteCommunityModelManager(
+                assetsPath,
+                architectureResolver: () => Architecture.X64);
+            var runner = new StubPyannoteCommunityProcessRunner(
+                """[{"speaker":"SPEAKER_00","start":0.1,"end":1.2},{"speaker":"custom","start":1.3,"end":2.0}]""");
+            using var logs = new ProcessLogService();
+            var engine = new PyannoteCommunityDiarizationEngine(
+                new AudioStandardizer(),
+                manager,
+                logs,
+                runner);
+
+            IReadOnlyList<SpeakerDiarizationTurn> turns = await engine.DiarizeAudioFileAsync(
+                audioPath,
+                CancellationToken.None);
+
+            Assert.Equal(new[] { "speaker_1", "speaker_2" }, turns.Select(turn => turn.Speaker).ToArray());
+            Assert.Equal(manager.PythonExecutablePath, runner.PythonExecutablePath);
+            Assert.Equal(manager.RunnerScriptPath, runner.RunnerScriptPath);
+            Assert.Equal(manager.ModelDirectoryPath, runner.ModelDirectoryPath);
+            Assert.True(runner.WasAudioFileAvailableAtRun);
+        }
+        finally
+        {
+            File.Delete(audioPath);
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    private static void CreatePyannoteAssets(string assetsPath, Architecture architecture)
+    {
+        CreateRunnerScript(assetsPath);
+        CreateModelDirectory(assetsPath);
+        CreatePythonRuntime(assetsPath, architecture == Architecture.Arm64 ? "win-arm64" : "win-x64");
+    }
+
+    private static void CreateModelDirectory(string assetsPath)
+    {
+        string modelPath = Path.Combine(assetsPath, "pyannote", "speaker-diarization-community-1");
+        Directory.CreateDirectory(modelPath);
+        File.WriteAllText(Path.Combine(modelPath, "config.yaml"), "pipeline: community-1");
+    }
+
+    private static void CreateRunnerScript(string assetsPath)
+    {
+        string runnerPath = Path.Combine(assetsPath, "pyannote", "run_community_diarization.py");
+        Directory.CreateDirectory(Path.GetDirectoryName(runnerPath)!);
+        File.WriteAllText(runnerPath, "print('stub')");
+    }
+
+    private static void CreatePythonRuntime(string assetsPath, string runtimeDirectoryName)
+    {
+        string runtimePath = Path.Combine(assetsPath, "python", runtimeDirectoryName);
+        Directory.CreateDirectory(runtimePath);
+        File.WriteAllText(Path.Combine(runtimePath, "python.exe"), string.Empty);
+    }
+
+    private static string CreateTempDirectory()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "assets", $"AudioScript-pyannote-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static void DeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        Directory.Delete(path, recursive: true);
+    }
+
+    private static string CreateSilentWaveFile(TimeSpan duration)
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"AudioScript-pyannote-smoke-{Guid.NewGuid():N}.wav");
+        int sampleRate = 16000;
+        short channels = 1;
+        short bitsPerSample = 16;
+        short blockAlign = (short)(channels * (bitsPerSample / 8));
+        int byteRate = sampleRate * blockAlign;
+        long dataBytes = (long)Math.Ceiling(duration.TotalSeconds * byteRate);
+
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write((int)(36 + dataBytes));
+        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+        writer.Write(Encoding.ASCII.GetBytes("fmt "));
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(sampleRate);
+        writer.Write(byteRate);
+        writer.Write(blockAlign);
+        writer.Write(bitsPerSample);
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write((int)dataBytes);
+        stream.SetLength(44 + dataBytes);
+
+        return path;
+    }
+
+    private sealed class StubPyannoteCommunityProcessRunner : IPyannoteCommunityProcessRunner
+    {
+        private readonly string _standardOutput;
+
+        public StubPyannoteCommunityProcessRunner(string standardOutput)
+        {
+            _standardOutput = standardOutput;
+        }
+
+        public string? PythonExecutablePath { get; private set; }
+
+        public string? RunnerScriptPath { get; private set; }
+
+        public string? ModelDirectoryPath { get; private set; }
+
+        public string? AudioFilePath { get; private set; }
+
+        public bool WasAudioFileAvailableAtRun { get; private set; }
+
+        public Task<PyannoteCommunityProcessResult> RunAsync(
+            string pythonExecutablePath,
+            string runnerScriptPath,
+            string modelDirectoryPath,
+            string audioFilePath,
+            CancellationToken cancellationToken)
+        {
+            PythonExecutablePath = pythonExecutablePath;
+            RunnerScriptPath = runnerScriptPath;
+            ModelDirectoryPath = modelDirectoryPath;
+            AudioFilePath = audioFilePath;
+            WasAudioFileAvailableAtRun = File.Exists(audioFilePath);
+            return Task.FromResult(new PyannoteCommunityProcessResult(0, _standardOutput, string.Empty));
+        }
+    }
+}

@@ -27,15 +27,17 @@
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.0" />
     <PackageReference Include="SharpVectors.Wpf" Version="1.8.5" />
     <PackageReference Include="Whisper.net.AllRuntimes" Version="1.9.0" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="AudioScript.Tests\\**\\*.cs" />
+    <Compile Remove="assets\\python\\**\\*.cs" />
     <EmbeddedResource Remove="AudioScript.Tests\\**\\*" />
+    <EmbeddedResource Remove="assets\\python\\**\\*" />
     <Page Remove="AudioScript.Tests\\**\\*" />
+    <Page Remove="assets\\python\\**\\*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -53,7 +55,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="assets\models\sherpa-diarization\**\*">
+    <Content Include="assets\pyannote\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="assets\python\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

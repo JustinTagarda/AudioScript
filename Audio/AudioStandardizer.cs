@@ -13,7 +13,7 @@ public sealed class AudioStandardizer {
             Path.GetTempPath(),
             $"AudioScript-{Guid.NewGuid():N}.wav");
 
-        using var reader = new AudioFileReader(sourceFilePath);
+        using WaveStream reader = CreateSourceReader(sourceFilePath);
         using var resampler = new MediaFoundationResampler(reader, AudioFormatConstants.EngineWaveFormat) {
             ResamplerQuality = 60,
         };
@@ -55,6 +55,19 @@ public sealed class AudioStandardizer {
             && left.Channels == right.Channels
             && left.BlockAlign == right.BlockAlign
             && left.AverageBytesPerSecond == right.AverageBytesPerSecond;
+    }
+
+    private static WaveStream CreateSourceReader(string sourceFilePath) {
+        return IsLiveRecordingManifestPath(sourceFilePath)
+            ? new SegmentedLiveRecordingWaveStream(sourceFilePath)
+            : new AudioFileReader(sourceFilePath);
+    }
+
+    private static bool IsLiveRecordingManifestPath(string sourceFilePath) {
+        return string.Equals(Path.GetFileName(sourceFilePath), "manifest.json", StringComparison.OrdinalIgnoreCase)
+            && sourceFilePath.Contains(
+                Path.Combine("audio", "live"),
+                StringComparison.OrdinalIgnoreCase);
     }
 }
 

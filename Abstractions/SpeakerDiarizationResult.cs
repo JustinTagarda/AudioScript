@@ -5,6 +5,6 @@ public sealed record SpeakerDiarizationResult(
     string Model,
     DateTimeOffset CreatedAt,
     TimeSpan? Duration,
-    IReadOnlyList<SpeakerDiarizationSegment> Segments
+    IReadOnlyList<SpeakerDiarizationSegment> Segments,
+    bool UsedHeuristicFallback = false
 );
-

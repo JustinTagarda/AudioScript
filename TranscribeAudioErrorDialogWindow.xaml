@@ -1,0 +1,58 @@
+<Window x:Class="AudioScript.TranscribeAudioErrorDialogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Transcribe Audio failed"
+        Icon="pack://application:,,,/assets/AudioScript.ico"
+        Width="560"
+        MinWidth="560"
+        MinHeight="260"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Padding="14">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Text="Transcribe Audio failed"
+                           Grid.Row="0"
+                           FontSize="22"/>
+                <ScrollViewer Grid.Row="1"
+                              Margin="0,10,0,0"
+                              MaxHeight="280"
+                              HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Auto"
+                              CanContentScroll="False">
+                    <TextBlock x:Name="ErrorMessageText"
+                               FontSize="13"
+                               TextWrapping="Wrap"/>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,10,0,0">
+            <Button Content="OK"
+                    Width="96"
+                    MinHeight="34"
+                    Tag="&#xE73E;"
+                    Style="{StaticResource ToolbarButtonStyle}"
+                    Click="OkButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

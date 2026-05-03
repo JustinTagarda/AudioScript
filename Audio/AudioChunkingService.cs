@@ -1,5 +1,6 @@
 using System.IO;
 using AudioScript.Abstractions;
+using AudioScript.Services;
 using NAudio.Wave;
 
 namespace AudioScript.Audio;
@@ -77,6 +78,76 @@ public sealed class AudioChunkingService {
         }
     }
 
+    public ChunkedAudioFile PrepareFixedChunks(
+        AudioSourceInfo sourceInfo,
+        TimeSpan chunkDuration,
+        TimeSpan overlapDuration) {
+        ArgumentNullException.ThrowIfNull(sourceInfo);
+        if (chunkDuration <= TimeSpan.Zero) {
+            throw new ArgumentOutOfRangeException(nameof(chunkDuration), "Chunk duration must be greater than zero.");
+        }
+
+        if (overlapDuration < TimeSpan.Zero || overlapDuration >= chunkDuration) {
+            throw new ArgumentOutOfRangeException(nameof(overlapDuration), "Overlap duration must be non-negative and shorter than the chunk duration.");
+        }
+
+        string standardizedWavePath = _audioStandardizer.ConvertFileToEngineWav(sourceInfo.FullPath);
+        var temporaryFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            standardizedWavePath,
+        };
+
+        try {
+            var chunkFiles = new List<AudioChunkFile>();
+            TimeSpan keepStart = TimeSpan.Zero;
+            int index = 0;
+            while (keepStart < sourceInfo.Duration) {
+                TimeSpan keepEnd = keepStart + chunkDuration;
+                if (keepEnd > sourceInfo.Duration) {
+                    keepEnd = sourceInfo.Duration;
+                }
+
+                TimeSpan requestStart = index == 0
+                    ? keepStart
+                    : keepStart - overlapDuration;
+                if (requestStart < TimeSpan.Zero) {
+                    requestStart = TimeSpan.Zero;
+                }
+
+                TimeSpan requestEnd = keepEnd < sourceInfo.Duration
+                    ? keepEnd + overlapDuration
+                    : sourceInfo.Duration;
+
+                var plan = new AudioChunkPlan(
+                    Index: index,
+                    RequestStart: requestStart,
+                    RequestEnd: requestEnd,
+                    KeepStart: keepStart,
+                    KeepEnd: keepEnd);
+                string chunkFilePath = _waveClipExtractor.ExtractTemporaryWaveFile(
+                    standardizedWavePath,
+                    plan.RequestStart,
+                    plan.RequestEnd,
+                    $"speaker-diarization-chunk-{index + 1}");
+                temporaryFiles.Add(chunkFilePath);
+                chunkFiles.Add(new AudioChunkFile(plan, chunkFilePath));
+
+                keepStart = keepEnd;
+                index++;
+            }
+
+            return new ChunkedAudioFile(
+                sourceInfo,
+                standardizedWavePath,
+                Array.Empty<TimeSpanRange>(),
+                chunkFiles,
+                temporaryFiles);
+        }
+        catch {
+            CleanupTemporaryFiles(temporaryFiles, _ => { });
+            throw;
+        }
+    }
+
     public static TimeSpan ResolveMidpoint(TimeSpan start, TimeSpan? end) {
         TimeSpan resolvedEnd = end is null || end <= start
             ? start
@@ -113,8 +184,23 @@ public sealed class AudioChunkingService {
     }
 
     private static TimeSpan ResolveAudioDuration(string audioFilePath) {
+        if (IsLiveRecordingManifestPath(audioFilePath)) {
+            LiveRecordingManifest manifest = TranscriptSessionStore.LoadLiveRecordingManifest(audioFilePath);
+            double durationSeconds = manifest.TotalDurationSeconds > 0
+                ? manifest.TotalDurationSeconds
+                : manifest.Segments.Sum(segment => segment.DurationSeconds);
+            return TimeSpan.FromSeconds(Math.Max(0, durationSeconds));
+        }
+
         using var reader = new AudioFileReader(audioFilePath);
         return reader.TotalTime;
+    }
+
+    private static bool IsLiveRecordingManifestPath(string sourceFilePath) {
+        return string.Equals(Path.GetFileName(sourceFilePath), "manifest.json", StringComparison.OrdinalIgnoreCase)
+            && sourceFilePath.Contains(
+                Path.Combine("audio", "live"),
+                StringComparison.OrdinalIgnoreCase);
     }
 }
 

@@ -78,7 +78,25 @@ public sealed class OfflineSpeakerDiarizationServiceTests {
             new TranscriptionTimedLine("reply", TimeSpan.FromSeconds(1.8), TimeSpan.FromSeconds(2.5), false),
         ]);
         var service = new OfflineSpeakerDiarizationService(
-            new FailingSpeakerDiarizationEngine(),
+            new FailingSpeakerDiarizationEngine(new FileNotFoundException("missing bundled pyannote asset")),
+            new ProcessLogService());
+
+        SpeakerDiarizationResult result = await service.ApplySpeakerLabelsAsync(
+            "test.wav",
+            transcriptionResult,
+            CancellationToken.None);
+
+        Assert.Equal(new[] { "speaker_1", "speaker_2" }, result.Segments.Select(segment => segment.Speaker).ToArray());
+    }
+
+    [Fact]
+    public async Task DiarizeAudioFileAsync_FallsBackToHeuristic_WhenBundledPyannoteDirectoryIsMissing() {
+        TranscriptionResult transcriptionResult = CreateTranscriptionResult([
+            new TranscriptionTimedLine("hello.", TimeSpan.Zero, TimeSpan.FromSeconds(1), false),
+            new TranscriptionTimedLine("reply", TimeSpan.FromSeconds(1.8), TimeSpan.FromSeconds(2.5), false),
+        ]);
+        var service = new OfflineSpeakerDiarizationService(
+            new FailingSpeakerDiarizationEngine(new DirectoryNotFoundException("Bundled pyannote Community-1 model was not found.")),
             new ProcessLogService());
 
         SpeakerDiarizationResult result = await service.ApplySpeakerLabelsAsync(
@@ -134,11 +152,17 @@ public sealed class OfflineSpeakerDiarizationServiceTests {
     }
 
     private sealed class FailingSpeakerDiarizationEngine : ISpeakerDiarizationEngine {
+        private readonly Exception _exception;
+
+        public FailingSpeakerDiarizationEngine(Exception exception) {
+            _exception = exception;
+        }
+
         public Task<IReadOnlyList<SpeakerDiarizationTurn>> DiarizeAudioFileAsync(
             string audioFilePath,
             CancellationToken cancellationToken,
             IProgress<SpeakerDiarizationProgress>? progress = null) {
-            throw new FileNotFoundException("missing bundled sherpa asset");
+            throw _exception;
         }
     }
 }

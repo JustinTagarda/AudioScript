@@ -8,7 +8,8 @@ public sealed class WaveClipExtractor {
         string sourceWavePath,
         TimeSpan start,
         TimeSpan end,
-        string fileLabel) {
+        string fileLabel,
+        TimeSpan leadingSilence = default) {
         if (string.IsNullOrWhiteSpace(sourceWavePath)) {
             throw new ArgumentException("Source wave path is required.", nameof(sourceWavePath));
         }
@@ -20,6 +21,7 @@ public sealed class WaveClipExtractor {
 
         TimeSpan normalizedStart = start < TimeSpan.Zero ? TimeSpan.Zero : start;
         TimeSpan normalizedEnd = end < normalizedStart ? normalizedStart : end;
+        TimeSpan normalizedLeadingSilence = leadingSilence < TimeSpan.Zero ? TimeSpan.Zero : leadingSilence;
         if (normalizedEnd <= normalizedStart) {
             throw new InvalidOperationException("Audio clip start time must be earlier than the end time.");
         }
@@ -39,6 +41,8 @@ public sealed class WaveClipExtractor {
         reader.Position = startPosition;
         using var writer = new WaveFileWriter(tempPath, reader.WaveFormat);
 
+        WriteSilence(writer, reader.WaveFormat, normalizedLeadingSilence);
+
         byte[] buffer = new byte[81920];
         while (reader.Position < endPosition) {
             int bytesToRead = (int)Math.Min(buffer.Length, endPosition - reader.Position);
@@ -53,18 +57,36 @@ public sealed class WaveClipExtractor {
         return tempPath;
     }
 
+    private static void WriteSilence(WaveFileWriter writer, WaveFormat format, TimeSpan duration) {
+        long bytesRemaining = ResolveAlignedByteCount(format, duration);
+        if (bytesRemaining <= 0) {
+            return;
+        }
+
+        byte[] silenceBuffer = new byte[(int)Math.Min(81920, bytesRemaining)];
+        while (bytesRemaining > 0) {
+            int bytesToWrite = (int)Math.Min(silenceBuffer.Length, bytesRemaining);
+            writer.Write(silenceBuffer, 0, bytesToWrite);
+            bytesRemaining -= bytesToWrite;
+        }
+    }
+
     private static long ResolveBytePosition(WaveFormat format, TimeSpan offset, long maxLength) {
+        long rawPosition = ResolveAlignedByteCount(format, offset);
+        return Math.Clamp(rawPosition, 0, maxLength);
+    }
+
+    private static long ResolveAlignedByteCount(WaveFormat format, TimeSpan duration) {
         long rawPosition = (long)Math.Round(
-            offset.TotalSeconds * format.AverageBytesPerSecond,
+            duration.TotalSeconds * format.AverageBytesPerSecond,
             MidpointRounding.AwayFromZero);
-        rawPosition = Math.Clamp(rawPosition, 0, maxLength);
 
         int remainder = (int)(rawPosition % format.BlockAlign);
         if (remainder != 0) {
             rawPosition -= remainder;
         }
 
-        return Math.Clamp(rawPosition, 0, maxLength);
+        return Math.Max(rawPosition, 0);
     }
 
     private static string SanitizeLabel(string fileLabel) {
