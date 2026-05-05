@@ -782,7 +782,8 @@ public sealed record TranscriptSessionSummary(
     DateTimeOffset CreatedUtc,
     DateTimeOffset UpdatedUtc,
     string OriginalFileName,
-    bool HasStoredAudio
+    bool HasStoredAudio,
+    bool IsLoaded = false
 );
 
 public sealed record TranscriptSessionLoadResult(

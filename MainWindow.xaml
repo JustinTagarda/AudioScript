@@ -47,18 +47,6 @@
         <Style x:Key="FluentListBoxItemStyle"
                TargetType="{x:Type ListBoxItem}"
                BasedOn="{StaticResource {x:Type ListBoxItem}}"/>
-        <Style x:Key="SessionsListBoxItemStyle"
-               TargetType="{x:Type ListBoxItem}"
-               BasedOn="{StaticResource FluentListBoxItemStyle}">
-            <Setter Property="Margin"
-                    Value="0,0,0,4"/>
-            <Setter Property="Padding"
-                    Value="12,10,4,10"/>
-            <Setter Property="HorizontalContentAlignment"
-                    Value="Stretch"/>
-            <Setter Property="VerticalContentAlignment"
-                    Value="Center"/>
-        </Style>
         <Style x:Key="SessionsRowOpenButtonStyle"
                TargetType="{x:Type Button}">
             <Setter Property="Width"
@@ -98,6 +86,7 @@
                                 CornerRadius="4">
                             <TextBlock x:Name="IconText"
                                        Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                       Foreground="{TemplateBinding Foreground}"
                                        Text="{TemplateBinding Tag}"
                                        Margin="0"
                                        HorizontalAlignment="Center"
@@ -117,6 +106,88 @@
                                         Value="0.45"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SessionsCardBorderStyle"
+               TargetType="{x:Type Border}">
+            <Setter Property="BorderThickness"
+                    Value="1"/>
+            <Setter Property="BorderBrush"
+                    Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+            <Setter Property="Background"
+                    Value="{x:Null}"/>
+            <Setter Property="CornerRadius"
+                    Value="6"/>
+            <Setter Property="Padding"
+                    Value="12,10,4,10"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsLoaded}"
+                             Value="True">
+                    <Setter Property="BorderBrush"
+                            Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                    <Setter Property="Background"
+                            Value="{DynamicResource SessionsCardLoadedBackgroundBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SessionsCardTextBlockStyle"
+               TargetType="{x:Type TextBlock}"
+               BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="Foreground"
+                    Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsLoaded}"
+                             Value="True">
+                    <Setter Property="Foreground"
+                            Value="{DynamicResource SessionsCardLoadedForegroundBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SessionsCardOpenButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource SessionsRowOpenButtonStyle}">
+            <Setter Property="Foreground"
+                    Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsLoaded}"
+                             Value="True">
+                    <Setter Property="Foreground"
+                            Value="{DynamicResource SessionsCardLoadedForegroundBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="SessionsListBoxItemStyle"
+               TargetType="{x:Type ListBoxItem}"
+               BasedOn="{StaticResource FluentListBoxItemStyle}">
+            <Setter Property="Margin"
+                    Value="0,0,0,6"/>
+            <Setter Property="Padding"
+                    Value="0"/>
+            <Setter Property="Background"
+                    Value="Transparent"/>
+            <Setter Property="BorderBrush"
+                    Value="{x:Null}"/>
+            <Setter Property="BorderThickness"
+                    Value="0"/>
+            <Setter Property="HorizontalContentAlignment"
+                    Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment"
+                    Value="Center"/>
+            <Setter Property="FocusVisualStyle"
+                    Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ListBoxItem}">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                        </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -467,7 +538,12 @@
                     </Grid.ColumnDefinitions>
 
                     <Border Grid.Column="0"
-                            Padding="6">
+                            Margin="0,0,6,0"
+                            Padding="6"
+                            BorderThickness="1"
+                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                            Background="{x:Null}"
+                            CornerRadius="6">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -491,6 +567,7 @@
                                 <ListBox ItemsSource="{Binding RecentSessions}"
                                          SelectedItem="{Binding SelectedRecentSession, Mode=TwoWay}"
                                          HorizontalContentAlignment="Stretch"
+                                         Background="{x:Null}"
                                          ItemContainerStyle="{StaticResource SessionsListBoxItemStyle}"
                                          PreviewMouseLeftButtonDown="RecentSessionsList_PreviewMouseLeftButtonDown"
                                          MouseDoubleClick="RecentSessionsList_MouseDoubleClick"
@@ -498,43 +575,48 @@
 
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid ToolTip="{Binding DisplayName}">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
+                                            <Border Style="{StaticResource SessionsCardBorderStyle}"
+                                                    ToolTip="{Binding DisplayName}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
 
-                                                <StackPanel Grid.Column="0">
-                                                    <TextBlock Text="{Binding OriginalFileName}"
-                                                               FontSize="12"
-                                                               FontWeight="SemiBold"
-                                                               TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="{Binding UpdatedUtc, StringFormat=Updated {0:MMM dd, yyyy h:mm tt}}"
-                                                               Margin="0,3,0,0"
-                                                               FontSize="10.5"
-                                                               TextTrimming="CharacterEllipsis"/>
-                                                </StackPanel>
+                                                    <StackPanel Grid.Column="0">
+                                                        <TextBlock Style="{StaticResource SessionsCardTextBlockStyle}"
+                                                                   Text="{Binding OriginalFileName}"
+                                                                   FontSize="12"
+                                                                   FontWeight="SemiBold"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Style="{StaticResource SessionsCardTextBlockStyle}"
+                                                                   Text="{Binding UpdatedUtc, StringFormat=Updated {0:MMM dd, yyyy h:mm tt}}"
+                                                                   Margin="0,3,0,0"
+                                                                   FontSize="10.5"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
 
-                                                <Button Grid.Column="1"
-                                                        Tag="&#xE8A7;"
-                                                        ToolTip="Open session"
-                                                        Click="RecentSessionOpenButton_Click">
-                                                    <Button.Style>
-                                                        <Style TargetType="Button"
-                                                               BasedOn="{StaticResource SessionsRowOpenButtonStyle}">
-                                                            <Setter Property="Visibility"
-                                                                    Value="Visible"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}"
-                                                                             Value="True">
-                                                                    <Setter Property="Visibility"
-                                                                            Value="Collapsed"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Button.Style>
-                                                </Button>
-                                            </Grid>
+                                                    <Button Grid.Column="1"
+                                                            Tag="&#xE8A7;"
+                                                            ToolTip="Open session"
+                                                            Click="RecentSessionOpenButton_Click">
+                                                        <Button.Style>
+                                                            <Style TargetType="Button"
+                                                                   BasedOn="{StaticResource SessionsCardOpenButtonStyle}">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Visible"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsLoaded}"
+                                                                                 Value="True">
+                                                                        <Setter Property="Visibility"
+                                                                                Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Button.Style>
+                                                    </Button>
+                                                </Grid>
+                                            </Border>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
@@ -577,8 +659,11 @@
                 </Border>
 
                     <Border Grid.Column="2"
-                            Padding="6"
-                            Margin="0">
+                            Margin="0"
+                            BorderThickness="1"
+                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                            Background="{x:Null}"
+                            CornerRadius="6">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
@@ -603,6 +688,7 @@
                                         <DataGrid x:Name="FinalizedTranscriptGrid"
                                                   ItemsSource="{Binding CurrentTranscriptLines}"
                                                   Style="{StaticResource FluentDataGridStyle}"
+                                                  BorderThickness="0,0,0,1"
                                                   AutoGenerateColumns="False"
                                                   CanUserAddRows="False"
                                                   CanUserDeleteRows="False"
@@ -625,23 +711,50 @@
                                             </DataGrid.Resources>
 
                                             <DataGrid.Columns>
-                                                <DataGridTextColumn x:Name="TimelineTranscriptColumn"
-                                                                    Header="Timeline"
-                                                                    Binding="{Binding Timeline}"
-                                                                    CanUserSort="False"
-                                                                    IsReadOnly="True"
-                                                                    Width="78">
-                                                    <DataGridTextColumn.ElementStyle>
-                                                        <Style TargetType="{x:Type TextBlock}">
-                                                            <Setter Property="Margin"
-                                                                    Value="4,0"/>
-                                                            <Setter Property="TextAlignment"
-                                                                    Value="Left"/>
-                                                            <Setter Property="HorizontalAlignment"
-                                                                    Value="Left"/>
-                                                        </Style>
-                                                    </DataGridTextColumn.ElementStyle>
-                                                </DataGridTextColumn>
+                                                <DataGridTemplateColumn x:Name="TimelineTranscriptColumn"
+                                                                        Header="Timeline"
+                                                                        CanUserSort="False"
+                                                                        IsReadOnly="True"
+                                                                        Width="78">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <Border Margin="6,0,0,0"
+                                                                    Padding="4,1"
+                                                                    CornerRadius="4">
+                                                                <Border.Style>
+                                                                    <Style TargetType="Border">
+                                                                        <Setter Property="Background"
+                                                                                Value="Transparent"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsPlaybackTimelineMatch}"
+                                                                                         Value="True">
+                                                                                <Setter Property="Background"
+                                                                                        Value="#FFBFDF"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
+                                                                <TextBlock Text="{Binding Timeline}"
+                                                                           TextAlignment="Left"
+                                                                           HorizontalAlignment="Left">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Setter Property="Foreground"
+                                                                                    Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsPlaybackTimelineMatch}"
+                                                                                             Value="True">
+                                                                                    <Setter Property="Foreground"
+                                                                                            Value="Black"/>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
                                                 <DataGridTextColumn x:Name="SpeakerColumn"
                                                                     Header="Speaker"
                                                                     Binding="{Binding SpeakerLabel}"
@@ -772,11 +885,12 @@
                         </Border>
 
                         <Border Grid.Row="1"
-                                Margin="0,8,0,0"
+                                Margin="0"
                                 Padding="8"
                                 CornerRadius="6"
-                                BorderThickness="1"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+                                BorderThickness="0"
+                                BorderBrush="{x:Null}"
+                                Background="{x:Null}">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>

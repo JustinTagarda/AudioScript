@@ -1582,6 +1582,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         ApplyFloatingSurfaceTheme();
         ApplySelectionControlTheme();
+        ApplySessionsCardTheme();
     }
 
     private void CancelCopyToast()
@@ -1637,6 +1638,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 ApplyFloatingSurfaceTheme();
                 ApplySelectionControlTheme();
+                ApplySessionsCardTheme();
             }), DispatcherPriority.Background);
             return;
         }
@@ -1732,6 +1734,37 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         System.Windows.Application.Current.Resources["SelectionControlForegroundBrush"] = selectionBrush;
+    }
+
+    private void ApplySessionsCardTheme()
+    {
+        if (System.Windows.Application.Current is null)
+        {
+            return;
+        }
+
+        bool darkTheme = IsDarkThemeActive();
+        var backgroundBrush = new SolidColorBrush(
+            darkTheme
+                ? System.Windows.Media.Color.FromRgb(217, 217, 217)
+                : System.Windows.Media.Color.FromRgb(64, 64, 64));
+        var foregroundBrush = new SolidColorBrush(
+            darkTheme
+                ? System.Windows.Media.Colors.Black
+                : System.Windows.Media.Colors.White);
+
+        if (backgroundBrush.CanFreeze)
+        {
+            backgroundBrush.Freeze();
+        }
+
+        if (foregroundBrush.CanFreeze)
+        {
+            foregroundBrush.Freeze();
+        }
+
+        System.Windows.Application.Current.Resources["SessionsCardLoadedBackgroundBrush"] = backgroundBrush;
+        System.Windows.Application.Current.Resources["SessionsCardLoadedForegroundBrush"] = foregroundBrush;
     }
 
     private bool IsDarkThemeActive()

@@ -3168,11 +3168,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             }
         }
 
+        string? loadedSessionId = _currentSessionDocument?.SessionId;
+
         RecentSessions.Clear();
 
         foreach (TranscriptSessionSummary session in sessions)
         {
-            RecentSessions.Add(session);
+            RecentSessions.Add(session with
+            {
+                IsLoaded = !string.IsNullOrWhiteSpace(loadedSessionId)
+                    && string.Equals(session.SessionId, loadedSessionId, StringComparison.OrdinalIgnoreCase)
+            });
         }
 
         NotifyPropertyChanged(nameof(HasRecentSessions));
