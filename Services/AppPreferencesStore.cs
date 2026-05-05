@@ -60,8 +60,8 @@ public sealed class AppPreferencesStore {
                 LiveAudioSourceKind: ParseLiveAudioSourceKind(persisted.LiveAudioSourceKind),
                 LiveAudioDeviceNumber: persisted.LiveAudioDeviceNumber ?? -1,
                 SelectedEngineId: NormalizeSelectedEngineId(persisted.SelectedEngineId),
-                LiveAudioAutoGainEnabled: true,
-                LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel);
+                LiveAudioAutoGainEnabled: persisted.LiveAudioAutoGainEnabled ?? true,
+                LiveAudioGainLevel: NormalizeLiveAudioGainLevel(persisted.LiveAudioGainLevel));
         }
         catch {
             return new AppPreferencesSnapshot(
@@ -90,8 +90,8 @@ public sealed class AppPreferencesStore {
                 LiveAudioSourceKind = snapshot.LiveAudioSourceKind.ToString(),
                 LiveAudioDeviceNumber = snapshot.LiveAudioDeviceNumber,
                 SelectedEngineId = snapshot.SelectedEngineId,
-                LiveAudioAutoGainEnabled = true,
-                LiveAudioGainLevel = LiveAudioGainOptions.DefaultManualGainLevel,
+                LiveAudioAutoGainEnabled = snapshot.LiveAudioAutoGainEnabled,
+                LiveAudioGainLevel = NormalizeLiveAudioGainLevel(snapshot.LiveAudioGainLevel),
             };
 
             string json = JsonSerializer.Serialize(persisted, JsonOptions);
@@ -149,6 +149,16 @@ public sealed class AppPreferencesStore {
 
     private static string BuildLegacyMinimumWhisperId() {
         return string.Concat("whisper", "-", "base");
+    }
+
+    private static double NormalizeLiveAudioGainLevel(double? value)
+    {
+        if (!value.HasValue || !double.IsFinite(value.Value))
+        {
+            return LiveAudioGainOptions.DefaultManualGainLevel;
+        }
+
+        return Math.Clamp(value.Value, 0, 1);
     }
 
     private sealed class PersistedAppPreferences {

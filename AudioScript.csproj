@@ -32,6 +32,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="bin\\**\\*.cs" />
+    <Compile Remove="obj\\**\\*.cs" />
+    <Compile Remove="artifacts\\**\\*.cs" />
+    <Compile Remove="publish\\**\\*.cs" />
     <Compile Remove="AudioScript.Tests\\**\\*.cs" />
     <Compile Remove="assets\\python\\**\\*.cs" />
     <EmbeddedResource Remove="AudioScript.Tests\\**\\*" />

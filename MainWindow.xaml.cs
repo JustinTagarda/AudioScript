@@ -21,7 +21,6 @@ using AudioScript.Services;
 using AudioScript.ViewModels;
 using DataGridCell = System.Windows.Controls.DataGridCell;
 using DataGridCellsPresenter = System.Windows.Controls.Primitives.DataGridCellsPresenter;
-using NAudio.CoreAudioApi;
 
 namespace AudioScript;
 
@@ -45,12 +44,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static readonly TimeSpan RowFileTranscriptionContextTailMargin = TimeSpan.FromMilliseconds(500);
     public static readonly RoutedUICommand TranscribeRowCommand =
         new("Transcribe this row", nameof(TranscribeRowCommand), typeof(MainWindow));
-    public static readonly RoutedUICommand DeleteRowCommand =
-        new("Delete row", nameof(DeleteRowCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand CombineToPreviousRowCommand =
+        new("Combine to previous row", nameof(CombineToPreviousRowCommand), typeof(MainWindow));
     public static readonly RoutedUICommand RenameSpeakerCommand =
         new("Rename Speaker To", nameof(RenameSpeakerCommand), typeof(MainWindow));
     public static readonly RoutedUICommand CopyRowTextCommand =
         new("Copy row text", nameof(CopyRowTextCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand SeparateRowCommand =
+        new("Separate into 2 rows", nameof(SeparateRowCommand), typeof(MainWindow));
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.FromMilliseconds(400);
     private bool _isApplyingTranscriptEditLoopSeek;
@@ -806,56 +807,29 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var options = new List<AudioInputDeviceOption>();
         IReadOnlyList<AudioInputDeviceOption> microphones = MicrophoneAudioCaptureService.GetInputDevices();
         AudioInputDeviceOption? defaultMicrophone = microphones.FirstOrDefault();
-        string defaultPlaybackName = GetDefaultPlaybackDeviceName();
 
         if (defaultMicrophone is not null)
         {
             options.Add(new AudioInputDeviceOption(
                 LiveAudioSourceKind.Microphone,
                 defaultMicrophone.DeviceNumber,
-                $"Microphone ({defaultMicrophone.Name})"));
+                "default microphone"));
         }
-
-        options.Add(new AudioInputDeviceOption(
-            LiveAudioSourceKind.AudioScriptPlayback,
-            -2,
-            "AudioScript playback preview"));
 
         options.Add(new AudioInputDeviceOption(
             LiveAudioSourceKind.DefaultPlayback,
             -1,
-            $"Default playback device ({defaultPlaybackName})"));
+            "default audio playback"));
 
         if (defaultMicrophone is not null)
         {
             options.Add(new AudioInputDeviceOption(
-                LiveAudioSourceKind.MicrophoneAndAudioScriptPlayback,
-                defaultMicrophone.DeviceNumber,
-                $"Microphone + AudioScript playback ({defaultMicrophone.Name})"));
-
-            options.Add(new AudioInputDeviceOption(
                 LiveAudioSourceKind.MicrophoneAndDefaultPlayback,
                 defaultMicrophone.DeviceNumber,
-                $"Microphone + default playback ({defaultMicrophone.Name} + {defaultPlaybackName})"));
+                "default microphone and default audio playback"));
         }
 
         return options;
-    }
-
-    private static string GetDefaultPlaybackDeviceName()
-    {
-        try
-        {
-            using var enumerator = new MMDeviceEnumerator();
-            MMDevice device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            return string.IsNullOrWhiteSpace(device.FriendlyName)
-                ? "Default Playback"
-                : device.FriendlyName;
-        }
-        catch
-        {
-            return "Default Playback";
-        }
     }
 
     private async Task StopLiveTranscriptionAsync(MainViewModel vm, bool showToast)
@@ -2268,7 +2242,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        HandleDeleteTranscriptRow(vm, currentLine);
+        HandleCombineToPreviousRow(vm, currentLine);
     }
 
     private void TranscriptContext_CopyText_Click(object sender, RoutedEventArgs e)
@@ -2367,13 +2341,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (e.Command == DeleteRowCommand)
+        if (e.Command == CombineToPreviousRowCommand)
         {
             e.CanExecute =
                 DataContext is MainViewModel vm
                 && TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
-                && TryResolveDeleteRowMerge(vm.CurrentTranscriptLines.ToList(), currentLine, out _, out _)
-                && EnsureSegmentRowActionAvailable(vm, "Delete row", showMessage: false);
+                && TryResolveCombineToPreviousRowMerge(vm.CurrentTranscriptLines.ToList(), currentLine, out _, out _)
+                && EnsureSegmentRowActionAvailable(vm, "Combine to previous row", showMessage: false);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Command == SeparateRowCommand)
+        {
+            e.CanExecute =
+                DataContext is MainViewModel vm
+                && TryGetContextMenuLine(e.Parameter, out _)
+                && EnsureSegmentRowActionAvailable(vm, "Separate row", showMessage: false);
             e.Handled = true;
             return;
         }
@@ -2393,7 +2377,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         TryStartRowFileTranscription(vm, currentLine);
     }
 
-    private void DeleteRowCommand_Executed(object sender, ExecutedRoutedEventArgs e)
+    private void CombineToPreviousRowCommand_Executed(object sender, ExecutedRoutedEventArgs e)
     {
         if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
             || DataContext is not MainViewModel vm)
@@ -2401,7 +2385,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        HandleDeleteTranscriptRow(vm, currentLine);
+        HandleCombineToPreviousRow(vm, currentLine);
     }
 
     private void RenameSpeakerCommand_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -2436,6 +2420,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void SeparateRowCommand_Executed(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        HandleSeparateTranscriptRow(vm, currentLine);
+    }
+
     internal static string BuildRowClipboardText(FinalizedTranscriptLineViewModel line)
     {
         ArgumentNullException.ThrowIfNull(line);
@@ -2450,6 +2445,192 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         string text = line.Text ?? string.Empty;
 
         return string.Join('\t', start, end, speaker, text);
+    }
+
+    internal static bool TryResolveSeparateRowRange(
+        FinalizedTranscriptLineViewModel line,
+        out TimeSpan startOffset,
+        out TimeSpan endOffset)
+    {
+        startOffset = TimeSpan.Zero;
+        endOffset = TimeSpan.Zero;
+
+        if (line.StartOffset is not TimeSpan start
+            || line.EndOffset is not TimeSpan end
+            || end <= start)
+        {
+            return false;
+        }
+
+        startOffset = start;
+        endOffset = end;
+        return true;
+    }
+
+    internal static (string FirstText, string SecondText) SplitRowTextForSeparate(string? text)
+    {
+        string source = text ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return (string.Empty, string.Empty);
+        }
+
+        int splitIndex = FindLineFeedSplitIndex(source);
+        if (splitIndex >= 0)
+        {
+            return (
+                source[..splitIndex].Trim(),
+                source[(splitIndex + 1)..].Trim());
+        }
+
+        splitIndex = FindPeriodSplitIndex(source);
+        if (splitIndex >= 0)
+        {
+            return (
+                source[..(splitIndex + 1)].Trim(),
+                source[(splitIndex + 1)..].Trim());
+        }
+
+        splitIndex = FindPunctuationSplitIndex(source);
+        if (splitIndex >= 0)
+        {
+            return (
+                source[..(splitIndex + 1)].Trim(),
+                source[(splitIndex + 1)..].Trim());
+        }
+
+        splitIndex = FindNearestWhitespaceToMidpoint(source);
+        if (splitIndex < 0)
+        {
+            splitIndex = source.Length / 2;
+        }
+
+        return (
+            source[..splitIndex].Trim(),
+            source[splitIndex..].Trim());
+    }
+
+    internal static TimeSpan ResolveInitialSeparateSplitOffset(TimeSpan startOffset, TimeSpan endOffset)
+    {
+        TimeSpan minOffset = startOffset + TimeSpan.FromSeconds(1);
+        TimeSpan maxOffset = endOffset - TimeSpan.FromSeconds(1);
+        if (maxOffset < minOffset)
+        {
+            return minOffset;
+        }
+
+        TimeSpan midpoint = startOffset + TimeSpan.FromSeconds(
+            Math.Floor((endOffset - startOffset).TotalSeconds / 2d));
+        if (midpoint < minOffset)
+        {
+            return minOffset;
+        }
+
+        if (midpoint > maxOffset)
+        {
+            return maxOffset;
+        }
+
+        return midpoint;
+    }
+
+    internal static bool TryValidateSeparateRowInput(
+        TimeSpan rowStartOffset,
+        TimeSpan rowEndOffset,
+        TimeSpan splitOffset,
+        string? firstText,
+        string? secondText,
+        out string errorMessage)
+    {
+        if (string.IsNullOrWhiteSpace(firstText) || string.IsNullOrWhiteSpace(secondText))
+        {
+            errorMessage = "Both row texts are required.";
+            return false;
+        }
+
+        if (splitOffset <= rowStartOffset || splitOffset >= rowEndOffset)
+        {
+            errorMessage = "Timeline split point must stay inside the original row range.";
+            return false;
+        }
+
+        errorMessage = string.Empty;
+        return true;
+    }
+
+    internal static FinalizedTranscriptLineViewModel CreateSecondSeparatedRow(
+        FinalizedTranscriptLineViewModel sourceLine,
+        TimeSpan splitOffset,
+        TimeSpan rowEndOffset,
+        string secondRowText)
+    {
+        ArgumentNullException.ThrowIfNull(sourceLine);
+
+        bool hasSpeaker = !string.IsNullOrWhiteSpace(sourceLine.SpeakerLabel);
+        return new FinalizedTranscriptLineViewModel(
+            startOffset: splitOffset,
+            endOffset: rowEndOffset,
+            isTimestampEstimated: sourceLine.IsTimestampEstimated,
+            text: secondRowText,
+            speakerLabel: sourceLine.SpeakerLabel,
+            isManuallyReviewed: true,
+            speakerLabelSource: hasSpeaker ? sourceLine.SpeakerLabelSource : string.Empty,
+            diarizationRevision: hasSpeaker ? sourceLine.DiarizationRevision : null,
+            lastDiarizedChunkIndex: hasSpeaker ? sourceLine.LastDiarizedChunkIndex : null);
+    }
+
+    private static int FindLineFeedSplitIndex(string text)
+    {
+        int index = text.IndexOf('\n');
+        return IsSplitIndexInMiddle(text, index) ? index : -1;
+    }
+
+    private static int FindPeriodSplitIndex(string text)
+    {
+        int index = text.IndexOf('.');
+        return IsSplitIndexInMiddle(text, index) ? index : -1;
+    }
+
+    private static int FindPunctuationSplitIndex(string text)
+    {
+        for (int index = 0; index < text.Length; index++)
+        {
+            if (char.IsPunctuation(text[index]) && IsSplitIndexInMiddle(text, index))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int FindNearestWhitespaceToMidpoint(string text)
+    {
+        int midpoint = text.Length / 2;
+        int bestIndex = -1;
+        int bestDistance = int.MaxValue;
+
+        for (int index = 1; index < text.Length - 1; index++)
+        {
+            if (!char.IsWhiteSpace(text[index]))
+            {
+                continue;
+            }
+
+            int distance = Math.Abs(index - midpoint);
+            if (distance < bestDistance)
+            {
+                bestIndex = index;
+                bestDistance = distance;
+            }
+        }
+
+        return bestIndex;
+    }
+
+    private static bool IsSplitIndexInMiddle(string text, int index)
+    {
+        return index > 0 && index < text.Length - 1;
     }
 
     private bool EnsureSegmentRowActionAvailable(MainViewModel vm, string actionTitle, bool showMessage = true)
@@ -2523,6 +2704,94 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         ShowCopyToast("Speaker renamed", $"{renamedRows:N0} row(s) updated.", ToastNotificationType.Success);
+    }
+
+    private void HandleSeparateTranscriptRow(MainViewModel vm, FinalizedTranscriptLineViewModel currentLine)
+    {
+        if (!EnsureSegmentRowActionAvailable(vm, "Separate row"))
+        {
+            return;
+        }
+
+        if (!TryResolveSeparateRowRange(currentLine, out TimeSpan rowStartOffset, out TimeSpan rowEndOffset))
+        {
+            ShowCopyToast(
+                "Separate row",
+                "Cannot separate row because the timeline values are invalid.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        if (rowEndOffset - rowStartOffset <= TimeSpan.FromSeconds(1))
+        {
+            ShowCopyToast(
+                "Separate row",
+                "Cannot separate a row with a 1-second timeline.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        (string firstText, string secondText) = SplitRowTextForSeparate(currentLine.Text);
+        TimeSpan initialSplitOffset = ResolveInitialSeparateSplitOffset(rowStartOffset, rowEndOffset);
+        var dialog = new SeparateRowWindow(
+            rowStartOffset,
+            rowEndOffset,
+            initialSplitOffset,
+            firstText,
+            secondText)
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        if (!TryValidateSeparateRowInput(
+            rowStartOffset,
+            rowEndOffset,
+            dialog.SplitOffset,
+            dialog.FirstRowText,
+            dialog.SecondRowText,
+            out string validationError))
+        {
+            ShowCopyToast("Separate row", validationError, ToastNotificationType.Warning);
+            return;
+        }
+
+        int currentIndex = vm.FinalizedTranscriptLines.IndexOf(currentLine);
+        if (currentIndex < 0)
+        {
+            ShowCopyToast("Separate row", "Unable to locate the selected row.", ToastNotificationType.Error);
+            return;
+        }
+
+        string originalText = currentLine.Text ?? string.Empty;
+        TimeSpan? originalStart = currentLine.StartOffset;
+        TimeSpan? originalEnd = currentLine.EndOffset;
+
+        FinalizedTranscriptLineViewModel secondRow = CreateSecondSeparatedRow(
+            currentLine,
+            dialog.SplitOffset,
+            rowEndOffset,
+            dialog.SecondRowText);
+
+        currentLine.SetTimelineOffsets(rowStartOffset, dialog.SplitOffset);
+        currentLine.Text = dialog.FirstRowText;
+        currentLine.IsManuallyReviewed = true;
+
+        if (!vm.InsertFinalizedTranscriptLine(currentIndex + 1, secondRow))
+        {
+            currentLine.SetTimelineOffsets(originalStart, originalEnd);
+            currentLine.Text = originalText;
+            ShowCopyToast("Separate row", "Unable to create the second row.", ToastNotificationType.Error);
+            return;
+        }
+
+        ShowCopyToast("Row separated", "The selected row was separated into two rows.", ToastNotificationType.Success);
+        Dispatcher.BeginInvoke(new Action(() =>
+            FocusGridCell(secondRow, TranscriptTextColumnIndex, beginEdit: true)), DispatcherPriority.Background);
     }
 
     private void HandleInsertTranscriptRow(
@@ -2633,7 +2902,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void DeleteTranscriptRow_Click(object sender, RoutedEventArgs e)
+    private void CombineToPreviousRow_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not System.Windows.Controls.Button button
             || button.DataContext is not FinalizedTranscriptLineViewModel currentLine
@@ -2642,10 +2911,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        HandleDeleteTranscriptRow(vm, currentLine);
+        HandleCombineToPreviousRow(vm, currentLine);
     }
 
-    private void HandleDeleteTranscriptRow(MainViewModel vm, FinalizedTranscriptLineViewModel currentLine)
+    private void HandleCombineToPreviousRow(MainViewModel vm, FinalizedTranscriptLineViewModel currentLine)
     {
         if (!EnsureSegmentRowActionAvailable(vm, "Row action unavailable"))
         {
@@ -2662,17 +2931,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         List<FinalizedTranscriptLineViewModel> displayedLines = GetDisplayedTranscriptLines();
-        if (!TryResolveDeleteRowMerge(displayedLines, currentLine, out FinalizedTranscriptLineViewModel mergeTargetLine, out TimeSpan mergeEndOffset))
+        if (!TryResolveCombineToPreviousRowMerge(displayedLines, currentLine, out FinalizedTranscriptLineViewModel mergeTargetLine, out TimeSpan mergeEndOffset))
         {
             ShowCopyToast(
-                "Row not deleted",
-                "The first row cannot be deleted, or the neighboring timelines are invalid.",
+                "Row not combined",
+                "The first row cannot be combined, or the neighboring timelines are invalid.",
                 ToastNotificationType.Warning);
             return;
         }
 
         var dialog = new ConfirmationDialogWindow(
-            title: "Delete this row?",
+            title: "Combine this row into previous row?",
             message: "This transcript row will be removed, the row above will be extended to keep the timeline continuous, and the text will be combined.",
             confirmButtonText: "Yes",
             cancelButtonText: "No")
@@ -2692,7 +2961,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (!vm.RemoveFinalizedTranscriptLine(currentLine))
             {
                 ShowCopyToast(
-                    "Row not deleted",
+                    "Row not combined",
                     "Unable to remove the selected row.",
                     ToastNotificationType.Error);
                 return;
@@ -2702,7 +2971,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MergeDeletedRowTextIntoPreviousRow(mergeTargetLine, currentLine);
             FocusGridCell(mergeTargetLine, TranscriptTextColumnIndex, beginEdit: false);
             ShowCopyToast(
-                "Row deleted",
+                "Row combined",
                 "The previous row timeline was extended and the text was combined.",
                 ToastNotificationType.Success);
 
@@ -2710,9 +2979,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         catch (Exception ex)
         {
-            vm.LogHandledException("delete transcript row", ex);
+            vm.LogHandledException("combine to previous row", ex);
             ShowCopyToast(
-                "Row not deleted",
+                "Row not combined",
                 "Unable to remove the selected row.",
                 ToastNotificationType.Error);
         }
@@ -2741,7 +3010,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             parts.Where(part => !string.IsNullOrWhiteSpace(part)));
     }
 
-    internal static bool CanDeleteTranscriptRow(
+    internal static bool CanCombineToPreviousRow(
         IEnumerable<FinalizedTranscriptLineViewModel> lines,
         FinalizedTranscriptLineViewModel? line)
     {
@@ -2754,7 +3023,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return displayedLines.IndexOf(line) > 0;
     }
 
-    internal static bool TryResolveDeleteRowMerge(
+    internal static bool TryResolveCombineToPreviousRowMerge(
         IReadOnlyList<FinalizedTranscriptLineViewModel> displayedLines,
         FinalizedTranscriptLineViewModel currentLine,
         out FinalizedTranscriptLineViewModel mergeTargetLine,
@@ -3160,7 +3429,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (TryGetCurrentSegmentLine(vm, out FinalizedTranscriptLineViewModel currentLine))
             {
                 e.Handled = true;
-                HandleDeleteTranscriptRow(vm, currentLine);
+                HandleCombineToPreviousRow(vm, currentLine);
             }
 
             return e.Handled;

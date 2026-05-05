@@ -3,9 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Live Transcription"
         Width="500"
-        Height="400"
+        SizeToContent="Height"
         MinWidth="460"
-        MinHeight="380"
+        MinHeight="320"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize">
     <Grid Margin="16">
@@ -13,7 +13,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -27,12 +27,12 @@
                       DisplayMemberPath="Name"
                       SelectedValuePath="DeviceNumber"
                       SelectionChanged="DeviceComboBox_SelectionChanged"/>
-            <TextBlock x:Name="SourceDetailText"
-                       Margin="0,6,0,0"
-                       FontSize="11"
-                       TextWrapping="Wrap"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       Text="Source: waiting for selection"/>
+            <CheckBox x:Name="AutomaticGainCheckBox"
+                      Content="Automatic gain"
+                      FontSize="12"
+                      Margin="0,8,0,0"
+                      Checked="AutomaticGainCheckBox_Changed"
+                      Unchecked="AutomaticGainCheckBox_Changed"/>
         </StackPanel>
 
         <StackPanel Grid.Row="1"
@@ -50,10 +50,6 @@
 
         <StackPanel Grid.Row="2"
                     Margin="0,10,0,0">
-            <TextBlock Text="Automatic app gain"
-                       FontSize="11"
-                       Margin="0,0,0,4"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
             <TextBlock x:Name="GainSummaryText"
                        FontSize="11"
                        TextWrapping="Wrap"
@@ -61,44 +57,39 @@
                        Text="Auto gain ready: 1.00x"/>
         </StackPanel>
 
-        <ScrollViewer Grid.Row="3"
-                      Margin="0,12,0,0"
-                      VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled"
-                      CanContentScroll="False">
-            <StackPanel>
-                <TextBlock Text="Current activity"
-                           FontSize="11"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                <TextBlock x:Name="ActivitySummaryText"
-                           Margin="0,6,0,0"
-                           FontSize="13"
-                           FontWeight="SemiBold"
-                           TextWrapping="Wrap"
-                           Text="Ready. Start live transcription to begin recording and speech processing."/>
-                <TextBlock x:Name="RecordingActivityText"
-                           Margin="0,8,0,0"
-                           FontSize="12"
-                           TextWrapping="Wrap"
-                           Text="Recorder: idle"/>
-                <TextBlock x:Name="TranscriptionActivityText"
-                           Margin="0,4,0,0"
-                           FontSize="12"
-                           TextWrapping="Wrap"
-                           Text="Transcriber: idle"/>
-                <TextBlock x:Name="TranscriptionEngineText"
-                           Margin="0,4,0,0"
-                           FontSize="12"
-                           TextWrapping="Wrap"
-                           Text="Engine: not selected"/>
-                <TextBlock x:Name="LatestActivityText"
-                           Margin="0,8,0,0"
-                           FontSize="11"
-                           TextWrapping="Wrap"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Text="Latest event: waiting to start"/>
-            </StackPanel>
-        </ScrollViewer>
+        <StackPanel Grid.Row="3"
+                    Margin="0,12,0,0">
+            <TextBlock Text="Current activity"
+                       FontSize="11"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <TextBlock x:Name="ActivitySummaryText"
+                       Margin="0,6,0,0"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       TextWrapping="Wrap"
+                       Text="Ready. Start live transcription to begin recording and speech processing."/>
+            <TextBlock x:Name="RecordingActivityText"
+                       Margin="0,8,0,0"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Text="Recorder: idle"/>
+            <TextBlock x:Name="TranscriptionActivityText"
+                       Margin="0,4,0,0"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Text="Transcriber: idle"/>
+            <TextBlock x:Name="TranscriptionEngineText"
+                       Margin="0,4,0,0"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Text="Engine: not selected"/>
+            <TextBlock x:Name="LatestActivityText"
+                       Margin="0,8,0,0"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       Text="Latest event: waiting to start"/>
+        </StackPanel>
 
         <StackPanel Grid.Row="4"
                     Margin="0,12,0,0"

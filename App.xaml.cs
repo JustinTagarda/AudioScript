@@ -142,7 +142,7 @@ public partial class App : System.Windows.Application
                 processLogService,
                 playbackEditTranscriptionOptions),
             liveTranscriptionSessionFactory: (source, gainOptions, recordingSession) => new PlaybackTranscriptionSession(
-                CreateLiveCaptureService(source, audioPlaybackService, gainOptions),
+                CreateLiveCaptureService(source, gainOptions),
                 whisperTranscriptionService,
                 processLogService,
                 liveTranscriptionOptions,
@@ -165,27 +165,20 @@ public partial class App : System.Windows.Application
 
     private static IAudioLoopbackCaptureService CreateLiveCaptureService(
         AudioInputDeviceOption source,
-        IPlaybackAudioTapSource playbackTapSource,
         LiveAudioGainOptions gainOptions)
     {
         return new AutomaticGainAudioCaptureService(
-            CreateStandardizedLiveCaptureService(source, playbackTapSource),
+            CreateStandardizedLiveCaptureService(source),
             gainOptions);
     }
 
     private static IAudioLoopbackCaptureService CreateStandardizedLiveCaptureService(
-        AudioInputDeviceOption source,
-        IPlaybackAudioTapSource playbackTapSource)
+        AudioInputDeviceOption source)
     {
         return source.Kind switch
         {
-            LiveAudioSourceKind.AudioScriptPlayback => new StandardizingAudioCaptureService(
-                new PlaybackAudioCaptureService(playbackTapSource)),
             LiveAudioSourceKind.DefaultPlayback => new StandardizingAudioCaptureService(
                 new WasapiLoopbackCaptureService()),
-            LiveAudioSourceKind.MicrophoneAndAudioScriptPlayback => new CompositeAudioCaptureService(
-                new StandardizingAudioCaptureService(new MicrophoneAudioCaptureService(source.DeviceNumber)),
-                new StandardizingAudioCaptureService(new PlaybackAudioCaptureService(playbackTapSource))),
             LiveAudioSourceKind.MicrophoneAndDefaultPlayback => new CompositeAudioCaptureService(
                 new StandardizingAudioCaptureService(new MicrophoneAudioCaptureService(source.DeviceNumber)),
                 new StandardizingAudioCaptureService(new WasapiLoopbackCaptureService())),

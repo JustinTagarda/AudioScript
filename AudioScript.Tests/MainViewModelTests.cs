@@ -430,6 +430,9 @@ public sealed class MainViewModelTests
                     Assert.Equal(TimeSpan.Zero, viewModel.FinalizedTranscriptLines[0].StartOffset);
                     Assert.Equal(TimeSpan.FromSeconds(2), viewModel.FinalizedTranscriptLines[1].StartOffset);
                     Assert.Contains("hello", viewModel.BuildClipboardTranscriptText());
+                    Assert.False(viewModel.IsTranscriptEmptyStateVisible);
+                    Assert.False(viewModel.ShouldShowTranscriptTranscribeAudioAction);
+                    Assert.Equal("Transcript rows are available.", viewModel.TranscriptEmptyStateMessage);
                 }
                 finally
                 {

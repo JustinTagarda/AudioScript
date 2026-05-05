@@ -9,8 +9,10 @@ public partial class LiveTranscriptionWindow : Window
     private readonly Func<AudioInputDeviceOption, Task<bool>> _startTranscriptionAsync;
     private readonly Func<Task> _stopTranscriptionAsync;
     private bool _isTranscribing;
+    private bool _isStopping;
     private bool _isOperationPending;
     private bool _allowClose;
+    private LiveAudioGainOptions _gainOptions = LiveAudioGainOptions.Default;
 
     public LiveTranscriptionWindow(
         IReadOnlyList<AudioInputDeviceOption> devices,
@@ -35,7 +37,7 @@ public partial class LiveTranscriptionWindow : Window
     public bool IsTranscribing => _isTranscribing;
 
     public LiveAudioGainOptions CurrentGainOptions =>
-        LiveAudioGainOptions.Default;
+        _gainOptions;
 
     public void SelectPreferredDevice(LiveAudioSourceKind preferredKind, int preferredDeviceNumber)
     {
@@ -49,14 +51,17 @@ public partial class LiveTranscriptionWindow : Window
         {
             DeviceComboBox.SelectedItem = preferred;
         }
-
-        UpdateSourceDetail();
     }
 
     public void SetGainOptions(LiveAudioGainOptions options)
     {
-        _ = options.Validate();
-        UpdateGainSummary(1);
+        _gainOptions = options.Validate();
+        if (AutomaticGainCheckBox is not null)
+        {
+            AutomaticGainCheckBox.IsChecked = _gainOptions.IsAutomaticGainEnabled;
+        }
+
+        UpdateGainSummary(1, automaticGainApplied: _gainOptions.IsAutomaticGainEnabled);
         UpdateControlState();
     }
 
@@ -64,7 +69,7 @@ public partial class LiveTranscriptionWindow : Window
     {
         double normalized = Math.Max(0, Math.Min(1, peakLevel));
         VolumeMeter.Value = normalized * 100;
-        UpdateGainSummary(gainMultiplier);
+        UpdateGainSummary(gainMultiplier, automaticGainApplied);
     }
 
     public void SetTranscribing(bool isTranscribing)
@@ -173,7 +178,7 @@ public partial class LiveTranscriptionWindow : Window
 
         if (_isTranscribing)
         {
-            await StopTranscriptionAsync();
+            RequestStopTranscription();
             return;
         }
 
@@ -204,13 +209,24 @@ public partial class LiveTranscriptionWindow : Window
 
     private void DeviceComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        UpdateSourceDetail();
         UpdateControlState();
     }
 
-    private async void OnWindowClosing(object? sender, CancelEventArgs e)
+    private void AutomaticGainCheckBox_Changed(object sender, RoutedEventArgs e)
     {
-        if (_allowClose || !_isTranscribing)
+        if (AutomaticGainCheckBox is null)
+        {
+            return;
+        }
+
+        bool isEnabled = AutomaticGainCheckBox.IsChecked == true;
+        _gainOptions = _gainOptions with { IsAutomaticGainEnabled = isEnabled };
+        UpdateGainSummary(1, automaticGainApplied: isEnabled);
+    }
+
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (_allowClose || !_isTranscribing || _isStopping)
         {
             return;
         }
@@ -235,12 +251,9 @@ public partial class LiveTranscriptionWindow : Window
             return;
         }
 
-        await StopTranscriptionAsync();
-        if (!_isTranscribing)
-        {
-            _allowClose = true;
-            Close();
-        }
+        RequestStopTranscription();
+        _allowClose = true;
+        Close();
     }
 
     private void OnWindowClosed(object? sender, EventArgs e)
@@ -261,57 +274,56 @@ public partial class LiveTranscriptionWindow : Window
         finally
         {
             _isOperationPending = false;
+            _isStopping = false;
             UpdateControlState();
         }
+    }
+
+    private void RequestStopTranscription()
+    {
+        if (_isOperationPending || !_isTranscribing || _isStopping)
+        {
+            return;
+        }
+
+        _isStopping = true;
+        UpdateControlState();
+        _ = StopTranscriptionAsync();
     }
 
     private void UpdateControlState()
     {
         if (DeviceComboBox is null
             || StartStopButton is null
-            || CloseButton is null)
+            || CloseButton is null
+            || AutomaticGainCheckBox is null)
         {
             return;
         }
 
         DeviceComboBox.IsEnabled = !_isTranscribing && !_isOperationPending;
-        StartStopButton.IsEnabled = !_isOperationPending && (SelectedDevice is not null || _isTranscribing);
-        StartStopButton.Content = _isTranscribing ? "Stop" : "Start";
-        CloseButton.IsEnabled = !_isOperationPending;
+        AutomaticGainCheckBox.IsEnabled = !_isTranscribing && !_isOperationPending;
+        StartStopButton.IsEnabled = !_isOperationPending && !_isStopping && (SelectedDevice is not null || _isTranscribing);
+        StartStopButton.Content = _isTranscribing
+            ? (_isStopping ? "Stopping" : "Stop")
+            : "Start";
+        CloseButton.IsEnabled = !_isOperationPending || _isStopping;
     }
 
-    private void UpdateGainSummary(double activeGainMultiplier)
+    private void UpdateGainSummary(double activeGainMultiplier, bool automaticGainApplied = false)
     {
         if (GainSummaryText is null)
         {
             return;
         }
 
-        string state = _isTranscribing ? "active" : "ready";
-        GainSummaryText.Text = $"Auto gain {state}: {Math.Max(activeGainMultiplier, 0):0.00}x";
-    }
-
-    private void UpdateSourceDetail()
-    {
-        if (SourceDetailText is null)
+        if (!_gainOptions.IsAutomaticGainEnabled)
         {
+            GainSummaryText.Text = "Automatic gain off: audio level is passed through without adaptive boost.";
             return;
         }
 
-        SourceDetailText.Text = SelectedDevice?.Kind switch
-        {
-            LiveAudioSourceKind.AudioScriptPlayback =>
-                "Source: AudioScript preview audio before output volume is applied.",
-            LiveAudioSourceKind.MicrophoneAndAudioScriptPlayback =>
-                "Source: microphone plus AudioScript preview audio before output volume is applied.",
-            LiveAudioSourceKind.DefaultPlayback =>
-                "Source: Windows default playback loopback; endpoint volume and mute can affect captured audio.",
-            LiveAudioSourceKind.MicrophoneAndDefaultPlayback =>
-                "Source: microphone plus Windows default playback loopback.",
-            LiveAudioSourceKind.Microphone =>
-                "Source: selected microphone input.",
-            _ =>
-                "Source: waiting for selection",
-        };
+        string state = _isTranscribing && automaticGainApplied ? "active" : "ready";
+        GainSummaryText.Text = $"Automatic gain {state}: {Math.Max(activeGainMultiplier, 0):0.00}x";
     }
 }

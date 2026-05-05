@@ -13,18 +13,13 @@ public sealed class MainWindowTests
     [Fact]
     public void TranscriptRowContextMenu_OnlyShowsSupportedActions()
     {
-        string xamlPath = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "MainWindow.xaml"));
+        string xamlPath = FindRepoFile("MainWindow.xaml");
         string xaml = File.ReadAllText(xamlPath);
 
         Assert.Contains("<MenuItem Header=\"Transcribe this row\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Separate into 2 rows\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Combine to previous row\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Rename Speaker To\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("<MenuItem Header=\"Delete row\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Copy row text\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"Engine\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Insert Row Above\"", xaml, StringComparison.Ordinal);
@@ -32,7 +27,19 @@ public sealed class MainWindowTests
         Assert.DoesNotContain("<MenuItem Header=\"Duplicate Row\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Copy Text\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Copy Timeline + Text\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("<MenuItem Header=\"Delete row\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Delete Row\"", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LiveTranscriptionWindow_ContainsAutomaticGainCheckbox()
+    {
+        string xamlPath = FindRepoFile("LiveTranscriptionWindow.xaml");
+        string xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains("Content=\"Automatic gain\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("SourceDetailText", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Automatic app gain", xaml, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -357,23 +364,23 @@ public sealed class MainWindowTests
     }
 
     [Fact]
-    public void CanDeleteTranscriptRow_RejectsFirstRow()
+    public void CanCombineToPreviousRow_RejectsFirstRow()
     {
         FinalizedTranscriptLineViewModel first = CreateTimedLine(0, 4, "First");
         FinalizedTranscriptLineViewModel second = CreateTimedLine(4, 8, "Second");
 
-        Assert.False(MainWindow.CanDeleteTranscriptRow([first, second], first));
-        Assert.True(MainWindow.CanDeleteTranscriptRow([first, second], second));
+        Assert.False(MainWindow.CanCombineToPreviousRow([first, second], first));
+        Assert.True(MainWindow.CanCombineToPreviousRow([first, second], second));
     }
 
     [Fact]
-    public void TryResolveDeleteRowMerge_MiddleRowExtendsPreviousToNextStart()
+    public void TryResolveCombineToPreviousRowMerge_MiddleRowExtendsPreviousToNextStart()
     {
         FinalizedTranscriptLineViewModel first = CreateTimedLine(0, 4, "First");
         FinalizedTranscriptLineViewModel second = CreateTimedLine(4, 8, "Second");
         FinalizedTranscriptLineViewModel third = CreateTimedLine(8, 12, "Third");
 
-        bool resolved = MainWindow.TryResolveDeleteRowMerge(
+        bool resolved = MainWindow.TryResolveCombineToPreviousRowMerge(
             [first, second, third],
             second,
             out FinalizedTranscriptLineViewModel mergeTargetLine,
@@ -385,12 +392,12 @@ public sealed class MainWindowTests
     }
 
     [Fact]
-    public void TryResolveDeleteRowMerge_LastRowExtendsPreviousToDeletedEnd()
+    public void TryResolveCombineToPreviousRowMerge_LastRowExtendsPreviousToDeletedEnd()
     {
         FinalizedTranscriptLineViewModel first = CreateTimedLine(0, 4, "First");
         FinalizedTranscriptLineViewModel second = CreateTimedLine(4, 8, "Second");
 
-        bool resolved = MainWindow.TryResolveDeleteRowMerge(
+        bool resolved = MainWindow.TryResolveCombineToPreviousRowMerge(
             [first, second],
             second,
             out FinalizedTranscriptLineViewModel mergeTargetLine,
@@ -446,6 +453,158 @@ public sealed class MainWindowTests
         Assert.Equal(3, previous.DiarizationRevision);
         Assert.Equal(8, previous.LastDiarizedChunkIndex);
         Assert.True(previous.IsManuallyReviewed);
+    }
+
+    [Fact]
+    public void TryResolveSeparateRowRange_RejectsMissingOrInvalidTimeline()
+    {
+        var untimed = new FinalizedTranscriptLineViewModel(
+            startOffset: null,
+            endOffset: null,
+            isTimestampEstimated: true,
+            text: "Row");
+        var invalid = new FinalizedTranscriptLineViewModel(
+            startOffset: TimeSpan.FromSeconds(4),
+            endOffset: TimeSpan.FromSeconds(4),
+            isTimestampEstimated: false,
+            text: "Row");
+
+        Assert.False(MainWindow.TryResolveSeparateRowRange(untimed, out _, out _));
+        Assert.False(MainWindow.TryResolveSeparateRowRange(invalid, out _, out _));
+    }
+
+    [Fact]
+    public void TryResolveSeparateRowRange_ResolvesValidTimeline()
+    {
+        FinalizedTranscriptLineViewModel line = CreateTimedLine(29, 46, "Row");
+
+        bool resolved = MainWindow.TryResolveSeparateRowRange(line, out TimeSpan startOffset, out TimeSpan endOffset);
+
+        Assert.True(resolved);
+        Assert.Equal(TimeSpan.FromSeconds(29), startOffset);
+        Assert.Equal(TimeSpan.FromSeconds(46), endOffset);
+    }
+
+    [Fact]
+    public void SplitRowTextForSeparate_SplitsAtFirstLineFeed()
+    {
+        (string firstText, string secondText) = MainWindow.SplitRowTextForSeparate("First line.\nSecond line.");
+
+        Assert.Equal("First line.", firstText);
+        Assert.Equal("Second line.", secondText);
+    }
+
+    [Fact]
+    public void SplitRowTextForSeparate_SplitsAtFirstPeriodWhenNoLineFeedExists()
+    {
+        (string firstText, string secondText) = MainWindow.SplitRowTextForSeparate("First sentence. Second sentence.");
+
+        Assert.Equal("First sentence.", firstText);
+        Assert.Equal("Second sentence.", secondText);
+    }
+
+    [Fact]
+    public void SplitRowTextForSeparate_SplitsAtFirstPunctuationWhenNoPeriodExists()
+    {
+        (string firstText, string secondText) = MainWindow.SplitRowTextForSeparate("Wait, then continue");
+
+        Assert.Equal("Wait,", firstText);
+        Assert.Equal("then continue", secondText);
+    }
+
+    [Fact]
+    public void SplitRowTextForSeparate_SplitsNearMidpointOnWordBoundaryWhenNoPunctuationExists()
+    {
+        (string firstText, string secondText) = MainWindow.SplitRowTextForSeparate("alpha beta gamma delta");
+
+        Assert.Equal("alpha beta", firstText);
+        Assert.Equal("gamma delta", secondText);
+    }
+
+    [Fact]
+    public void ResolveInitialSeparateSplitOffset_UsesMidpointInsideRange()
+    {
+        TimeSpan splitOffset = MainWindow.ResolveInitialSeparateSplitOffset(
+            TimeSpan.FromSeconds(29),
+            TimeSpan.FromSeconds(46));
+
+        Assert.Equal(TimeSpan.FromSeconds(37), splitOffset);
+    }
+
+    [Fact]
+    public void TryValidateSeparateRowInput_RejectsEmptyTexts()
+    {
+        bool valid = MainWindow.TryValidateSeparateRowInput(
+            TimeSpan.FromSeconds(29),
+            TimeSpan.FromSeconds(46),
+            TimeSpan.FromSeconds(37),
+            "First",
+            string.Empty,
+            out string errorMessage);
+
+        Assert.False(valid);
+        Assert.Equal("Both row texts are required.", errorMessage);
+    }
+
+    [Theory]
+    [InlineData(29, 29)]
+    [InlineData(46, 46)]
+    public void TryValidateSeparateRowInput_RejectsSplitOutsideOriginalRange(int splitSeconds, int rowEndSeconds)
+    {
+        bool valid = MainWindow.TryValidateSeparateRowInput(
+            TimeSpan.FromSeconds(29),
+            TimeSpan.FromSeconds(rowEndSeconds),
+            TimeSpan.FromSeconds(splitSeconds),
+            "First",
+            "Second",
+            out string errorMessage);
+
+        Assert.False(valid);
+        Assert.Equal("Timeline split point must stay inside the original row range.", errorMessage);
+    }
+
+    [Fact]
+    public void TryValidateSeparateRowInput_AcceptsValidSplit()
+    {
+        bool valid = MainWindow.TryValidateSeparateRowInput(
+            TimeSpan.FromSeconds(29),
+            TimeSpan.FromSeconds(46),
+            TimeSpan.FromSeconds(37),
+            "First",
+            "Second",
+            out string errorMessage);
+
+        Assert.True(valid);
+        Assert.Equal(string.Empty, errorMessage);
+    }
+
+    [Fact]
+    public void CreateSecondSeparatedRow_CopiesSpeakerAndMetadataWhenSpeakerExists()
+    {
+        var sourceLine = new FinalizedTranscriptLineViewModel(
+            startOffset: TimeSpan.FromSeconds(29),
+            endOffset: TimeSpan.FromSeconds(46),
+            isTimestampEstimated: false,
+            text: "Original",
+            speakerLabel: "Maria",
+            speakerLabelSource: SpeakerLabelSources.Manual,
+            diarizationRevision: 3,
+            lastDiarizedChunkIndex: 8);
+
+        FinalizedTranscriptLineViewModel secondRow = MainWindow.CreateSecondSeparatedRow(
+            sourceLine,
+            TimeSpan.FromSeconds(37),
+            TimeSpan.FromSeconds(46),
+            "Second row");
+
+        Assert.Equal(TimeSpan.FromSeconds(37), secondRow.StartOffset);
+        Assert.Equal(TimeSpan.FromSeconds(46), secondRow.EndOffset);
+        Assert.Equal("Second row", secondRow.Text);
+        Assert.Equal("Maria", secondRow.SpeakerLabel);
+        Assert.Equal(SpeakerLabelSources.Manual, secondRow.SpeakerLabelSource);
+        Assert.Equal(3, secondRow.DiarizationRevision);
+        Assert.Equal(8, secondRow.LastDiarizedChunkIndex);
+        Assert.True(secondRow.IsManuallyReviewed);
     }
 
     [Fact]
@@ -617,6 +776,24 @@ public sealed class MainWindowTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         return completionSource.Task;
+    }
+
+    private static string FindRepoFile(string fileName)
+    {
+        DirectoryInfo? directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null)
+        {
+            string candidate = Path.Combine(directory.FullName, fileName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not locate repo file '{fileName}' from '{AppContext.BaseDirectory}'.");
     }
 
     private static FinalizedTranscriptLineViewModel CreateTimedLine(

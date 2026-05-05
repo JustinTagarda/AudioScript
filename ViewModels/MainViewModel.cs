@@ -500,7 +500,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 return "Drop audio here, choose a file, or open a session.";
             }
 
-            return "Choose a mode, then generate the transcript.";
+            return "Transcript rows are available.";
         }
     }
 
@@ -822,16 +822,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public void SetPreferredLiveAudioGain(LiveAudioGainOptions options)
     {
-        _ = options.Validate();
-        LiveAudioGainOptions automaticOptions = LiveAudioGainOptions.Default;
-        if (_liveAudioAutoGainEnabled == automaticOptions.IsAutomaticGainEnabled
-            && Math.Abs(_liveAudioGainLevel - automaticOptions.ManualGainLevel) < 0.0001)
+        LiveAudioGainOptions validated = options.Validate();
+        if (_liveAudioAutoGainEnabled == validated.IsAutomaticGainEnabled
+            && Math.Abs(_liveAudioGainLevel - validated.ManualGainLevel) < 0.0001)
         {
             return;
         }
 
-        _liveAudioAutoGainEnabled = automaticOptions.IsAutomaticGainEnabled;
-        _liveAudioGainLevel = automaticOptions.ManualGainLevel;
+        _liveAudioAutoGainEnabled = validated.IsAutomaticGainEnabled;
+        _liveAudioGainLevel = validated.ManualGainLevel;
         SaveAppPreferences();
     }
 
@@ -1377,7 +1376,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             _lastSpeakerDetectionUsedHeuristicFallback = false;
             NotifyPropertyChanged(nameof(LastSpeakerDetectionUsedHeuristicFallback));
-            SaveSpeakerDiarizationCheckpoint("Speaker diarization checkpoint saved.");
+            if (!SaveSpeakerDiarizationCheckpoint("Speaker diarization checkpoint saved."))
+            {
+                AppendLog("Detect Speakers aborted: initial speaker diarization checkpoint could not be saved.");
+                return false;
+            }
 
             for (int chunkIndex = Math.Max(0, job.LastCompletedChunkIndex + 1);
                  chunkIndex < chunkedAudio.Chunks.Count;
@@ -1388,6 +1391,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 IReadOnlyList<SpeakerDiarizationRowWorkItem> rowWorkItems = BuildSpeakerDiarizationRowWorkItems(chunk.Plan);
                 if (rowWorkItems.Count > 0)
                 {
+                    SpeakerDiarizationChunkCheckpoint? checkpoint = CaptureSpeakerDiarizationChunkCheckpoint(job, rowWorkItems);
                     TranscriptionResult chunkTranscription = BuildChunkSpeakerDiarizationTranscriptionResult(
                         transcriptionResult,
                         rowWorkItems,
@@ -1410,11 +1414,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     }
 
                     ApplySpeakerDiarizationChunk(job, chunk.Plan, rowWorkItems, chunkResult.Segments);
+                    job.LastCompletedChunkIndex = chunkIndex;
+                    job.LastUpdatedUtc = DateTimeOffset.UtcNow;
+                    if (!SaveSpeakerDiarizationCheckpoint($"Speaker diarization checkpoint saved after chunk {chunkIndex + 1:N0} of {chunkedAudio.Chunks.Count:N0}."))
+                    {
+                        RestoreSpeakerDiarizationChunkCheckpoint(job, checkpoint);
+                        AppendLog($"Detect Speakers aborted: checkpoint save failed after chunk {chunkIndex + 1:N0}.");
+                        return false;
+                    }
                 }
-
-                job.LastCompletedChunkIndex = chunkIndex;
-                job.LastUpdatedUtc = DateTimeOffset.UtcNow;
-                SaveSpeakerDiarizationCheckpoint($"Speaker diarization checkpoint saved after chunk {chunkIndex + 1:N0} of {chunkedAudio.Chunks.Count:N0}.");
+                else
+                {
+                    job.LastCompletedChunkIndex = chunkIndex;
+                    job.LastUpdatedUtc = DateTimeOffset.UtcNow;
+                    if (!SaveSpeakerDiarizationCheckpoint($"Speaker diarization checkpoint saved after chunk {chunkIndex + 1:N0} of {chunkedAudio.Chunks.Count:N0}."))
+                    {
+                        AppendLog($"Detect Speakers aborted: checkpoint save failed after chunk {chunkIndex + 1:N0}.");
+                        return false;
+                    }
+                }
             }
 
             FinalizeSpeakerDiarizationJob(job);
@@ -1444,14 +1462,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             MarkSpeakerDiarizationJobStopped(SpeakerDiarizationJobStatuses.Canceled, string.Empty);
-            SaveSpeakerDiarizationCheckpoint("Speaker diarization canceled; partial speaker labels were kept.");
+            if (!SaveSpeakerDiarizationCheckpoint("Speaker diarization canceled; partial speaker labels were kept."))
+            {
+                AppendLog("Speaker diarization cancellation state could not be saved.");
+            }
             AppendLog("Detect Speakers canceled.");
             return false;
         }
         catch (Exception ex)
         {
             MarkSpeakerDiarizationJobStopped(SpeakerDiarizationJobStatuses.Failed, ex.Message);
-            SaveSpeakerDiarizationCheckpoint("Speaker diarization failed; partial speaker labels were kept.");
+            if (!SaveSpeakerDiarizationCheckpoint("Speaker diarization failed; partial speaker labels were kept."))
+            {
+                AppendLog("Speaker diarization failure state could not be saved.");
+            }
             AppendLog($"Detect Speakers failed. audioPath='{audioFilePath}', error='{ex.Message}'.");
             throw;
         }
@@ -1505,7 +1529,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             RaiseError($"Unable to confirm speaker detection resume: {ex.Message}");
             AppendLog($"Detect Speakers canceled: resume confirmation failed: {ex.Message}");
-            return true;
+            return false;
         }
 
         shouldResume = request.IsConfirmed;
@@ -1622,6 +1646,69 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             updatedTranscriptMode: null,
             showErrorDialog: false,
             successLogMessage: successLogMessage);
+    }
+
+    private SpeakerDiarizationChunkCheckpoint CaptureSpeakerDiarizationChunkCheckpoint(
+        SpeakerDiarizationJobDocument job,
+        IReadOnlyList<SpeakerDiarizationRowWorkItem> rowWorkItems)
+    {
+        return new SpeakerDiarizationChunkCheckpoint(
+            job.LastCompletedChunkIndex,
+            job.LastUpdatedUtc,
+            job.NextSpeakerIndex,
+            job.SpeakerMappings
+                .Select(mapping => new SpeakerDiarizationSpeakerMapDocument
+                {
+                    ChunkSpeakerKey = mapping.ChunkSpeakerKey,
+                    GlobalSpeakerLabel = mapping.GlobalSpeakerLabel,
+                })
+                .ToArray(),
+            rowWorkItems
+                .Where(item => item.ShouldCommit)
+                .Select(item => new SpeakerDiarizationRowSnapshot(
+                    item.Line,
+                    item.Line.SpeakerLabel,
+                    item.Line.SpeakerLabelSource,
+                    item.Line.DiarizationRevision,
+                    item.Line.LastDiarizedChunkIndex))
+                .ToArray());
+    }
+
+    private void RestoreSpeakerDiarizationChunkCheckpoint(
+        SpeakerDiarizationJobDocument job,
+        SpeakerDiarizationChunkCheckpoint checkpoint)
+    {
+        _isApplyingSpeakerDiarizationLabels = true;
+        try
+        {
+            foreach (SpeakerDiarizationRowSnapshot row in checkpoint.Rows)
+            {
+                row.Line.SpeakerLabel = row.SpeakerLabel;
+                row.Line.SpeakerLabelSource = row.SpeakerLabelSource;
+                row.Line.DiarizationRevision = row.DiarizationRevision;
+                row.Line.LastDiarizedChunkIndex = row.LastDiarizedChunkIndex;
+            }
+        }
+        finally
+        {
+            _isApplyingSpeakerDiarizationLabels = false;
+        }
+
+        job.LastCompletedChunkIndex = checkpoint.LastCompletedChunkIndex;
+        job.LastUpdatedUtc = checkpoint.LastUpdatedUtc;
+        job.NextSpeakerIndex = checkpoint.NextSpeakerIndex;
+        job.SpeakerMappings.Clear();
+        foreach (SpeakerDiarizationSpeakerMapDocument mapping in checkpoint.SpeakerMappings)
+        {
+            job.SpeakerMappings.Add(new SpeakerDiarizationSpeakerMapDocument
+            {
+                ChunkSpeakerKey = mapping.ChunkSpeakerKey,
+                GlobalSpeakerLabel = mapping.GlobalSpeakerLabel,
+            });
+        }
+
+        RebuildFinalizedTextFromLines();
+        NotifyCurrentTranscriptStateChanged();
     }
 
     private IReadOnlyList<SpeakerDiarizationRowWorkItem> BuildSpeakerDiarizationRowWorkItems(AudioChunkPlan plan)
@@ -3968,6 +4055,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         int RowIndex,
         FinalizedTranscriptLineViewModel Line,
         bool ShouldCommit);
+
+    private sealed record SpeakerDiarizationRowSnapshot(
+        FinalizedTranscriptLineViewModel Line,
+        string SpeakerLabel,
+        string SpeakerLabelSource,
+        int? DiarizationRevision,
+        int? LastDiarizedChunkIndex);
+
+    private sealed record SpeakerDiarizationChunkCheckpoint(
+        int LastCompletedChunkIndex,
+        DateTimeOffset? LastUpdatedUtc,
+        int NextSpeakerIndex,
+        IReadOnlyList<SpeakerDiarizationSpeakerMapDocument> SpeakerMappings,
+        IReadOnlyList<SpeakerDiarizationRowSnapshot> Rows);
 }
 
 

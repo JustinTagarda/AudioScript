@@ -6,7 +6,12 @@ import torch
 from pyannote.audio import Pipeline
 
 
+def emit(stage: str) -> None:
+    print(stage, file=sys.stderr, flush=True)
+
+
 def load_waveform(audio_file: str) -> dict[str, object]:
+    emit("waveform_loading")
     with wave.open(audio_file, "rb") as wav_file:
         channel_count = wav_file.getnchannels()
         sample_width = wav_file.getsampwidth()
@@ -27,6 +32,7 @@ def load_waveform(audio_file: str) -> dict[str, object]:
         raise ValueError(f"Unsupported WAV sample width: {sample_width} byte(s)")
 
     waveform = waveform.reshape(-1, channel_count).transpose(0, 1).contiguous()
+    emit("waveform_loaded")
     return {"waveform": waveform, "sample_rate": sample_rate}
 
 
@@ -41,12 +47,18 @@ def main() -> int:
     model_directory = sys.argv[1]
     audio_file = sys.argv[2]
 
+    emit("runner_started")
+    emit("model_loading")
     pipeline = Pipeline.from_pretrained(model_directory)
+    emit("model_loaded")
+    emit("inference_started")
     output = pipeline(load_waveform(audio_file))
+    emit("inference_finished")
     diarization = getattr(output, "exclusive_speaker_diarization", None)
     if diarization is None:
         diarization = output.speaker_diarization
 
+    emit("serializing_turns")
     turns = [
         {
             "speaker": str(speaker),
@@ -56,6 +68,7 @@ def main() -> int:
         for segment, _, speaker in diarization.itertracks(yield_label=True)
     ]
     json.dump(turns, sys.stdout, separators=(",", ":"))
+    emit("completed")
     return 0
 
 

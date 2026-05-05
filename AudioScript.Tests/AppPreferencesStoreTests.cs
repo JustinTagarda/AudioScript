@@ -117,7 +117,7 @@ public sealed class AppPreferencesStoreTests {
     }
 
     [Fact]
-    public void Save_AndLoad_ForcesAutomaticLiveAudioGainPreference() {
+    public void Save_AndLoad_RoundTripLiveAudioGainPreference() {
         string rootPath = CreateTempDirectory();
         string settingsPath = Path.Combine(rootPath, "app-preferences.json");
 
@@ -136,8 +136,8 @@ public sealed class AppPreferencesStoreTests {
                 LiveAudioGainLevel: 0.75));
             AppPreferencesSnapshot snapshot = store.Load();
 
-            Assert.True(snapshot.LiveAudioAutoGainEnabled);
-            Assert.Equal(LiveAudioGainOptions.DefaultManualGainLevel, snapshot.LiveAudioGainLevel);
+            Assert.False(snapshot.LiveAudioAutoGainEnabled);
+            Assert.Equal(0.75, snapshot.LiveAudioGainLevel, precision: 6);
             Assert.Empty(Directory.EnumerateFiles(rootPath, "*.tmp", SearchOption.AllDirectories));
         }
         finally {
@@ -146,7 +146,39 @@ public sealed class AppPreferencesStoreTests {
     }
 
     [Fact]
-    public void Save_AndLoad_RoundTripAudioScriptPlaybackLiveSourcePreference() {
+    public void Load_DefaultsAutomaticGainToEnabled_WhenLegacySettingIsMissing() {
+        string rootPath = CreateTempDirectory();
+        string settingsPath = Path.Combine(rootPath, "app-preferences.json");
+
+        try {
+            Directory.CreateDirectory(rootPath);
+            File.WriteAllText(
+                settingsPath,
+                """
+                {
+                  "CopyFinalizedWithTimeline": false,
+                  "AutoTranscribeWithAi": false,
+                  "ThemePreference": "System",
+                  "AutoPlayTimelineSelection": true,
+                  "LiveAudioSourceKind": "DefaultPlayback",
+                  "LiveAudioDeviceNumber": -1,
+                  "SelectedEngineId": "whisper-small"
+                }
+                """);
+            var store = new AppPreferencesStore(settingsPath);
+
+            AppPreferencesSnapshot snapshot = store.Load();
+
+            Assert.True(snapshot.LiveAudioAutoGainEnabled);
+            Assert.Equal(LiveAudioGainOptions.DefaultManualGainLevel, snapshot.LiveAudioGainLevel, precision: 6);
+        }
+        finally {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public void Save_AndLoad_RoundTripDefaultPlaybackLiveSourcePreference() {
         string rootPath = CreateTempDirectory();
         string settingsPath = Path.Combine(rootPath, "app-preferences.json");
 
@@ -158,13 +190,13 @@ public sealed class AppPreferencesStoreTests {
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.System,
                 AutoPlayTimelineSelection: true,
-                LiveAudioSourceKind: LiveAudioSourceKind.AudioScriptPlayback,
-                LiveAudioDeviceNumber: -2,
+                LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                LiveAudioDeviceNumber: -1,
                 SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
             AppPreferencesSnapshot snapshot = store.Load();
 
-            Assert.Equal(LiveAudioSourceKind.AudioScriptPlayback, snapshot.LiveAudioSourceKind);
-            Assert.Equal(-2, snapshot.LiveAudioDeviceNumber);
+            Assert.Equal(LiveAudioSourceKind.DefaultPlayback, snapshot.LiveAudioSourceKind);
+            Assert.Equal(-1, snapshot.LiveAudioDeviceNumber);
             Assert.Empty(Directory.EnumerateFiles(rootPath, "*.tmp", SearchOption.AllDirectories));
         }
         finally {

@@ -21,6 +21,21 @@
     <ProjectReference Include="..\\AudioScript.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="bin\\**\\*.cs" />
+    <Compile Remove="obj\\**\\*.cs" />
+    <Compile Remove="artifacts\\**\\*.cs" />
+    <Compile Remove="publish\\**\\*.cs" />
+    <EmbeddedResource Remove="bin\\**\\*" />
+    <EmbeddedResource Remove="obj\\**\\*" />
+    <EmbeddedResource Remove="artifacts\\**\\*" />
+    <EmbeddedResource Remove="publish\\**\\*" />
+    <Page Remove="bin\\**\\*" />
+    <Page Remove="obj\\**\\*" />
+    <Page Remove="artifacts\\**\\*" />
+    <Page Remove="publish\\**\\*" />
+  </ItemGroup>
+
 </Project>
 
 

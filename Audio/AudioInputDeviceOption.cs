@@ -5,8 +5,6 @@ public enum LiveAudioSourceKind
     Microphone,
     DefaultPlayback,
     MicrophoneAndDefaultPlayback,
-    AudioScriptPlayback,
-    MicrophoneAndAudioScriptPlayback,
 }
 
 public sealed record AudioInputDeviceOption(

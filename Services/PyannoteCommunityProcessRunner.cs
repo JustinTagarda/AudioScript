@@ -11,6 +11,7 @@ public interface IPyannoteCommunityProcessRunner
         string runnerScriptPath,
         string modelDirectoryPath,
         string audioFilePath,
+        Action<string>? onStandardErrorLine,
         CancellationToken cancellationToken);
 }
 
@@ -27,6 +28,7 @@ public sealed class PyannoteCommunityProcessRunner : IPyannoteCommunityProcessRu
         string runnerScriptPath,
         string modelDirectoryPath,
         string audioFilePath,
+        Action<string>? onStandardErrorLine,
         CancellationToken cancellationToken)
     {
         using var process = new Process
@@ -55,7 +57,7 @@ public sealed class PyannoteCommunityProcessRunner : IPyannoteCommunityProcessRu
         }
 
         Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        Task<string> stderrTask = ReadStandardErrorAsync(process.StandardError, onStandardErrorLine, cancellationToken);
 
         try
         {
@@ -80,5 +82,31 @@ public sealed class PyannoteCommunityProcessRunner : IPyannoteCommunityProcessRu
 
             throw;
         }
+    }
+
+    private static async Task<string> ReadStandardErrorAsync(
+        StreamReader reader,
+        Action<string>? onStandardErrorLine,
+        CancellationToken cancellationToken)
+    {
+        var builder = new StringBuilder();
+        while (true)
+        {
+            string? line = await reader.ReadLineAsync(cancellationToken);
+            if (line is null)
+            {
+                break;
+            }
+
+            if (builder.Length > 0)
+            {
+                builder.AppendLine();
+            }
+
+            builder.Append(line);
+            onStandardErrorLine?.Invoke(line);
+        }
+
+        return builder.ToString();
     }
 }

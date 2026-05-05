@@ -53,6 +53,7 @@ public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngi
                     _modelManager.RunnerScriptPath,
                     _modelManager.ModelDirectoryPath,
                     standardizedPath,
+                    HandleStandardErrorLine,
                     cancellationToken);
 
                 if (result.ExitCode != 0)
@@ -185,6 +186,31 @@ public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngi
     private void Log(string message)
     {
         _processLogService.Log("PyannoteDiarization", message);
+    }
+
+    private void HandleStandardErrorLine(string line)
+    {
+        string trimmed = line?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return;
+        }
+
+        string? mappedMessage = trimmed switch
+        {
+            "runner_started" => "Pyannote runner started.",
+            "model_loading" => "Pyannote model loading.",
+            "model_loaded" => "Pyannote model loaded.",
+            "waveform_loading" => "Pyannote waveform loading.",
+            "waveform_loaded" => "Pyannote waveform loaded.",
+            "inference_started" => "Pyannote inference started.",
+            "inference_finished" => "Pyannote inference finished.",
+            "serializing_turns" => "Pyannote serializing speaker turns.",
+            "completed" => "Pyannote runner completed.",
+            _ => null,
+        };
+
+        Log(mappedMessage ?? $"Pyannote stderr: {trimmed}");
     }
 
     private sealed record PyannoteTurnDto(

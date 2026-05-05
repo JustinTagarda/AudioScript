@@ -120,6 +120,46 @@ public sealed class PyannoteCommunityModelManagerTests
         }
     }
 
+    [Fact]
+    public async Task DiarizeAudioFileAsync_LogsHeartbeatStages()
+    {
+        string assetsPath = CreateTempDirectory();
+        string audioPath = CreateSilentWaveFile(TimeSpan.FromSeconds(2));
+        string logsPath = CreateTempDirectory();
+
+        try
+        {
+            CreatePyannoteAssets(assetsPath, Architecture.X64);
+            var manager = new PyannoteCommunityModelManager(
+                assetsPath,
+                architectureResolver: () => Architecture.X64);
+            var runner = new StubPyannoteCommunityProcessRunner(
+                """[{"speaker":"SPEAKER_00","start":0.1,"end":1.2}]""",
+                ["runner_started", "model_loaded", "inference_started", "inference_finished", "completed"]);
+            using var logs = new ProcessLogService(logsPath);
+            var engine = new PyannoteCommunityDiarizationEngine(
+                new AudioStandardizer(),
+                manager,
+                logs,
+                runner);
+
+            await engine.DiarizeAudioFileAsync(audioPath, CancellationToken.None);
+
+            string logText = File.ReadAllText(logs.LogFilePath);
+            Assert.Contains("Pyannote runner started.", logText, StringComparison.Ordinal);
+            Assert.Contains("Pyannote model loaded.", logText, StringComparison.Ordinal);
+            Assert.Contains("Pyannote inference started.", logText, StringComparison.Ordinal);
+            Assert.Contains("Pyannote inference finished.", logText, StringComparison.Ordinal);
+            Assert.Contains("Pyannote runner completed.", logText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(audioPath);
+            DeleteDirectory(assetsPath);
+            DeleteDirectory(logsPath);
+        }
+    }
+
     private static void CreatePyannoteAssets(string assetsPath, Architecture architecture)
     {
         CreateRunnerScript(assetsPath);
@@ -199,10 +239,12 @@ public sealed class PyannoteCommunityModelManagerTests
     private sealed class StubPyannoteCommunityProcessRunner : IPyannoteCommunityProcessRunner
     {
         private readonly string _standardOutput;
+        private readonly IReadOnlyList<string> _standardErrorLines;
 
-        public StubPyannoteCommunityProcessRunner(string standardOutput)
+        public StubPyannoteCommunityProcessRunner(string standardOutput, IReadOnlyList<string>? standardErrorLines = null)
         {
             _standardOutput = standardOutput;
+            _standardErrorLines = standardErrorLines ?? Array.Empty<string>();
         }
 
         public string? PythonExecutablePath { get; private set; }
@@ -220,6 +262,7 @@ public sealed class PyannoteCommunityModelManagerTests
             string runnerScriptPath,
             string modelDirectoryPath,
             string audioFilePath,
+            Action<string>? onStandardErrorLine,
             CancellationToken cancellationToken)
         {
             PythonExecutablePath = pythonExecutablePath;
@@ -227,7 +270,12 @@ public sealed class PyannoteCommunityModelManagerTests
             ModelDirectoryPath = modelDirectoryPath;
             AudioFilePath = audioFilePath;
             WasAudioFileAvailableAtRun = File.Exists(audioFilePath);
-            return Task.FromResult(new PyannoteCommunityProcessResult(0, _standardOutput, string.Empty));
+            foreach (string line in _standardErrorLines)
+            {
+                onStandardErrorLine?.Invoke(line);
+            }
+
+            return Task.FromResult(new PyannoteCommunityProcessResult(0, _standardOutput, string.Join(Environment.NewLine, _standardErrorLines)));
         }
     }
 }

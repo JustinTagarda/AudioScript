@@ -22,15 +22,18 @@
         <CommandBinding Command="{x:Static local:MainWindow.TranscribeRowCommand}"
                         CanExecute="TranscriptContextCommand_CanExecute"
                         Executed="TranscribeRowCommand_Executed"/>
-        <CommandBinding Command="{x:Static local:MainWindow.DeleteRowCommand}"
+        <CommandBinding Command="{x:Static local:MainWindow.CombineToPreviousRowCommand}"
                         CanExecute="TranscriptContextCommand_CanExecute"
-                        Executed="DeleteRowCommand_Executed"/>
+                        Executed="CombineToPreviousRowCommand_Executed"/>
         <CommandBinding Command="{x:Static local:MainWindow.RenameSpeakerCommand}"
                         CanExecute="TranscriptContextCommand_CanExecute"
                         Executed="RenameSpeakerCommand_Executed"/>
         <CommandBinding Command="{x:Static local:MainWindow.CopyRowTextCommand}"
                         CanExecute="TranscriptContextCommand_CanExecute"
                         Executed="CopyRowTextCommand_Executed"/>
+        <CommandBinding Command="{x:Static local:MainWindow.SeparateRowCommand}"
+                        CanExecute="TranscriptContextCommand_CanExecute"
+                        Executed="SeparateRowCommand_Executed"/>
     </Window.CommandBindings>
     <Window.Resources>
         <Style x:Key="SectionHeaderTextBlockStyle"
@@ -283,6 +286,12 @@
                         <MenuItem Header="Transcribe this row"
                                   Command="{x:Static local:MainWindow.TranscribeRowCommand}"
                                   CommandParameter="{Binding}"/>
+                        <MenuItem Header="Separate into 2 rows"
+                                  Command="{x:Static local:MainWindow.SeparateRowCommand}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="Combine to previous row"
+                                  Command="{x:Static local:MainWindow.CombineToPreviousRowCommand}"
+                                  CommandParameter="{Binding}"/>
                         <MenuItem Header="Rename Speaker To"
                                   Command="{x:Static local:MainWindow.RenameSpeakerCommand}"
                                   CommandParameter="{Binding}">
@@ -300,9 +309,6 @@
                                 </Style>
                             </MenuItem.Style>
                         </MenuItem>
-                        <MenuItem Header="Delete row"
-                                  Command="{x:Static local:MainWindow.DeleteRowCommand}"
-                                  CommandParameter="{Binding}"/>
                         <MenuItem Header="Copy row text"
                                   Command="{x:Static local:MainWindow.CopyRowTextCommand}"
                                   CommandParameter="{Binding}"/>
@@ -901,20 +907,18 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
 
-                                <StackPanel Grid.Row="0"
-                                            Grid.Column="0"
-                                            Margin="0,0,14,0"
-                                            Orientation="Horizontal">
-                                    <TextBlock Text="Player"
-                                               FontSize="16"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock Text="{Binding LoadedAudioFileName}"
-                                               Margin="20,0,0,0"
-                                               FontSize="11"
-                                               VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis"
-                                               MaxWidth="220"/>
-                                </StackPanel>
+                                <TextBlock Grid.Row="0"
+                                           Grid.Column="0"
+                                           Text="Player"
+                                           FontSize="16"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock Grid.Row="0"
+                                           Grid.Column="1"
+                                           Margin="12,0,0,0"
+                                           FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Text="{Binding LoadedAudioFileName}"
+                                           TextWrapping="Wrap"/>
 
                                 <Grid Grid.Row="1"
                                       Grid.ColumnSpan="2"
