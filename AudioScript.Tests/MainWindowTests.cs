@@ -18,12 +18,12 @@ public sealed class MainWindowTests
         string xamlPath = FindRepoFile("MainWindow.xaml");
         string xaml = File.ReadAllText(xamlPath);
 
-        Assert.Contains("<MenuItem Header=\"Transcribe this row\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("<MenuItem Header=\"Separate into 2 rows\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("<MenuItem Header=\"Combine to previous row\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("<MenuItem Header=\"Rename Speaker To\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("<MenuItem Header=\"Merge adjacent rows for selected speaker\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("<MenuItem Header=\"Copy row text\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Transcribe This Row\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Split into Two Rows\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Combine with Previous Row\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Rename Speaker…\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Merge Adjacent Rows for This Speaker\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Copy Row Text\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"Engine\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Insert Row Above\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Insert Row Below\"", xaml, StringComparison.Ordinal);
@@ -38,12 +38,12 @@ public sealed class MainWindowTests
     public void ResolveTranscriptContextMenuItemVisibility_ShowsSpeakerActionOnlyForSpeakerCell()
     {
         Visibility speakerCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
-            header: "Rename Speaker To",
+            header: "Rename Speaker…",
             isSpeakerCellMenu: true,
             isTextCellMenu: false,
             canRenameSpeaker: true);
         Visibility textCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
-            header: "Rename Speaker To",
+            header: "Rename Speaker…",
             isSpeakerCellMenu: false,
             isTextCellMenu: true,
             canRenameSpeaker: true);
@@ -52,12 +52,12 @@ public sealed class MainWindowTests
         Assert.Equal(Visibility.Collapsed, textCellVisibility);
 
         Visibility mergeOnSpeakerCell = MainWindow.ResolveTranscriptContextMenuItemVisibility(
-            header: "Merge adjacent rows for selected speaker",
+            header: "Merge Adjacent Rows for This Speaker",
             isSpeakerCellMenu: true,
             isTextCellMenu: false,
             canRenameSpeaker: true);
         Visibility mergeOnTextCell = MainWindow.ResolveTranscriptContextMenuItemVisibility(
-            header: "Merge adjacent rows for selected speaker",
+            header: "Merge Adjacent Rows for This Speaker",
             isSpeakerCellMenu: false,
             isTextCellMenu: true,
             canRenameSpeaker: true);
@@ -117,17 +117,17 @@ public sealed class MainWindowTests
     public void ResolveTranscriptContextMenuItemVisibility_ShowsTextActionsOnAllColumns()
     {
         Visibility textCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
-            header: "Transcribe this row",
+            header: "Transcribe This Row",
             isSpeakerCellMenu: false,
             isTextCellMenu: true,
             canRenameSpeaker: false);
         Visibility speakerCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
-            header: "Transcribe this row",
+            header: "Transcribe This Row",
             isSpeakerCellMenu: true,
             isTextCellMenu: false,
             canRenameSpeaker: false);
         Visibility otherCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
-            header: "Transcribe this row",
+            header: "Transcribe This Row",
             isSpeakerCellMenu: false,
             isTextCellMenu: false,
             canRenameSpeaker: false);
@@ -141,7 +141,7 @@ public sealed class MainWindowTests
     public void ResolveTranscriptContextMenuItemVisibility_AlwaysShowsGeneralActions()
     {
         Visibility otherCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
-            header: "Copy row text",
+            header: "Copy Row Text",
             isSpeakerCellMenu: false,
             isTextCellMenu: false,
             canRenameSpeaker: false);
@@ -680,6 +680,32 @@ public sealed class MainWindowTests
             TimeSpan.FromSeconds(46));
 
         Assert.Equal(TimeSpan.FromSeconds(37), splitOffset);
+    }
+
+    [Fact]
+    public void SplitRowTextAtIndex_TrimsBothSplitParts()
+    {
+        const string source = " First line.\r\nSecond\tline  ";
+        (string firstText, string secondText) = MainWindow.SplitRowTextAtIndex(source, 12);
+
+        Assert.Equal("First line.", firstText);
+        Assert.Equal("Second\tline", secondText);
+    }
+
+    [Fact]
+    public void TryValidateSeparateRowTextSplit_RejectsOutsideBounds()
+    {
+        Assert.False(MainWindow.TryValidateSeparateRowTextSplit("abc", 0, out _));
+        Assert.False(MainWindow.TryValidateSeparateRowTextSplit("abc", 3, out _));
+    }
+
+    [Fact]
+    public void TryValidateSeparateRowTextSplit_AcceptsValidInternalSplit()
+    {
+        bool valid = MainWindow.TryValidateSeparateRowTextSplit("alpha beta", 5, out string error);
+
+        Assert.True(valid);
+        Assert.Equal(string.Empty, error);
     }
 
     [Fact]

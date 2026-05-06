@@ -289,27 +289,27 @@
             <Setter Property="ContextMenu">
                 <Setter.Value>
                     <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                        <MenuItem Header="Rename Speaker To"
+                        <MenuItem Header="Rename Speaker…"
                                   Command="{x:Static local:MainWindow.RenameSpeakerCommand}"
                                   CommandParameter="{Binding}"/>
-                        <MenuItem Header="Merge adjacent rows for selected speaker"
+                        <MenuItem Header="Merge Adjacent Rows for This Speaker"
                                   Command="{x:Static local:MainWindow.MergeAdjacentRowsForSelectedSpeakerCommand}"
                                   CommandParameter="{Binding}"/>
-                        <MenuItem Header="Merge all adjacent rows by speaker"
+                        <MenuItem Header="Merge All Adjacent Rows by Speaker"
                                   Command="{x:Static local:MainWindow.MergeAllAdjacentRowsBySpeakerCommand}"
                                   CommandParameter="{Binding}"/>
                         <Separator Tag="SpeakerDivider"/>
-                        <MenuItem Header="Transcribe this row"
+                        <MenuItem Header="Transcribe This Row"
                                   Command="{x:Static local:MainWindow.TranscribeRowCommand}"
                                   CommandParameter="{Binding}"/>
-                        <MenuItem Header="Separate into 2 rows"
+                        <MenuItem Header="Split into Two Rows"
                                   Command="{x:Static local:MainWindow.SeparateRowCommand}"
                                   CommandParameter="{Binding}"/>
-                        <MenuItem Header="Combine to previous row"
+                        <MenuItem Header="Combine with Previous Row"
                                   Command="{x:Static local:MainWindow.CombineToPreviousRowCommand}"
                                   CommandParameter="{Binding}"/>
                         <Separator Tag="CopyDivider"/>
-                        <MenuItem Header="Copy row text"
+                        <MenuItem Header="Copy Row Text"
                                   Command="{x:Static local:MainWindow.CopyRowTextCommand}"
                                   CommandParameter="{Binding}"/>
                     </ContextMenu>

@@ -33,13 +33,13 @@
 
         <StackPanel Grid.Row="1"
                     Margin="0,8,0,0">
-            <Button Content="Option 1 - Tab-delimited"
+            <Button Content="Table - Timestamp, Speaker, Text"
                     Tag="&#xE8A5;"
                     Style="{StaticResource ToolbarButtonStyle}"
                     HorizontalAlignment="Stretch"
                     Padding="12,8"
                     Click="OptionTabDelimited_Click"/>
-            <Button Content="Option 2 - Interview layout (no timeline)"
+            <Button Content="Interview Layout - No Timeline"
                     Tag="&#xE8A5;"
                     Style="{StaticResource ToolbarPrimaryButtonStyle}"
                     HorizontalAlignment="Stretch"

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -51,23 +52,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static readonly TimeSpan RowFileTranscriptionTailMargin = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RowFileTranscriptionContextTailMargin = TimeSpan.FromMilliseconds(500);
     public static readonly RoutedUICommand TranscribeRowCommand =
-        new("Transcribe this row", nameof(TranscribeRowCommand), typeof(MainWindow));
+        new("Transcribe This Row", nameof(TranscribeRowCommand), typeof(MainWindow));
     public static readonly RoutedUICommand CombineToPreviousRowCommand =
-        new("Combine to previous row", nameof(CombineToPreviousRowCommand), typeof(MainWindow));
+        new("Combine with Previous Row", nameof(CombineToPreviousRowCommand), typeof(MainWindow));
     public static readonly RoutedUICommand RenameSpeakerCommand =
-        new("Rename Speaker To", nameof(RenameSpeakerCommand), typeof(MainWindow));
+        new("Rename Speaker…", nameof(RenameSpeakerCommand), typeof(MainWindow));
     public static readonly RoutedUICommand MergeAdjacentRowsForSelectedSpeakerCommand =
-        new("Merge adjacent rows for selected speaker", nameof(MergeAdjacentRowsForSelectedSpeakerCommand), typeof(MainWindow));
+        new("Merge Adjacent Rows for This Speaker", nameof(MergeAdjacentRowsForSelectedSpeakerCommand), typeof(MainWindow));
     public static readonly RoutedUICommand MergeAllAdjacentRowsBySpeakerCommand =
-        new("Merge all adjacent rows by speaker", nameof(MergeAllAdjacentRowsBySpeakerCommand), typeof(MainWindow));
+        new("Merge All Adjacent Rows by Speaker", nameof(MergeAllAdjacentRowsBySpeakerCommand), typeof(MainWindow));
     public static readonly RoutedUICommand CopyRowTextCommand =
-        new("Copy row text", nameof(CopyRowTextCommand), typeof(MainWindow));
+        new("Copy Row Text", nameof(CopyRowTextCommand), typeof(MainWindow));
     public static readonly RoutedUICommand SeparateRowCommand =
-        new("Separate into 2 rows", nameof(SeparateRowCommand), typeof(MainWindow));
+        new("Split into Two Rows", nameof(SeparateRowCommand), typeof(MainWindow));
     private static readonly TimeSpan ToastDisplayDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlaybackEditStopDrainDelay = TimeSpan.FromMilliseconds(400);
     private bool _isApplyingTranscriptEditLoopSeek;
     private bool _isTranscriptEditLoopRestartPending;
+    private bool _suppressNextTranscriptGridEditAfterSeparate;
     private MainViewModel? _boundViewModel;
     private CancellationTokenSource? _copyToastCts;
     private CancellationTokenSource? _transcribeAudioBatchTranscriptionCts;
@@ -1699,6 +1701,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     IncludeTimestamps: selectedFormat == TranscriptDocumentFormat.TabDelimited,
                     IncludeSpeakerLabels: true,
                     Format: selectedFormat.Value));
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = saveDialog.FileName,
+                UseShellExecute = true,
+            });
 
             ShowCopyToast(
                 "Transcript exported",
@@ -3143,6 +3150,91 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             source[splitIndex..].Trim());
     }
 
+    internal static (string FirstText, string SecondText) SplitRowTextAtIndex(string? text, int splitIndex)
+    {
+        string source = text ?? string.Empty;
+        int normalizedIndex = Math.Clamp(splitIndex, 0, source.Length);
+        return (
+            source[..normalizedIndex].Trim(),
+            source[normalizedIndex..].Trim());
+    }
+
+    internal static bool TryValidateSeparateRowTextSplit(string? text, int splitIndex, out string errorMessage)
+    {
+        string source = text ?? string.Empty;
+        if (splitIndex <= 0 || splitIndex >= source.Length)
+        {
+            errorMessage = "Place the split cursor inside the text.";
+            return false;
+        }
+
+        (string firstText, string secondText) = SplitRowTextAtIndex(source, splitIndex);
+        if (string.IsNullOrWhiteSpace(firstText) || string.IsNullOrWhiteSpace(secondText))
+        {
+            errorMessage = "Both split text parts must contain visible text.";
+            return false;
+        }
+
+        errorMessage = string.Empty;
+        return true;
+    }
+
+    internal static int ResolveInitialSeparateSplitIndex(string? text)
+    {
+        string source = text ?? string.Empty;
+        if (source.Length <= 1)
+        {
+            return Math.Clamp(source.Length / 2, 0, source.Length);
+        }
+
+        int midpoint = source.Length / 2;
+        int nearestWhitespace = FindNearestWhitespaceToMidpoint(source);
+        if (nearestWhitespace > 0 && nearestWhitespace < source.Length)
+        {
+            return nearestWhitespace;
+        }
+
+        return Math.Clamp(midpoint, 1, source.Length - 1);
+    }
+
+    internal static TimeSpan ResolveSeparateRowSplitOffsetFromTextBoundary(
+        TimeSpan rowStartOffset,
+        TimeSpan rowEndOffset,
+        string originalText,
+        int splitIndex)
+    {
+        double totalSeconds = Math.Max((rowEndOffset - rowStartOffset).TotalSeconds, 0d);
+        if (totalSeconds <= 0d)
+        {
+            return rowStartOffset;
+        }
+
+        int safeTextLength = Math.Max(originalText.Length, 1);
+        double ratio = Math.Clamp(splitIndex / (double)safeTextLength, 0d, 1d);
+        TimeSpan candidate = rowStartOffset + TimeSpan.FromSeconds(totalSeconds * ratio);
+
+        TimeSpan minHalf = TimeSpan.FromMilliseconds(500);
+        TimeSpan minOffset = rowStartOffset + minHalf;
+        TimeSpan maxOffset = rowEndOffset - minHalf;
+        if (maxOffset < minOffset)
+        {
+            minOffset = rowStartOffset + TimeSpan.FromMilliseconds(100);
+            maxOffset = rowEndOffset - TimeSpan.FromMilliseconds(100);
+        }
+
+        if (candidate < minOffset)
+        {
+            return minOffset;
+        }
+
+        if (candidate > maxOffset)
+        {
+            return maxOffset;
+        }
+
+        return candidate;
+    }
+
     internal static TimeSpan ResolveInitialSeparateSplitOffset(TimeSpan startOffset, TimeSpan endOffset)
     {
         TimeSpan minOffset = startOffset + TimeSpan.FromSeconds(1);
@@ -3364,14 +3456,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        (string firstText, string secondText) = SplitRowTextForSeparate(currentLine.Text);
-        TimeSpan initialSplitOffset = ResolveInitialSeparateSplitOffset(rowStartOffset, rowEndOffset);
+        string originalText = currentLine.Text ?? string.Empty;
+        int initialSplitIndex = ResolveInitialSeparateSplitIndex(originalText);
         var dialog = new SeparateRowWindow(
-            rowStartOffset,
-            rowEndOffset,
-            initialSplitOffset,
-            firstText,
-            secondText)
+            originalText,
+            initialSplitIndex)
         {
             Owner = this,
         };
@@ -3381,12 +3470,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (!TryValidateSeparateRowInput(
-            rowStartOffset,
-            rowEndOffset,
-            dialog.SplitOffset,
-            dialog.FirstRowText,
-            dialog.SecondRowText,
+        if (!TryValidateSeparateRowTextSplit(
+            originalText,
+            dialog.SplitIndex,
             out string validationError))
         {
             ShowCopyToast("Separate row", validationError, ToastNotificationType.Warning);
@@ -3400,18 +3486,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        string originalText = currentLine.Text ?? string.Empty;
         TimeSpan? originalStart = currentLine.StartOffset;
         TimeSpan? originalEnd = currentLine.EndOffset;
+        (string firstRowText, string secondRowText) = SplitRowTextAtIndex(originalText, dialog.SplitIndex);
+        TimeSpan splitOffset = ResolveSeparateRowSplitOffsetFromTextBoundary(
+            rowStartOffset,
+            rowEndOffset,
+            originalText,
+            dialog.SplitIndex);
 
         FinalizedTranscriptLineViewModel secondRow = CreateSecondSeparatedRow(
             currentLine,
-            dialog.SplitOffset,
+            splitOffset,
             rowEndOffset,
-            dialog.SecondRowText);
+            secondRowText);
 
-        currentLine.SetTimelineOffsets(rowStartOffset, dialog.SplitOffset);
-        currentLine.Text = dialog.FirstRowText;
+        currentLine.SetTimelineOffsets(rowStartOffset, splitOffset);
+        currentLine.Text = firstRowText;
         currentLine.IsManuallyReviewed = true;
 
         if (!vm.InsertFinalizedTranscriptLine(currentIndex + 1, secondRow))
@@ -3423,8 +3514,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         ShowCopyToast("Row separated", "The selected row was separated into two rows.", ToastNotificationType.Success);
+        _suppressNextTranscriptGridEditAfterSeparate = true;
         Dispatcher.BeginInvoke(new Action(() =>
-            FocusGridCell(secondRow, TranscriptTextColumnIndex, beginEdit: true)), DispatcherPriority.Background);
+            FocusGridCell(secondRow, TranscriptTextColumnIndex, beginEdit: false)), DispatcherPriority.Background);
     }
 
     private void HandleInsertTranscriptRow(
@@ -4173,6 +4265,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void FinalizedTranscriptGrid_BeginningEdit(object sender, DataGridBeginningEditEventArgs e)
     {
+        if (_suppressNextTranscriptGridEditAfterSeparate)
+        {
+            _suppressNextTranscriptGridEditAfterSeparate = false;
+            ClearTranscriptTextEditState();
+            e.Cancel = true;
+            return;
+        }
+
         if (IsTranscribeAudioBatchTranscribing)
         {
             ClearTranscriptTextEditState();
@@ -4968,16 +5068,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         return header switch
         {
-            "Rename Speaker To" => isSpeakerCellMenu && canRenameSpeaker
+            "Rename Speaker…" => isSpeakerCellMenu && canRenameSpeaker
                 ? Visibility.Visible
                 : Visibility.Collapsed,
-            "Merge adjacent rows for selected speaker" => isSpeakerCellMenu && canRenameSpeaker
+            "Merge Adjacent Rows for This Speaker" => isSpeakerCellMenu && canRenameSpeaker
                 ? Visibility.Visible
                 : Visibility.Collapsed,
-            "Merge all adjacent rows by speaker" => isSpeakerCellMenu && canRenameSpeaker
+            "Merge All Adjacent Rows by Speaker" => isSpeakerCellMenu && canRenameSpeaker
                 ? Visibility.Visible
                 : Visibility.Collapsed,
-            "Transcribe this row" or "Separate into 2 rows" or "Combine to previous row" => Visibility.Visible,
+            "Transcribe This Row" or "Split into Two Rows" or "Combine with Previous Row" => Visibility.Visible,
             _ => Visibility.Visible,
         };
     }
