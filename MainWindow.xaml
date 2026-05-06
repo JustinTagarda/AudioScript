@@ -28,6 +28,12 @@
         <CommandBinding Command="{x:Static local:MainWindow.RenameSpeakerCommand}"
                         CanExecute="TranscriptContextCommand_CanExecute"
                         Executed="RenameSpeakerCommand_Executed"/>
+        <CommandBinding Command="{x:Static local:MainWindow.MergeAdjacentRowsForSelectedSpeakerCommand}"
+                        CanExecute="TranscriptContextCommand_CanExecute"
+                        Executed="MergeAdjacentRowsForSelectedSpeakerCommand_Executed"/>
+        <CommandBinding Command="{x:Static local:MainWindow.MergeAllAdjacentRowsBySpeakerCommand}"
+                        CanExecute="TranscriptContextCommand_CanExecute"
+                        Executed="MergeAllAdjacentRowsBySpeakerCommand_Executed"/>
         <CommandBinding Command="{x:Static local:MainWindow.CopyRowTextCommand}"
                         CanExecute="TranscriptContextCommand_CanExecute"
                         Executed="CopyRowTextCommand_Executed"/>
@@ -283,6 +289,16 @@
             <Setter Property="ContextMenu">
                 <Setter.Value>
                     <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="Rename Speaker To"
+                                  Command="{x:Static local:MainWindow.RenameSpeakerCommand}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="Merge adjacent rows for selected speaker"
+                                  Command="{x:Static local:MainWindow.MergeAdjacentRowsForSelectedSpeakerCommand}"
+                                  CommandParameter="{Binding}"/>
+                        <MenuItem Header="Merge all adjacent rows by speaker"
+                                  Command="{x:Static local:MainWindow.MergeAllAdjacentRowsBySpeakerCommand}"
+                                  CommandParameter="{Binding}"/>
+                        <Separator Tag="SpeakerDivider"/>
                         <MenuItem Header="Transcribe this row"
                                   Command="{x:Static local:MainWindow.TranscribeRowCommand}"
                                   CommandParameter="{Binding}"/>
@@ -292,23 +308,7 @@
                         <MenuItem Header="Combine to previous row"
                                   Command="{x:Static local:MainWindow.CombineToPreviousRowCommand}"
                                   CommandParameter="{Binding}"/>
-                        <MenuItem Header="Rename Speaker To"
-                                  Command="{x:Static local:MainWindow.RenameSpeakerCommand}"
-                                  CommandParameter="{Binding}">
-                            <MenuItem.Style>
-                                <Style TargetType="{x:Type MenuItem}">
-                                    <Setter Property="Visibility"
-                                            Value="Visible"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding SpeakerLabel}"
-                                                     Value="">
-                                            <Setter Property="Visibility"
-                                                    Value="Collapsed"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </MenuItem.Style>
-                        </MenuItem>
+                        <Separator Tag="CopyDivider"/>
                         <MenuItem Header="Copy row text"
                                   Command="{x:Static local:MainWindow.CopyRowTextCommand}"
                                   CommandParameter="{Binding}"/>
@@ -516,6 +516,16 @@
                                 Click="CopyFinalizedToClipboard_Click"
                                 Content="Copy"/>
                         <Button
+                                VerticalAlignment="Center"
+                                Padding="8,0"
+                                ToolTip="Export transcript to Word document"
+                                AutomationProperties.Name="Export transcript"
+                                Tag="&#xE8A5;"
+                                Style="{StaticResource ToolbarButtonStyle}"
+                                IsEnabled="{Binding CanCopyTranscript}"
+                                Click="ExportTranscriptToDocument_Click"
+                                Content="Export"/>
+                        <Button
                                 Content="Close"
                                 VerticalAlignment="Center"
                                 Padding="8,0"
@@ -706,6 +716,8 @@
                                                   LostKeyboardFocus="FinalizedTranscriptGrid_LostKeyboardFocus"
                                                   BeginningEdit="FinalizedTranscriptGrid_BeginningEdit"
                                                   CellEditEnding="FinalizedTranscriptGrid_CellEditEnding"
+                                                  PreviewMouseRightButtonDown="FinalizedTranscriptGrid_PreviewMouseRightButtonDown"
+                                                  ContextMenuOpening="FinalizedTranscriptGrid_ContextMenuOpening"
                                                   PreviewKeyDown="FinalizedTranscriptGrid_PreviewKeyDown"
                                                   VerticalScrollBarVisibility="Auto"
                                                   HorizontalScrollBarVisibility="Disabled"

@@ -26,6 +26,13 @@ namespace AudioScript;
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
+    internal enum TranscriptContextMenuScope
+    {
+        OtherCell,
+        SpeakerCell,
+        TextCell,
+    }
+
     private enum TranscriptProcessingWorkflowKind
     {
         None,
@@ -39,6 +46,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const double ToastTopMargin = 48;
     private const double ToastRightMargin = 48;
     private const double ToastHiddenOffsetY = -14;
+    private static readonly TimeSpan LiveRecordingSegmentDuration = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RowFileTranscriptionHeadSilencePadding = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RowFileTranscriptionTailMargin = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RowFileTranscriptionContextTailMargin = TimeSpan.FromMilliseconds(500);
@@ -48,6 +56,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         new("Combine to previous row", nameof(CombineToPreviousRowCommand), typeof(MainWindow));
     public static readonly RoutedUICommand RenameSpeakerCommand =
         new("Rename Speaker To", nameof(RenameSpeakerCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand MergeAdjacentRowsForSelectedSpeakerCommand =
+        new("Merge adjacent rows for selected speaker", nameof(MergeAdjacentRowsForSelectedSpeakerCommand), typeof(MainWindow));
+    public static readonly RoutedUICommand MergeAllAdjacentRowsBySpeakerCommand =
+        new("Merge all adjacent rows by speaker", nameof(MergeAllAdjacentRowsBySpeakerCommand), typeof(MainWindow));
     public static readonly RoutedUICommand CopyRowTextCommand =
         new("Copy row text", nameof(CopyRowTextCommand), typeof(MainWindow));
     public static readonly RoutedUICommand SeparateRowCommand =
@@ -60,7 +72,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private CancellationTokenSource? _copyToastCts;
     private CancellationTokenSource? _transcribeAudioBatchTranscriptionCts;
     private readonly Func<PlaybackTranscriptionSession>? _playbackTranscriptionSessionFactory;
-    private readonly Func<AudioInputDeviceOption, LiveAudioGainOptions, LiveRecordingSession?, PlaybackTranscriptionSession>? _liveTranscriptionSessionFactory;
+    private readonly Func<AudioInputDeviceOption, LiveAudioGainOptions, LiveRecordingSession, LiveRecordingCaptureSession>? _liveRecordingCaptureSessionFactory;
     private readonly IAudioTranscriptionService? _rowAudioTranscriptionService;
     private readonly AudioStandardizer? _rowAudioStandardizer;
     private readonly WaveClipExtractor? _rowWaveClipExtractor;
@@ -94,18 +106,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _transcriptTextEditOriginalText = string.Empty;
     private FinalizedTranscriptLineViewModel? _speakerEditLine;
     private string _speakerEditOriginalLabel = string.Empty;
+    private TranscriptContextMenuScope _transcriptContextMenuScope = TranscriptContextMenuScope.OtherCell;
     private FinalizedTranscriptLineViewModel? _lastPlaybackSyncedLine;
-    private PlaybackTranscriptionSession? _liveTranscriptionSession;
+    private readonly object _liveSegmentTranscriptionSync = new();
+    private readonly Queue<LiveSegmentTranscriptionCompletedEventArgs> _pendingLiveSegmentTranscriptionCompletions = new();
+    private int _liveChunksGenerated;
+    private int _liveChunksQueued;
+    private int _liveChunksProcessing;
+    private int _liveChunksTranscribed;
+    private int _liveChunksFailed;
+    private LiveRecordingCaptureSession? _liveRecordingCaptureSession;
+    private LiveSegmentTranscriptionSession? _liveSegmentTranscriptionSession;
     private LiveRecordingSession? _liveRecordingSession;
     private LiveTranscriptionWindow? _liveTranscriptionWindow;
-    private FinalizedTranscriptLineViewModel? _liveInterimLine;
-    private DateTimeOffset _liveTranscriptionStartedUtc;
-    private TimeSpan _liveTranscriptionBaseOffset;
+    private bool _isLiveSegmentTranscriptionDrainScheduled;
+    private bool _isClosingAfterLiveTranscriptionStop;
+    private bool _forceCancelLiveChunkTranscriptions;
+    private bool _isLiveTranscriptionStopping;
     private int _requiredUpdateShutdownStarted;
 
     public MainWindow(
         Func<PlaybackTranscriptionSession>? playbackTranscriptionSessionFactory = null,
-        Func<AudioInputDeviceOption, LiveAudioGainOptions, LiveRecordingSession?, PlaybackTranscriptionSession>? liveTranscriptionSessionFactory = null,
+        Func<AudioInputDeviceOption, LiveAudioGainOptions, LiveRecordingSession, LiveRecordingCaptureSession>? liveRecordingCaptureSessionFactory = null,
         IAudioTranscriptionService? rowAudioTranscriptionService = null,
         AudioStandardizer? rowAudioStandardizer = null,
         WaveClipExtractor? rowWaveClipExtractor = null,
@@ -113,7 +135,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         WhisperModelManager? whisperModelManager = null)
     {
         _playbackTranscriptionSessionFactory = playbackTranscriptionSessionFactory;
-        _liveTranscriptionSessionFactory = liveTranscriptionSessionFactory;
+        _liveRecordingCaptureSessionFactory = liveRecordingCaptureSessionFactory;
         _rowAudioTranscriptionService = rowAudioTranscriptionService;
         _rowAudioStandardizer = rowAudioStandardizer;
         _rowWaveClipExtractor = rowWaveClipExtractor;
@@ -121,6 +143,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _whisperModelManager = whisperModelManager;
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        Closing += OnMainWindowClosing;
         Closed += OnMainWindowClosed;
         PreviewMouseDown += OnWindowMouseDismissToast;
         PreviewMouseWheel += OnWindowMouseWheelDismissToast;
@@ -648,7 +671,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (_liveTranscriptionSessionFactory is null)
+        IAudioTranscriptionService? audioTranscriptionService = _rowAudioTranscriptionService;
+        ProcessLogService? processLogService = _processLogService;
+        if (_liveRecordingCaptureSessionFactory is null || audioTranscriptionService is null || processLogService is null)
         {
             ShowCopyToast(
                 "Live transcription unavailable",
@@ -680,9 +705,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         var window = new LiveTranscriptionWindow(
             devices,
-            ResolveCurrentEngineLabel(vm),
             async selectedDevice => await StartLiveTranscriptionAsync(vm, selectedDevice),
-            async () => await StopLiveTranscriptionAsync(vm, showToast: true))
+            async () => await StopLiveTranscriptionAsync(vm, showToast: true),
+            vm.SetPreferredLiveAudioGain,
+            async () => await CloseLiveTranscriptionFromModalAsync(vm),
+            async () => await EscalateLiveCloseCancellationAsync())
         {
             Owner = this,
         };
@@ -707,7 +734,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         MainViewModel vm,
         AudioInputDeviceOption selectedDevice)
     {
-        if (_liveTranscriptionSessionFactory is null)
+        IAudioTranscriptionService? audioTranscriptionService = _rowAudioTranscriptionService;
+        ProcessLogService? processLogService = _processLogService;
+        if (_liveRecordingCaptureSessionFactory is null || audioTranscriptionService is null || processLogService is null)
         {
             ShowCopyToast(
                 "Live transcription unavailable",
@@ -738,12 +767,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ConfigureTranscriptProcessingUi(
             title: "Live Transcription",
             allowMute: false);
-        _liveTranscriptionWindow?.SetTranscriptionEngine(ResolveCurrentEngineLabel(vm));
 
         LiveRecordingSession recordingSession;
         try
         {
-            recordingSession = vm.CreateLiveRecordingSession(selectedDevice.Name);
+            recordingSession = vm.CreateLiveRecordingSession(selectedDevice.Name, LiveRecordingSegmentDuration);
         }
         catch (Exception ex)
         {
@@ -755,16 +783,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return false;
         }
 
-        PlaybackTranscriptionSession session = _liveTranscriptionSessionFactory(selectedDevice, gainOptions, recordingSession);
-        _liveTranscriptionSession = session;
+        LiveRecordingCaptureSession captureSession = _liveRecordingCaptureSessionFactory(selectedDevice, gainOptions, recordingSession);
+        var segmentTranscriptionSession = new LiveSegmentTranscriptionSession(
+            recordingSession,
+            audioTranscriptionService,
+            processLogService);
+        _liveRecordingCaptureSession = captureSession;
+        _liveSegmentTranscriptionSession = segmentTranscriptionSession;
         _liveRecordingSession = recordingSession;
-        _liveInterimLine = null;
-        _liveTranscriptionStartedUtc = DateTimeOffset.Now;
-        _liveTranscriptionBaseOffset = vm.GetCurrentTranscriptEndOffset();
-        session.PlaybackInterimTranscriptionUpdated += OnLiveInterimTranscriptionUpdated;
-        session.PlaybackFinalTranscriptionAvailable += OnLiveFinalTranscriptionAvailable;
-        session.AudioLevelChanged += OnLiveAudioLevelChanged;
-        session.Faulted += OnLiveTranscriptionFaulted;
+        ResetLiveChunkCounts();
+        captureSession.AudioLevelChanged += OnLiveAudioLevelChanged;
+        captureSession.Faulted += OnLiveTranscriptionFaulted;
+        segmentTranscriptionSession.SegmentTranscriptionQueued += OnLiveSegmentTranscriptionQueued;
+        segmentTranscriptionSession.SegmentTranscriptionStarted += OnLiveSegmentTranscriptionStarted;
+        segmentTranscriptionSession.SegmentTranscriptionCompleted += OnLiveSegmentTranscriptionCompleted;
+        segmentTranscriptionSession.SegmentTranscriptionFailed += OnLiveSegmentTranscriptionFailed;
         recordingSession.Faulted += OnLiveRecordingFaulted;
 
         try
@@ -776,7 +809,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             vm.SetGenerationRunning(isRunning: true, isLiveTranscriptionRunning: true);
             LogLiveTranscription(
                 $"Live transcription started source='{selectedDevice.Name}', kind={selectedDevice.Kind}, deviceNumber={selectedDevice.DeviceNumber}, model='{model}'.");
-            session.StartPlaybackTranscription(model);
+            segmentTranscriptionSession.Start(model);
+            captureSession.Start();
             _liveTranscriptionWindow?.SetTranscribing(true);
             _liveTranscriptionWindow?.SetListeningActivity(ResolveTranscriptionEngineLabel(model));
             await Dispatcher.Yield(DispatcherPriority.Background);
@@ -784,14 +818,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         catch (Exception ex)
         {
-            DetachLiveTranscriptionSession(session);
+            DetachLiveRecordingCaptureSession(captureSession);
+            DetachLiveSegmentTranscriptionSession(segmentTranscriptionSession);
             recordingSession.Faulted -= OnLiveRecordingFaulted;
-            _liveTranscriptionSession = null;
+            _liveRecordingCaptureSession = null;
+            _liveSegmentTranscriptionSession = null;
             _liveRecordingSession = null;
             IsLiveTranscribing = false;
             vm.SetGenerationRunning(isRunning: false);
             await recordingSession.InterruptAsync(ex.Message);
-            await DisposePlaybackTranscriptionSessionAsync(session);
+            await DisposeLiveSegmentTranscriptionSessionAsync(segmentTranscriptionSession);
+            await DisposeLiveRecordingCaptureSessionAsync(captureSession);
             vm.LogHandledException("live transcription start", ex);
             _liveTranscriptionWindow?.SetFailureActivity(ex.Message);
             ShowCopyToast(
@@ -832,11 +869,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return options;
     }
 
-    private async Task StopLiveTranscriptionAsync(MainViewModel vm, bool showToast)
+    private async Task StopLiveTranscriptionAsync(
+        MainViewModel vm,
+        bool showToast,
+        bool cancelPendingTranscriptions = false)
     {
-        PlaybackTranscriptionSession? session = _liveTranscriptionSession;
+        LiveRecordingCaptureSession? captureSession = _liveRecordingCaptureSession;
+        LiveSegmentTranscriptionSession? segmentTranscriptionSession = _liveSegmentTranscriptionSession;
         LiveRecordingSession? recordingSession = _liveRecordingSession;
-        if (session is null)
+        if (captureSession is null)
         {
             IsLiveTranscribing = false;
             vm.SetGenerationRunning(isRunning: false);
@@ -845,8 +886,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
+            _isLiveTranscriptionStopping = true;
+            bool shouldCancelPendingTranscriptions = cancelPendingTranscriptions || _forceCancelLiveChunkTranscriptions;
+            int initialPendingChunks = GetLivePendingChunkCount();
+            (int generated, int queued, int processing, int transcribed, int failed) = GetLiveChunkSnapshot();
             _liveTranscriptionWindow?.SetStoppingActivity();
-            await session.StopPlaybackTranscriptionAsync();
+            if (shouldCancelPendingTranscriptions)
+            {
+                _liveTranscriptionWindow?.SetCancelPendingChunkProgress();
+            }
+            else
+            {
+                _liveTranscriptionWindow?.SetDrainPendingChunkProgress(initialPendingChunks);
+            }
+            _liveTranscriptionWindow?.SetChunkCounts(generated, queued, processing, transcribed, failed);
+            await captureSession.StopAsync();
             if (recordingSession is not null)
             {
                 if (recordingSession.IsFaulted)
@@ -860,8 +914,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 vm.RefreshLiveRecordingMetadata();
                 vm.LoadCurrentSessionAudioPreview();
+                _liveTranscriptionWindow?.SetRecordingSavedForClose();
             }
 
+            if (segmentTranscriptionSession is not null)
+            {
+                if (shouldCancelPendingTranscriptions)
+                {
+                    await segmentTranscriptionSession.CancelAsync();
+                    ClearPendingLiveChunkCounts();
+                }
+                else
+                {
+                    await segmentTranscriptionSession.StopAsync();
+                }
+            }
+
+            DrainPendingLiveSegmentTranscriptionResults();
             vm.SaveLiveTranscriptSession();
             LogLiveTranscription("Live transcription stopped.");
             _liveTranscriptionWindow?.SetStoppedActivity(recordingSession?.IsFaulted == true);
@@ -898,34 +967,179 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         finally
         {
-            DetachLiveTranscriptionSession(session);
+            _isLiveTranscriptionStopping = false;
+            _forceCancelLiveChunkTranscriptions = false;
+            DetachLiveRecordingCaptureSession(captureSession);
+            if (segmentTranscriptionSession is not null)
+            {
+                DetachLiveSegmentTranscriptionSession(segmentTranscriptionSession);
+            }
             if (recordingSession is not null)
             {
                 recordingSession.Faulted -= OnLiveRecordingFaulted;
             }
 
-            _liveTranscriptionSession = null;
+            _liveRecordingCaptureSession = null;
+            _liveSegmentTranscriptionSession = null;
             _liveRecordingSession = null;
-            _liveInterimLine = null;
             IsLiveTranscribing = false;
             vm.SetGenerationRunning(isRunning: false);
             _liveTranscriptionWindow?.SetTranscribing(false);
-            await DisposePlaybackTranscriptionSessionAsync(session);
+            if (segmentTranscriptionSession is not null)
+            {
+                await DisposeLiveSegmentTranscriptionSessionAsync(segmentTranscriptionSession);
+            }
+            await DisposeLiveRecordingCaptureSessionAsync(captureSession);
         }
     }
 
-    private void OnLiveInterimTranscriptionUpdated(object? sender, PlaybackTranscriptionUpdate update)
+    private async Task<bool> CloseLiveTranscriptionFromModalAsync(MainViewModel vm)
     {
-        Dispatcher.BeginInvoke(
-            new Action(() => ApplyLiveTranscriptionUpdate(update.Text, isFinal: false)),
-            DispatcherPriority.Background);
+        if (_liveRecordingCaptureSession is null)
+        {
+            return true;
+        }
+
+        _forceCancelLiveChunkTranscriptions = true;
+        (int generated, int _, int _, int transcribed, int failed) = GetLiveChunkSnapshot();
+        _liveTranscriptionWindow?.SetChunkCounts(
+            generated: generated,
+            queued: 0,
+            processing: 0,
+            transcribed: transcribed,
+            failed: failed);
+
+        await StopLiveTranscriptionAsync(
+            vm,
+            showToast: false,
+            cancelPendingTranscriptions: true);
+        return true;
     }
 
-    private void OnLiveFinalTranscriptionAvailable(object? sender, PlaybackTranscriptionUpdate update)
+    private async Task EscalateLiveCloseCancellationAsync()
     {
-        Dispatcher.BeginInvoke(
-            new Action(() => ApplyLiveTranscriptionUpdate(update.Text, isFinal: true)),
-            DispatcherPriority.Background);
+        _forceCancelLiveChunkTranscriptions = true;
+        LiveSegmentTranscriptionSession? session = _liveSegmentTranscriptionSession;
+        if (session is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await session.CancelAsync();
+        }
+        catch (Exception ex)
+        {
+            _boundViewModel?.LogHandledException("live close cancellation", ex);
+        }
+        finally
+        {
+            ClearPendingLiveChunkCounts();
+        }
+    }
+
+    private void ResetLiveChunkCounts()
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            _liveChunksGenerated = 0;
+            _liveChunksQueued = 0;
+            _liveChunksProcessing = 0;
+            _liveChunksTranscribed = 0;
+            _liveChunksFailed = 0;
+        }
+
+        ScheduleLiveChunkCountUpdate();
+    }
+
+    private void ClearPendingLiveChunkCounts()
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            _liveChunksQueued = 0;
+            _liveChunksProcessing = 0;
+        }
+
+        ScheduleLiveChunkCountUpdate();
+    }
+
+    private void MarkLiveChunkTranscribed()
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            if (_liveChunksProcessing > 0)
+            {
+                _liveChunksProcessing--;
+            }
+
+            _liveChunksTranscribed++;
+        }
+
+        ScheduleLiveChunkCountUpdate();
+    }
+
+    private bool HasPendingLiveChunkTranscriptions()
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            return _liveChunksQueued > 0 || _liveChunksProcessing > 0;
+        }
+    }
+
+    private int GetLivePendingChunkCount()
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            return Math.Max(0, _liveChunksQueued) + Math.Max(0, _liveChunksProcessing);
+        }
+    }
+
+    private (int Generated, int Queued, int Processing, int Transcribed, int Failed) GetLiveChunkSnapshot()
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            return (
+                Generated: _liveChunksGenerated,
+                Queued: _liveChunksQueued,
+                Processing: _liveChunksProcessing,
+                Transcribed: _liveChunksTranscribed,
+                Failed: _liveChunksFailed);
+        }
+    }
+
+    private void ScheduleLiveChunkCountUpdate()
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(new Action(UpdateLiveChunkCountDisplay), DispatcherPriority.Background);
+    }
+
+    private void UpdateLiveChunkCountDisplay()
+    {
+        int generated;
+        int queued;
+        int processing;
+        int transcribed;
+        int failed;
+        lock (_liveSegmentTranscriptionSync)
+        {
+            generated = _liveChunksGenerated;
+            queued = _liveChunksQueued;
+            processing = _liveChunksProcessing;
+            transcribed = _liveChunksTranscribed;
+            failed = _liveChunksFailed;
+        }
+
+        _liveTranscriptionWindow?.SetChunkCounts(
+            generated,
+            queued,
+            processing,
+            transcribed,
+            failed);
     }
 
     private void OnLiveAudioLevelChanged(object? sender, PlaybackAudioLevelChangedEventArgs e)
@@ -936,6 +1150,168 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 e.GainMultiplier,
                 e.AutomaticGainApplied)),
             DispatcherPriority.Background);
+    }
+
+    private void OnLiveSegmentTranscriptionQueued(object? sender, LiveSegmentTranscriptionQueuedEventArgs e)
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            _liveChunksGenerated++;
+            _liveChunksQueued++;
+        }
+
+        ScheduleLiveChunkCountUpdate();
+    }
+
+    private void OnLiveSegmentTranscriptionStarted(object? sender, LiveSegmentTranscriptionStartedEventArgs e)
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            if (_liveChunksQueued > 0)
+            {
+                _liveChunksQueued--;
+            }
+
+            _liveChunksProcessing++;
+        }
+
+        ScheduleLiveChunkCountUpdate();
+        Dispatcher.BeginInvoke(
+            new Action(() =>
+            {
+                TimeSpan start = TimeSpan.FromSeconds(e.Segment.StartSeconds);
+                LogLiveTranscription(
+                    $"Transcribing live recording segment starting at {start:mm\\:ss}.");
+                if (!_isLiveTranscriptionStopping)
+                {
+                    _liveTranscriptionWindow?.SetInterimTranscriptionActivity("Processing recorded segment");
+                }
+            }),
+            DispatcherPriority.Background);
+    }
+
+    private void OnLiveSegmentTranscriptionCompleted(object? sender, LiveSegmentTranscriptionCompletedEventArgs e)
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            _pendingLiveSegmentTranscriptionCompletions.Enqueue(e);
+        }
+
+        ScheduleLiveSegmentTranscriptionDrain();
+    }
+
+    private void ScheduleLiveSegmentTranscriptionDrain()
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+        {
+            return;
+        }
+
+        if (Dispatcher.CheckAccess())
+        {
+            DrainPendingLiveSegmentTranscriptionResults();
+            return;
+        }
+
+        lock (_liveSegmentTranscriptionSync)
+        {
+            if (_isLiveSegmentTranscriptionDrainScheduled)
+            {
+                return;
+            }
+
+            _isLiveSegmentTranscriptionDrainScheduled = true;
+        }
+
+        Dispatcher.BeginInvoke(
+            new Action(() =>
+            {
+                lock (_liveSegmentTranscriptionSync)
+                {
+                    _isLiveSegmentTranscriptionDrainScheduled = false;
+                }
+
+                DrainPendingLiveSegmentTranscriptionResults();
+            }),
+            DispatcherPriority.Background);
+    }
+
+    private void DrainPendingLiveSegmentTranscriptionResults()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            ScheduleLiveSegmentTranscriptionDrain();
+            return;
+        }
+
+        while (true)
+        {
+            LiveSegmentTranscriptionCompletedEventArgs? item;
+            lock (_liveSegmentTranscriptionSync)
+            {
+                item = _pendingLiveSegmentTranscriptionCompletions.Count == 0
+                    ? null
+                    : _pendingLiveSegmentTranscriptionCompletions.Dequeue();
+            }
+
+            if (item is null)
+            {
+                return;
+            }
+
+            ApplyLiveSegmentTranscriptionResult(item);
+        }
+    }
+
+    private void OnLiveSegmentTranscriptionFailed(object? sender, LiveSegmentTranscriptionFailedEventArgs e)
+    {
+        lock (_liveSegmentTranscriptionSync)
+        {
+            if (_liveChunksProcessing > 0)
+            {
+                _liveChunksProcessing--;
+            }
+
+            _liveChunksFailed++;
+        }
+
+        ScheduleLiveChunkCountUpdate();
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (DataContext is MainViewModel vm)
+            {
+                vm.LogHandledException("live segment transcription", e.Exception);
+                ShowCopyToast(
+                    "Live segment transcription failed",
+                    "Recording is still running. The failed segment can be transcribed again later.",
+                    ToastNotificationType.Warning);
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private void ApplyLiveSegmentTranscriptionResult(LiveSegmentTranscriptionCompletedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        MarkLiveChunkTranscribed();
+        int rowCount = vm.AppendLiveTranscriptionResult(e.Result);
+
+        vm.SaveLiveTranscriptSession();
+        string preview = BuildLogPreview(e.Result.Text);
+        TimeSpan start = TimeSpan.FromSeconds(e.Segment.StartSeconds);
+        LogLiveTranscription(
+            $"Applied live recording segment at {start:mm\\:ss} " +
+            $"with {rowCount:N0} row(s), preview='{preview}'.");
+        if (rowCount > 0)
+        {
+            if (!_isLiveTranscriptionStopping)
+            {
+                _liveTranscriptionWindow?.SetFinalTranscriptionActivity(preview);
+            }
+        }
     }
 
     private void OnLiveTranscriptionFaulted(object? sender, Exception ex)
@@ -971,47 +1347,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }), DispatcherPriority.Background);
     }
 
-    private void ApplyLiveTranscriptionUpdate(string text, bool isFinal)
+    private void DetachLiveRecordingCaptureSession(LiveRecordingCaptureSession session)
     {
-        if (DataContext is not MainViewModel vm || string.IsNullOrWhiteSpace(text))
-        {
-            return;
-        }
-
-        TimeSpan startOffset = _liveTranscriptionBaseOffset + (DateTimeOffset.Now - _liveTranscriptionStartedUtc);
-        TimeSpan endOffset = startOffset + TimeSpan.FromSeconds(1);
-
-        if (_liveInterimLine is null)
-        {
-            _liveInterimLine = vm.AddLiveTranscriptLine(startOffset, endOffset, text);
-        }
-        else
-        {
-            vm.UpdateLiveTranscriptLine(_liveInterimLine, endOffset, text);
-        }
-
-        if (isFinal)
-        {
-            LogLiveTranscription(
-                $"Final update applied at {startOffset:mm\\:ss}, chars={text.Trim().Length:N0}, preview='{BuildLogPreview(text)}'.");
-            _liveInterimLine = null;
-            vm.SaveLiveTranscriptSession();
-            _liveTranscriptionWindow?.SetFinalTranscriptionActivity(BuildLogPreview(text));
-        }
-        else
-        {
-            LogLiveTranscription(
-                $"Interim update applied at {startOffset:mm\\:ss}, chars={text.Trim().Length:N0}, preview='{BuildLogPreview(text)}'.");
-            _liveTranscriptionWindow?.SetInterimTranscriptionActivity(BuildLogPreview(text));
-        }
-    }
-
-    private void DetachLiveTranscriptionSession(PlaybackTranscriptionSession session)
-    {
-        session.PlaybackInterimTranscriptionUpdated -= OnLiveInterimTranscriptionUpdated;
-        session.PlaybackFinalTranscriptionAvailable -= OnLiveFinalTranscriptionAvailable;
         session.AudioLevelChanged -= OnLiveAudioLevelChanged;
         session.Faulted -= OnLiveTranscriptionFaulted;
+    }
+
+    private void DetachLiveSegmentTranscriptionSession(LiveSegmentTranscriptionSession session)
+    {
+        session.SegmentTranscriptionQueued -= OnLiveSegmentTranscriptionQueued;
+        session.SegmentTranscriptionStarted -= OnLiveSegmentTranscriptionStarted;
+        session.SegmentTranscriptionCompleted -= OnLiveSegmentTranscriptionCompleted;
+        session.SegmentTranscriptionFailed -= OnLiveSegmentTranscriptionFailed;
     }
 
     private void OnLiveTranscriptionWindowClosed(object? sender, EventArgs e)
@@ -1277,8 +1624,117 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         request.IsConfirmed = dialog.ShowDialog() == true;
     }
 
+    private async void OnMainWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (_isClosingAfterLiveTranscriptionStop
+            || _liveRecordingCaptureSession is null
+            || _boundViewModel is null)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        IsEnabled = false;
+        try
+        {
+            await StopLiveTranscriptionAsync(_boundViewModel, showToast: false);
+        }
+        finally
+        {
+            _isClosingAfterLiveTranscriptionStop = true;
+            Close();
+        }
+    }
+
+    private void ExportTranscriptToDocument_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        try
+        {
+            TranscriptDocumentFormat? selectedFormat = PromptTranscriptDocumentFormat();
+            if (selectedFormat is null)
+            {
+                return;
+            }
+
+            string sourceFileName = string.IsNullOrWhiteSpace(vm.LoadedAudioFileName)
+                ? "transcript"
+                : vm.LoadedAudioFileName;
+            string initialFileName = $"{SanitizeFileName(Path.GetFileNameWithoutExtension(sourceFileName))}-transcript.docx";
+            string documentsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            string persistedDirectory = vm.TranscriptExportDirectory;
+            string initialDirectory = Directory.Exists(persistedDirectory)
+                ? persistedDirectory
+                : documentsDirectory;
+            var saveDialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "Word Document|*.docx",
+                DefaultExt = ".docx",
+                AddExtension = true,
+                FileName = initialFileName,
+                InitialDirectory = initialDirectory,
+                OverwritePrompt = true,
+                Title = "Export Transcript to Document",
+            };
+
+            bool? saveResult = saveDialog.ShowDialog(this);
+            if (saveResult != true || string.IsNullOrWhiteSpace(saveDialog.FileName))
+            {
+                return;
+            }
+
+            vm.SetTranscriptExportDirectory(Path.GetDirectoryName(saveDialog.FileName));
+            TranscriptDocumentExporter.ExportDocx(
+                saveDialog.FileName,
+                vm.FinalizedTranscriptLines,
+                new TranscriptDocumentExportMetadata(
+                    Title: "Transcript Export",
+                    SourceAudioFileName: vm.LoadedAudioFileName,
+                    ExportedAt: DateTimeOffset.Now),
+                new TranscriptDocumentExportOptions(
+                    IncludeTimestamps: selectedFormat == TranscriptDocumentFormat.TabDelimited,
+                    IncludeSpeakerLabels: true,
+                    Format: selectedFormat.Value));
+
+            ShowCopyToast(
+                "Transcript exported",
+                $"Saved to {saveDialog.FileName}.",
+                ToastNotificationType.Success);
+        }
+        catch (Exception ex)
+        {
+            vm.LogHandledException("export transcript document", ex);
+            var dialog = new ErrorDialogWindow($"Unable to export transcript document: {ex.Message}")
+            {
+                Owner = this,
+            };
+            dialog.ShowDialog();
+        }
+    }
+
+    private TranscriptDocumentFormat? PromptTranscriptDocumentFormat()
+    {
+        var dialog = new ExportFormatDialogWindow
+        {
+            Owner = this,
+        };
+
+        bool? result = dialog.ShowDialog();
+        if (result != true)
+        {
+            return null;
+        }
+
+        return dialog.SelectedFormat;
+    }
+
     private void OnMainWindowClosed(object? sender, EventArgs e)
     {
+        Closing -= OnMainWindowClosing;
         Loaded -= OnMainWindowLoaded;
         CancelCopyToast();
         PreviewMouseDown -= OnWindowMouseDismissToast;
@@ -1288,10 +1744,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             pausePlayback: false,
             reason: "window closed",
             discardResults: true);
-        if (_liveTranscriptionSession is not null && _boundViewModel is not null)
-        {
-            StopLiveTranscriptionAsync(_boundViewModel, showToast: false).GetAwaiter().GetResult();
-        }
         if (_boundViewModel is null)
         {
             return;
@@ -1376,6 +1828,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static string BuildTranscribeAudioFailureMessage(MainViewModel vm, Exception ex)
     {
         return BuildTranscribeAudioFailureToast(vm, ex).Message;
+    }
+
+    private static string SanitizeFileName(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return "transcript";
+        }
+
+        char[] invalid = Path.GetInvalidFileNameChars();
+        Span<char> buffer = stackalloc char[fileName.Length];
+        int index = 0;
+
+        foreach (char c in fileName)
+        {
+            buffer[index++] = invalid.Contains(c) ? '_' : c;
+        }
+
+        string sanitized = new string(buffer).Trim('_', ' ');
+        return string.IsNullOrWhiteSpace(sanitized) ? "transcript" : sanitized;
     }
 
     private static string BuildDetectSpeakersFailureMessage(MainViewModel vm, Exception ex)
@@ -1487,16 +1959,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async Task HideCopyToastAfterDelayAsync(CancellationTokenSource toastCts)
     {
+        CancellationToken token;
         try
         {
-            await Task.Delay(ToastDisplayDuration, toastCts.Token);
+            token = toastCts.Token;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(ToastDisplayDuration, token);
         }
         catch (OperationCanceledException)
         {
             return;
         }
 
-        if (toastCts.Token.IsCancellationRequested)
+        if (IsCancellationRequestedOrDisposed(toastCts))
         {
             return;
         }
@@ -1510,7 +1992,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         };
         opacityAnimation.Completed += (_, _) =>
         {
-            if (toastCts.Token.IsCancellationRequested)
+            if (IsCancellationRequestedOrDisposed(toastCts))
             {
                 return;
             }
@@ -1530,6 +2012,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     EasingMode = EasingMode.EaseIn,
                 },
             });
+    }
+
+    private static bool IsCancellationRequestedOrDisposed(CancellationTokenSource cancellationTokenSource)
+    {
+        try
+        {
+            return cancellationTokenSource.IsCancellationRequested;
+        }
+        catch (ObjectDisposedException)
+        {
+            return true;
+        }
     }
 
     private void ApplyToastVisuals(ToastNotificationType type)
@@ -1825,6 +2319,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (e.ClickCount < 2 && !item.IsSelected)
         {
             item.IsSelected = true;
+            if (item.DataContext is TranscriptSessionSummary session)
+            {
+                _processLogService?.Log(
+                    "SessionDelete",
+                    $"List single-click selected session. sessionId='{session.SessionId}'.",
+                    ProcessLogLevel.Debug);
+            }
+
             e.Handled = true;
         }
     }
@@ -1842,6 +2344,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        _processLogService?.Log(
+            "SessionDelete",
+            $"List double-click open session requested. sessionId='{session.SessionId}'.",
+            ProcessLogLevel.Debug);
         _ = vm.LoadRecentSessionAsync(session);
         e.Handled = true;
     }
@@ -1854,6 +2360,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        _processLogService?.Log(
+            "SessionDelete",
+            $"Open button clicked for session. sessionId='{session.SessionId}'.",
+            ProcessLogLevel.Debug);
         _ = vm.LoadRecentSessionAsync(session);
         e.Handled = true;
     }
@@ -2142,7 +2652,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         LogPlaybackEdit("Preparing for required update shutdown.");
         LogTranscribeAudioBatch("Preparing for required update shutdown.");
 
-        if (_liveTranscriptionSession is not null && vm is not null)
+        if (_liveRecordingCaptureSession is not null && vm is not null)
         {
             await StopLiveTranscriptionAsync(vm, showToast: false);
         }
@@ -2352,6 +2862,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (e.Command == MergeAdjacentRowsForSelectedSpeakerCommand)
+        {
+            e.CanExecute =
+                DataContext is MainViewModel vm
+                && TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+                && !string.IsNullOrWhiteSpace(currentLine.SpeakerLabel)
+                && CanMergeAdjacentRowsAroundSelectedRow(
+                    GetDisplayedTranscriptLines(),
+                    currentLine)
+                && EnsureSegmentRowActionAvailable(vm, "Merge selected speaker rows", showMessage: false);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Command == MergeAllAdjacentRowsBySpeakerCommand)
+        {
+            e.CanExecute =
+                DataContext is MainViewModel vm
+                && TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+                && !string.IsNullOrWhiteSpace(currentLine.SpeakerLabel)
+                && CanMergeAnyAdjacentRowsBySpeaker(
+                    GetDisplayedTranscriptLines())
+                && EnsureSegmentRowActionAvailable(vm, "Merge all adjacent rows by speaker", showMessage: false);
+            e.Handled = true;
+            return;
+        }
+
         if (e.Command == SeparateRowCommand)
         {
             e.CanExecute =
@@ -2399,6 +2936,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         HandleRenameSpeaker(vm, currentLine);
     }
 
+    private void MergeAdjacentRowsForSelectedSpeakerCommand_Executed(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        HandleMergeAdjacentRowsForSelectedSpeaker(vm, currentLine);
+    }
+
+    private void MergeAllAdjacentRowsBySpeakerCommand_Executed(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine)
+            || DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        HandleMergeAllAdjacentRowsBySpeaker(vm, currentLine);
+    }
+
     private void CopyRowTextCommand_Executed(object sender, ExecutedRoutedEventArgs e)
     {
         if (!TryGetContextMenuLine(e.Parameter, out FinalizedTranscriptLineViewModel currentLine))
@@ -2417,6 +2976,80 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             _boundViewModel?.LogHandledException("copy row text", ex);
             ShowCopyToast("Copy failed", "Unable to copy row text.", ToastNotificationType.Error);
+        }
+    }
+
+    private void FinalizedTranscriptGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        DataGridCell? clickedCell = FindAncestor<DataGridCell>(e.OriginalSource as DependencyObject);
+        _transcriptContextMenuScope = ResolveTranscriptContextMenuScope(clickedCell?.Column);
+
+        if (clickedCell?.DataContext is FinalizedTranscriptLineViewModel line
+            && clickedCell.Column is DataGridColumn column)
+        {
+            var clickedInfo = new DataGridCellInfo(line, column);
+            FinalizedTranscriptGrid.SelectedCells.Clear();
+            FinalizedTranscriptGrid.CurrentCell = clickedInfo;
+            FinalizedTranscriptGrid.SelectedCells.Add(clickedInfo);
+        }
+    }
+
+    private void FinalizedTranscriptGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        DataGridColumn? targetColumn = null;
+
+        if (e.OriginalSource is DependencyObject originalSource)
+        {
+            DataGridCell? clickedCell = FindAncestor<DataGridCell>(originalSource);
+            targetColumn = clickedCell?.Column;
+        }
+
+        if (targetColumn is null)
+        {
+            targetColumn = FinalizedTranscriptGrid.CurrentCell.Column;
+        }
+
+        _transcriptContextMenuScope = ResolveTranscriptContextMenuScope(targetColumn);
+
+        if (FinalizedTranscriptGrid.CurrentCell.Item is not FinalizedTranscriptLineViewModel currentLine)
+        {
+            return;
+        }
+
+        DataGridRow? row = FinalizedTranscriptGrid.ItemContainerGenerator.ContainerFromItem(currentLine) as DataGridRow;
+        if (row?.ContextMenu is not System.Windows.Controls.ContextMenu contextMenu)
+        {
+            return;
+        }
+
+        bool isSpeakerCellMenu = _transcriptContextMenuScope == TranscriptContextMenuScope.SpeakerCell;
+        bool isTextCellMenu = _transcriptContextMenuScope == TranscriptContextMenuScope.TextCell;
+        bool canRenameSpeaker = !string.IsNullOrWhiteSpace(currentLine.SpeakerLabel);
+        foreach (object item in contextMenu.Items)
+        {
+            if (item is System.Windows.Controls.Separator separator)
+            {
+                string separatorTag = separator.Tag as string ?? string.Empty;
+                separator.Visibility = separatorTag switch
+                {
+                    "SpeakerDivider" => isSpeakerCellMenu ? Visibility.Visible : Visibility.Collapsed,
+                    "CopyDivider" => Visibility.Visible,
+                    _ => Visibility.Visible,
+                };
+                continue;
+            }
+
+            if (item is not System.Windows.Controls.MenuItem menuItem)
+            {
+                continue;
+            }
+
+            string header = menuItem.Header as string ?? string.Empty;
+            menuItem.Visibility = ResolveTranscriptContextMenuItemVisibility(
+                header,
+                isSpeakerCellMenu,
+                isTextCellMenu,
+                canRenameSpeaker);
         }
     }
 
@@ -3001,13 +3634,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     internal static string BuildMergedDeletedRowText(string? previousText, string? deletedText)
     {
         string[] parts = [
-            previousText?.Trim() ?? string.Empty,
-            deletedText?.Trim() ?? string.Empty,
+            NormalizeMergedRowParagraphPart(previousText),
+            NormalizeMergedRowParagraphPart(deletedText),
         ];
 
         return string.Join(
-            Environment.NewLine,
+            " ",
             parts.Where(part => !string.IsNullOrWhiteSpace(part)));
+    }
+
+    private static string NormalizeMergedRowParagraphPart(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        string normalized = value
+            .Replace("\r\n", " ", StringComparison.Ordinal)
+            .Replace('\r', ' ')
+            .Replace('\n', ' ');
+
+        return string.Join(
+            " ",
+            normalized
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     internal static bool CanCombineToPreviousRow(
@@ -3021,6 +3672,115 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         List<FinalizedTranscriptLineViewModel> displayedLines = lines.ToList();
         return displayedLines.IndexOf(line) > 0;
+    }
+
+    internal static bool CanMergeAdjacentRowsAroundSelectedRow(
+        IReadOnlyList<FinalizedTranscriptLineViewModel> lines,
+        FinalizedTranscriptLineViewModel selectedLine)
+    {
+        ArgumentNullException.ThrowIfNull(selectedLine);
+
+        string normalizedSpeaker = selectedLine.SpeakerLabel?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedSpeaker))
+        {
+            return false;
+        }
+
+        int selectedIndex = -1;
+        for (int index = 0; index < lines.Count; index++)
+        {
+            if (ReferenceEquals(lines[index], selectedLine))
+            {
+                selectedIndex = index;
+                break;
+            }
+        }
+
+        if (selectedIndex < 0)
+        {
+            return false;
+        }
+
+        bool sameAsPrevious = selectedIndex > 0
+            && string.Equals(lines[selectedIndex - 1].SpeakerLabel?.Trim(), normalizedSpeaker, StringComparison.OrdinalIgnoreCase);
+        bool sameAsNext = selectedIndex + 1 < lines.Count
+            && string.Equals(lines[selectedIndex + 1].SpeakerLabel?.Trim(), normalizedSpeaker, StringComparison.OrdinalIgnoreCase);
+
+        return sameAsPrevious || sameAsNext;
+    }
+
+    internal static bool TryResolveSelectedSpeakerMergeRange(
+        IReadOnlyList<FinalizedTranscriptLineViewModel> lines,
+        FinalizedTranscriptLineViewModel selectedLine,
+        out int rangeStartIndex,
+        out int rangeEndIndex)
+    {
+        rangeStartIndex = -1;
+        rangeEndIndex = -1;
+
+        if (!CanMergeAdjacentRowsAroundSelectedRow(lines, selectedLine))
+        {
+            return false;
+        }
+
+        string normalizedSpeaker = selectedLine.SpeakerLabel?.Trim() ?? string.Empty;
+        int selectedIndex = -1;
+        for (int index = 0; index < lines.Count; index++)
+        {
+            if (ReferenceEquals(lines[index], selectedLine))
+            {
+                selectedIndex = index;
+                break;
+            }
+        }
+
+        if (selectedIndex < 0)
+        {
+            return false;
+        }
+
+        rangeStartIndex = selectedIndex;
+        while (rangeStartIndex > 0
+            && string.Equals(lines[rangeStartIndex - 1].SpeakerLabel?.Trim(), normalizedSpeaker, StringComparison.OrdinalIgnoreCase))
+        {
+            rangeStartIndex--;
+        }
+
+        rangeEndIndex = selectedIndex;
+        while (rangeEndIndex + 1 < lines.Count
+            && string.Equals(lines[rangeEndIndex + 1].SpeakerLabel?.Trim(), normalizedSpeaker, StringComparison.OrdinalIgnoreCase))
+        {
+            rangeEndIndex++;
+        }
+
+        if (rangeEndIndex <= rangeStartIndex)
+        {
+            rangeStartIndex = -1;
+            rangeEndIndex = -1;
+            return false;
+        }
+
+        return true;
+    }
+
+    internal static bool CanMergeAnyAdjacentRowsBySpeaker(IReadOnlyList<FinalizedTranscriptLineViewModel> lines)
+    {
+        for (int index = 1; index < lines.Count; index++)
+        {
+            string previousSpeaker = lines[index - 1].SpeakerLabel?.Trim() ?? string.Empty;
+            string currentSpeaker = lines[index].SpeakerLabel?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(previousSpeaker) || string.IsNullOrWhiteSpace(currentSpeaker))
+            {
+                continue;
+            }
+
+            if (string.Equals(previousSpeaker, currentSpeaker, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     internal static bool TryResolveCombineToPreviousRowMerge(
@@ -3072,6 +3832,343 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         mergeEndOffset = deletedEndOffset;
         return true;
+    }
+
+    private void HandleMergeAdjacentRowsForSelectedSpeaker(
+        MainViewModel vm,
+        FinalizedTranscriptLineViewModel currentLine)
+    {
+        if (!EnsureSegmentRowActionAvailable(vm, "Merge selected speaker rows"))
+        {
+            return;
+        }
+
+        if (IsTranscribeAudioBatchTranscribing || _isRowFileTranscriptionRunning)
+        {
+            ShowCopyToast(
+                "Transcribe Audio in progress",
+                "Wait for the current transcription process to finish.",
+                ToastNotificationType.Info);
+            return;
+        }
+
+        string selectedSpeaker = currentLine.SpeakerLabel?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(selectedSpeaker))
+        {
+            ShowCopyToast(
+                "Merge selected speaker rows",
+                "The selected row does not have a speaker label.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        List<FinalizedTranscriptLineViewModel> displayedLines = GetDisplayedTranscriptLines();
+        if (!TryResolveSelectedSpeakerMergeRange(displayedLines, currentLine, out int rangeStartIndex, out int rangeEndIndex))
+        {
+            ShowCopyToast(
+                "No adjacent rows merged",
+                "Only rows adjacent to the selected row can be merged for this speaker.",
+                ToastNotificationType.Info);
+            return;
+        }
+
+        var dialog = new ConfirmationDialogWindow(
+            title: "Merge adjacent rows for selected speaker?",
+            message: "Adjacent rows with this speaker label will be merged. Timeline ranges will be checked and fixed if needed.",
+            confirmButtonText: "Yes",
+            cancelButtonText: "No")
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            SetTranscriptRowActionsLine(null);
+            int mergedRows = MergeAdjacentRowsInRange(vm, displayedLines, rangeStartIndex, rangeEndIndex);
+            int mergedRowIndex = rangeStartIndex;
+            int fixedTimelineRows = NormalizeMergedRowTimelineNeighborhood(GetDisplayedTranscriptLines(), mergedRowIndex);
+
+            if (mergedRows <= 0)
+            {
+                ShowCopyToast(
+                    "No adjacent rows merged",
+                    "Only rows adjacent to the selected row can be merged for this speaker.",
+                    ToastNotificationType.Info);
+                return;
+            }
+
+            ShowCopyToast(
+                "Speaker rows merged",
+                fixedTimelineRows > 0
+                    ? $"{mergedRows:N0} row(s) merged. Timeline fixed for {fixedTimelineRows:N0} row(s)."
+                    : $"{mergedRows:N0} row(s) merged.",
+                ToastNotificationType.Success);
+
+            Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+        }
+        catch (Exception ex)
+        {
+            vm.LogHandledException("merge adjacent rows for selected speaker", ex);
+            ShowCopyToast(
+                "Merge failed",
+                "Unable to merge adjacent rows for the selected speaker right now.",
+                ToastNotificationType.Error);
+        }
+    }
+
+    private void HandleMergeAllAdjacentRowsBySpeaker(
+        MainViewModel vm,
+        FinalizedTranscriptLineViewModel currentLine)
+    {
+        if (!EnsureSegmentRowActionAvailable(vm, "Merge all adjacent rows by speaker"))
+        {
+            return;
+        }
+
+        if (IsTranscribeAudioBatchTranscribing || _isRowFileTranscriptionRunning)
+        {
+            ShowCopyToast(
+                "Transcribe Audio in progress",
+                "Wait for the current transcription process to finish.",
+                ToastNotificationType.Info);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentLine.SpeakerLabel))
+        {
+            ShowCopyToast(
+                "Merge all adjacent rows by speaker",
+                "The selected row does not have a speaker label.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        List<FinalizedTranscriptLineViewModel> displayedLines = GetDisplayedTranscriptLines();
+        if (!CanMergeAnyAdjacentRowsBySpeaker(displayedLines))
+        {
+            ShowCopyToast(
+                "No adjacent rows merged",
+                "No adjacent speaker rows were found to merge.",
+                ToastNotificationType.Info);
+            return;
+        }
+
+        var dialog = new ConfirmationDialogWindow(
+            title: "Merge all adjacent rows by speaker?",
+            message: "Rows will be scanned from top to bottom and adjacent rows with the same speaker will be merged until none remain.",
+            confirmButtonText: "Yes",
+            cancelButtonText: "No")
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            SetTranscriptRowActionsLine(null);
+
+            int mergedRows = MergeAllAdjacentRowsBySpeaker(vm, displayedLines);
+            int fixedTimelineRows = NormalizeTranscriptTimelineRanges(GetDisplayedTranscriptLines());
+
+            if (mergedRows <= 0)
+            {
+                ShowCopyToast(
+                    "No adjacent rows merged",
+                    "No adjacent speaker rows were found to merge.",
+                    ToastNotificationType.Info);
+                return;
+            }
+
+            ShowCopyToast(
+                "Speaker rows merged",
+                fixedTimelineRows > 0
+                    ? $"{mergedRows:N0} row(s) merged. Timeline fixed for {fixedTimelineRows:N0} row(s)."
+                    : $"{mergedRows:N0} row(s) merged.",
+                ToastNotificationType.Success);
+
+            Dispatcher.BeginInvoke(new Action(UpdateTranscriptRowActionsVisibility), DispatcherPriority.Background);
+        }
+        catch (Exception ex)
+        {
+            vm.LogHandledException("merge all adjacent rows by speaker", ex);
+            ShowCopyToast(
+                "Merge failed",
+                "Unable to merge all adjacent rows by speaker right now.",
+                ToastNotificationType.Error);
+        }
+    }
+
+    private static int MergeAdjacentRowsInRange(
+        MainViewModel vm,
+        List<FinalizedTranscriptLineViewModel> displayedLines,
+        int rangeStartIndex,
+        int rangeEndIndex)
+    {
+        if (rangeStartIndex < 0
+            || rangeEndIndex >= displayedLines.Count
+            || rangeEndIndex <= rangeStartIndex)
+        {
+            return 0;
+        }
+
+        FinalizedTranscriptLineViewModel mergedLine = displayedLines[rangeStartIndex];
+        int removedRows = 0;
+
+        for (int index = rangeStartIndex + 1; index <= rangeEndIndex; index++)
+        {
+            FinalizedTranscriptLineViewModel lineToMerge = displayedLines[index];
+            TimeSpan? mergedEndOffset = lineToMerge.EndOffset ?? lineToMerge.StartOffset ?? mergedLine.EndOffset;
+            if (mergedLine.StartOffset is TimeSpan mergedStart
+                && mergedEndOffset is TimeSpan mergedEnd
+                && mergedEnd < mergedStart)
+            {
+                mergedEndOffset = mergedStart;
+            }
+
+            mergedLine.SetTimelineOffsets(mergedLine.StartOffset, mergedEndOffset);
+            MergeDeletedRowTextIntoPreviousRow(mergedLine, lineToMerge);
+
+            if (!vm.RemoveFinalizedTranscriptLine(lineToMerge))
+            {
+                throw new InvalidOperationException("Unable to remove an adjacent row while merging selected speaker rows.");
+            }
+
+            removedRows++;
+        }
+
+        displayedLines.RemoveRange(rangeStartIndex + 1, removedRows);
+        return removedRows;
+    }
+
+    private static int MergeAllAdjacentRowsBySpeaker(
+        MainViewModel vm,
+        List<FinalizedTranscriptLineViewModel> displayedLines)
+    {
+        int mergedRows = 0;
+        int index = 1;
+
+        while (index < displayedLines.Count)
+        {
+            FinalizedTranscriptLineViewModel previousLine = displayedLines[index - 1];
+            FinalizedTranscriptLineViewModel currentLine = displayedLines[index];
+            string previousSpeaker = previousLine.SpeakerLabel?.Trim() ?? string.Empty;
+            string currentSpeaker = currentLine.SpeakerLabel?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(previousSpeaker)
+                || string.IsNullOrWhiteSpace(currentSpeaker)
+                || !string.Equals(previousSpeaker, currentSpeaker, StringComparison.OrdinalIgnoreCase))
+            {
+                index++;
+                continue;
+            }
+
+            TimeSpan? mergedEndOffset = currentLine.EndOffset ?? currentLine.StartOffset ?? previousLine.EndOffset;
+            if (previousLine.StartOffset is TimeSpan mergedStart
+                && mergedEndOffset is TimeSpan mergedEnd
+                && mergedEnd < mergedStart)
+            {
+                mergedEndOffset = mergedStart;
+            }
+
+            previousLine.SetTimelineOffsets(previousLine.StartOffset, mergedEndOffset);
+            MergeDeletedRowTextIntoPreviousRow(previousLine, currentLine);
+
+            if (!vm.RemoveFinalizedTranscriptLine(currentLine))
+            {
+                throw new InvalidOperationException("Unable to remove an adjacent row while merging all adjacent speaker rows.");
+            }
+
+            displayedLines.RemoveAt(index);
+            mergedRows++;
+        }
+
+        return mergedRows;
+    }
+
+    internal static int NormalizeTranscriptTimelineRanges(IReadOnlyList<FinalizedTranscriptLineViewModel> displayedLines)
+    {
+        int fixedRows = 0;
+
+        for (int index = 0; index < displayedLines.Count; index++)
+        {
+            FinalizedTranscriptLineViewModel currentLine = displayedLines[index];
+            TimeSpan? currentStart = currentLine.StartOffset;
+            TimeSpan? currentEnd = currentLine.EndOffset;
+
+            if (currentStart is TimeSpan resolvedStart
+                && currentEnd is TimeSpan resolvedEnd
+                && resolvedEnd < resolvedStart)
+            {
+                currentLine.SetTimelineOffsets(currentStart, resolvedStart);
+                currentEnd = resolvedStart;
+                fixedRows++;
+            }
+
+            if (index + 1 < displayedLines.Count
+                && displayedLines[index + 1].StartOffset is TimeSpan nextStart)
+            {
+                TimeSpan clampedNextStart = currentStart is TimeSpan start && nextStart < start
+                    ? start
+                    : nextStart;
+
+                if (currentEnd != clampedNextStart)
+                {
+                    currentLine.SetTimelineOffsets(currentStart, clampedNextStart);
+                    fixedRows++;
+                }
+            }
+        }
+
+        return fixedRows;
+    }
+
+    internal static int NormalizeMergedRowTimelineNeighborhood(
+        IReadOnlyList<FinalizedTranscriptLineViewModel> displayedLines,
+        int mergedRowIndex)
+    {
+        int fixedRows = 0;
+        if (mergedRowIndex < 0 || mergedRowIndex >= displayedLines.Count)
+        {
+            return 0;
+        }
+
+        FinalizedTranscriptLineViewModel mergedLine = displayedLines[mergedRowIndex];
+        TimeSpan? mergedStart = mergedLine.StartOffset;
+        TimeSpan? mergedEnd = mergedLine.EndOffset;
+
+        if (mergedStart is TimeSpan resolvedMergedStart
+            && mergedEnd is TimeSpan resolvedMergedEnd
+            && resolvedMergedEnd < resolvedMergedStart)
+        {
+            mergedLine.SetTimelineOffsets(mergedStart, resolvedMergedStart);
+            mergedEnd = resolvedMergedStart;
+            fixedRows++;
+        }
+
+        if (mergedRowIndex + 1 < displayedLines.Count
+            && displayedLines[mergedRowIndex + 1].StartOffset is TimeSpan nextStart)
+        {
+            TimeSpan clampedNextStart = mergedStart is TimeSpan resolvedStart && nextStart < resolvedStart
+                ? resolvedStart
+                : nextStart;
+
+            if (mergedEnd != clampedNextStart)
+            {
+                mergedLine.SetTimelineOffsets(mergedStart, clampedNextStart);
+                fixedRows++;
+            }
+        }
+
+        return fixedRows;
     }
 
     private void FinalizedTranscriptGrid_BeginningEdit(object sender, DataGridBeginningEditEventArgs e)
@@ -3846,6 +4943,43 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         return column is not null
             && FinalizedTranscriptGrid.Columns.IndexOf(column) == SpeakerColumnIndex;
+    }
+
+    private TranscriptContextMenuScope ResolveTranscriptContextMenuScope(DataGridColumn? column)
+    {
+        if (IsSpeakerColumn(column))
+        {
+            return TranscriptContextMenuScope.SpeakerCell;
+        }
+
+        if (IsTranscriptTextColumn(column))
+        {
+            return TranscriptContextMenuScope.TextCell;
+        }
+
+        return TranscriptContextMenuScope.OtherCell;
+    }
+
+    internal static Visibility ResolveTranscriptContextMenuItemVisibility(
+        string header,
+        bool isSpeakerCellMenu,
+        bool isTextCellMenu,
+        bool canRenameSpeaker)
+    {
+        return header switch
+        {
+            "Rename Speaker To" => isSpeakerCellMenu && canRenameSpeaker
+                ? Visibility.Visible
+                : Visibility.Collapsed,
+            "Merge adjacent rows for selected speaker" => isSpeakerCellMenu && canRenameSpeaker
+                ? Visibility.Visible
+                : Visibility.Collapsed,
+            "Merge all adjacent rows by speaker" => isSpeakerCellMenu && canRenameSpeaker
+                ? Visibility.Visible
+                : Visibility.Collapsed,
+            "Transcribe this row" or "Separate into 2 rows" or "Combine to previous row" => Visibility.Visible,
+            _ => Visibility.Visible,
+        };
     }
 
     private void UpdateTranscriptGridPresentation()
@@ -5038,6 +6172,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private static async Task DisposeLiveSegmentTranscriptionSessionAsync(LiveSegmentTranscriptionSession session)
+    {
+        try
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
+    }
+
+    private static async Task DisposeLiveRecordingCaptureSessionAsync(LiveRecordingCaptureSession session)
+    {
+        try
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
+    }
+
     private static void SetPlaybackEditTranscriptionVisualState(
         FinalizedTranscriptLineViewModel line,
         bool isActive,
@@ -5242,6 +6400,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        bool shouldClearSelectionForPlaybackFollow =
+            matchedLine is not null
+            && !ReferenceEquals(_playbackMatchedLine, matchedLine);
+
+        if (shouldClearSelectionForPlaybackFollow)
+        {
+            ClearTranscriptGridCellSelectionForPlaybackFollow();
+        }
+
         if (_playbackMatchedLine is not null)
         {
             _playbackMatchedLine.IsPlaybackTimelineMatch = false;
@@ -5254,6 +6421,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _playbackMatchedLine.IsPlaybackTimelineMatch = true;
             EnsurePlaybackTimelineMatchVisible(_playbackMatchedLine);
         }
+    }
+
+    private void ClearTranscriptGridCellSelectionForPlaybackFollow()
+    {
+        if (IsCurrentGridCellEditing())
+        {
+            return;
+        }
+
+        FinalizedTranscriptGrid.SelectedCells.Clear();
+        FinalizedTranscriptGrid.UnselectAllCells();
+        FinalizedTranscriptGrid.CurrentCell = default;
     }
 
     private void EnsurePlaybackTimelineMatchVisible(FinalizedTranscriptLineViewModel matchedLine)

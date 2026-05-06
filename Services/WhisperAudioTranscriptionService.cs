@@ -7,7 +7,7 @@ using Whisper.net;
 
 namespace AudioScript.Services;
 
-public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionService, IPlaybackTranscriptionService
+public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscriptionService, IPlaybackTranscriptionService
 {
     internal static readonly TimeSpan ShortAudioPromptSuppressionDuration = TimeSpan.FromSeconds(10);
     private readonly AudioStandardizer _audioStandardizer;
@@ -38,6 +38,21 @@ public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionServic
         CancellationToken cancellationToken,
         IProgress<TranscriptionProgressSnapshot>? progress = null)
     {
+        return await TranscribeAudioFileAsync(
+            audioFilePath,
+            model,
+            new AudioTranscriptionRequestOptions(),
+            cancellationToken,
+            progress);
+    }
+
+    public async Task<TranscriptionResult> TranscribeAudioFileAsync(
+        string audioFilePath,
+        string model,
+        AudioTranscriptionRequestOptions options,
+        CancellationToken cancellationToken,
+        IProgress<TranscriptionProgressSnapshot>? progress = null)
+    {
         ValidateModel(model);
         string fullPath = ValidateAudioFilePath(audioFilePath);
         string fileName = Path.GetFileName(fullPath);
@@ -64,6 +79,7 @@ public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionServic
                 standardizedPath,
                 model,
                 duration,
+                options,
                 cancellationToken,
                 progressReporter);
             stopwatch.Stop();
@@ -140,11 +156,12 @@ public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionServic
         string waveFilePath,
         string model,
         TimeSpan duration,
+        AudioTranscriptionRequestOptions options,
         CancellationToken cancellationToken,
         TranscriptionProgressReporter? progressReporter = null)
     {
         using FileStream stream = File.OpenRead(waveFilePath);
-        return await ProcessWaveStreamAsync(stream, model, cancellationToken, duration, progressReporter);
+        return await ProcessWaveStreamAsync(stream, model, cancellationToken, duration, progressReporter, options);
     }
 
     private async Task<IReadOnlyList<TranscriptionTimedLine>> ProcessWaveStreamAsync(
@@ -152,7 +169,8 @@ public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionServic
         string model,
         CancellationToken cancellationToken,
         TimeSpan? duration = null,
-        TranscriptionProgressReporter? progressReporter = null)
+        TranscriptionProgressReporter? progressReporter = null,
+        AudioTranscriptionRequestOptions? options = null)
     {
         WhisperFactory factory = await GetFactoryAsync(model, cancellationToken);
 
@@ -167,7 +185,8 @@ public sealed class WhisperAudioTranscriptionService : IAudioTranscriptionServic
                 .WithPrintTimestamps(true);
 
             string prompt = _options.Prompt.Trim();
-            if (ShouldApplyPrompt(duration) && !string.IsNullOrWhiteSpace(prompt))
+            bool suppressPrompt = options?.SuppressPrompt == true;
+            if (!suppressPrompt && ShouldApplyPrompt(duration) && !string.IsNullOrWhiteSpace(prompt))
             {
                 builder.WithPrompt(prompt);
             }

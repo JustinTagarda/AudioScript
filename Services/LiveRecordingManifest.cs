@@ -50,3 +50,18 @@ public sealed class LiveRecordingSegmentManifest
 
     public long FileSizeBytes { get; set; }
 }
+
+public sealed class LiveRecordingSegmentFinalizedEventArgs : EventArgs
+{
+    public LiveRecordingSegmentFinalizedEventArgs(
+        LiveRecordingSegmentManifest segment,
+        string segmentPath)
+    {
+        Segment = segment;
+        SegmentPath = segmentPath;
+    }
+
+    public LiveRecordingSegmentManifest Segment { get; }
+
+    public string SegmentPath { get; }
+}

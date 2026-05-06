@@ -113,14 +113,6 @@ public partial class App : System.Windows.Application
             FinalWindowDuration: TimeSpan.FromSeconds(10),
             PollInterval: TimeSpan.FromMilliseconds(100),
             MinimumPeakLevel: 0);
-        var liveTranscriptionOptions = new PlaybackTranscriptionSessionOptions(
-            MinimumSegmentDuration: TimeSpan.FromSeconds(1.5),
-            InterimWindowDuration: TimeSpan.FromSeconds(4),
-            InterimCadence: TimeSpan.FromSeconds(2),
-            FinalWindowDuration: TimeSpan.FromSeconds(8),
-            PollInterval: TimeSpan.FromMilliseconds(250),
-            MinimumPeakLevel: 0.015);
-
         _windowPlacementService = new WindowPlacementService(
             Path.Combine(appDataPathProvider.SettingsPath, "window-placement.json"));
 
@@ -141,12 +133,10 @@ public partial class App : System.Windows.Application
                 whisperTranscriptionService,
                 processLogService,
                 playbackEditTranscriptionOptions),
-            liveTranscriptionSessionFactory: (source, gainOptions, recordingSession) => new PlaybackTranscriptionSession(
+            liveRecordingCaptureSessionFactory: (source, gainOptions, recordingSession) => new LiveRecordingCaptureSession(
                 CreateLiveCaptureService(source, gainOptions),
-                whisperTranscriptionService,
-                processLogService,
-                liveTranscriptionOptions,
-                recordingSession),
+                recordingSession,
+                processLogService),
             rowAudioTranscriptionService: whisperTranscriptionService,
             rowAudioStandardizer: audioStandardizer,
             rowWaveClipExtractor: waveClipExtractor,

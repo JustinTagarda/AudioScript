@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using AudioScript.Abstractions;
 using AudioScript.Audio;
 using AudioScript.Services;
+using NAudio.Wave;
 
 namespace AudioScript.ViewModels;
 
@@ -74,6 +75,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private string _applicationVersionStatusText = string.Empty;
     private int _selectedTranscriptViewIndex;
     private string _pendingImportedAudioFilePath = string.Empty;
+    private string _transcriptExportDirectory = string.Empty;
 
     public MainViewModel(
         IEnumerable<TranscriptionModelOption> models,
@@ -101,6 +103,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _preferredLiveAudioDeviceNumber = appPreferencesSnapshot.LiveAudioDeviceNumber;
         _liveAudioAutoGainEnabled = appPreferencesSnapshot.LiveAudioAutoGainEnabled;
         _liveAudioGainLevel = Math.Clamp(appPreferencesSnapshot.LiveAudioGainLevel, 0, 1);
+        _transcriptExportDirectory = appPreferencesSnapshot.TranscriptExportDirectory?.Trim() ?? string.Empty;
 
         Engines = new ObservableCollection<EngineOptionViewModel>(
             models.Select(model => new EngineOptionViewModel(model)));
@@ -504,6 +507,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
+    public string TranscriptExportDirectory
+    {
+        get => _transcriptExportDirectory;
+    }
+
+    public void SetTranscriptExportDirectory(string? directory)
+    {
+        string normalized = directory?.Trim() ?? string.Empty;
+        if (string.Equals(_transcriptExportDirectory, normalized, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _transcriptExportDirectory = normalized;
+        NotifyPropertyChanged(nameof(TranscriptExportDirectory));
+        SaveAppPreferences();
+    }
+
     public bool HasFinalizedTranscriptLines =>
         FinalizedTranscriptLines.Count > 0;
 
@@ -860,7 +881,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
-    public LiveRecordingSession CreateLiveRecordingSession(string inputDeviceName)
+    public LiveRecordingSession CreateLiveRecordingSession(
+        string inputDeviceName,
+        TimeSpan? segmentDuration = null)
     {
         if (_currentSessionDocument is null)
         {
@@ -868,7 +891,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         LiveRecordingSessionCreateResult result =
-            _sessionStore.CreateLiveRecordingSession(_currentSessionDocument.SessionId, inputDeviceName);
+            _sessionStore.CreateLiveRecordingSession(_currentSessionDocument.SessionId, inputDeviceName, segmentDuration);
         _currentSessionDocument.Audio = TranscriptSessionStore.CloneAudioDocument(result.Audio);
         CurrentSessionAudioIssue = string.Empty;
         IsCurrentSessionAudioMissing = false;
@@ -940,34 +963,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
-    public FinalizedTranscriptLineViewModel AddLiveTranscriptLine(TimeSpan startOffset, TimeSpan endOffset, string text)
-    {
-        var line = new FinalizedTranscriptLineViewModel(
-            startOffset,
-            endOffset,
-            isTimestampEstimated: true,
-            text);
-        line.PropertyChanged += OnFinalizedLinePropertyChanged;
-        FinalizedTranscriptLines.Add(line);
-        SelectedTranscriptViewIndex = 0;
-        NotifyCurrentTranscriptStateChanged();
-        ScheduleSessionAutosave();
-        return line;
-    }
-
-    public void UpdateLiveTranscriptLine(FinalizedTranscriptLineViewModel line, TimeSpan endOffset, string text)
-    {
-        if (!FinalizedTranscriptLines.Contains(line))
-        {
-            return;
-        }
-
-        line.Text = text;
-
-        ScheduleSessionAutosave();
-        NotifyCurrentTranscriptStateChanged();
-    }
-
     public void SaveLiveTranscriptSession()
     {
         TrySaveCurrentSession(
@@ -978,6 +973,151 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             LoadRecentSessions(_currentSessionDocument.SessionId);
         }
+    }
+
+    public int AppendLiveTranscriptionResult(TranscriptionResult result)
+    {
+        IReadOnlyList<TranscriptionTimedLine> timedLines = result.TimedLines
+            ?.Where(line => !string.IsNullOrWhiteSpace(line.Text))
+            .OrderBy(line => line.StartOffset)
+            .ToArray()
+            ?? Array.Empty<TranscriptionTimedLine>();
+        if (timedLines.Count == 0)
+        {
+            AppendLog("Live segment transcription produced no transcript rows.");
+            return 0;
+        }
+
+        _suppressSessionAutosave = true;
+        int addedCount = 0;
+        try
+        {
+            foreach (TranscriptionTimedLine timedLine in timedLines)
+            {
+                if (IsDuplicateLiveSegmentBoundaryLine(timedLine))
+                {
+                    AppendLog(
+                        $"Skipped duplicate live segment transcript row at {FormatOffset(timedLine.StartOffset)}: " +
+                        $"'{BuildPreview(timedLine.Text)}'.");
+                    continue;
+                }
+
+                var line = new FinalizedTranscriptLineViewModel(
+                    startOffset: timedLine.StartOffset,
+                    endOffset: timedLine.EndOffset,
+                    isTimestampEstimated: timedLine.IsTimestampEstimated,
+                    text: timedLine.Text.Trim());
+                line.PropertyChanged += OnFinalizedLinePropertyChanged;
+                FinalizedTranscriptLines.Add(line);
+                addedCount++;
+            }
+
+            if (addedCount == 0)
+            {
+                AppendLog("Live segment transcription produced only duplicate transcript rows.");
+                return 0;
+            }
+
+            RebuildFinalizedTextFromLines();
+        }
+        finally
+        {
+            _suppressSessionAutosave = false;
+        }
+
+        SelectedTranscriptViewIndex = 0;
+        NotifyCurrentTranscriptStateChanged();
+        ScheduleSessionAutosave();
+        return addedCount;
+    }
+
+    private bool IsDuplicateLiveSegmentBoundaryLine(TranscriptionTimedLine candidate)
+    {
+        string candidateText = NormalizeLiveSegmentText(candidate.Text);
+        if (candidateText.Length == 0)
+        {
+            return false;
+        }
+
+        TimeSpan candidateStart = candidate.StartOffset;
+        TimeSpan candidateEnd = ResolveLiveSegmentEnd(candidate.StartOffset, candidate.EndOffset);
+        FinalizedTranscriptLineViewModel? existing = FinalizedTranscriptLines
+            .LastOrDefault(line => line.StartOffset is not null);
+        if (existing?.StartOffset is not TimeSpan existingStart)
+        {
+            return false;
+        }
+
+        string existingText = NormalizeLiveSegmentText(existing.Text);
+        if (!string.Equals(existingText, candidateText, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        TimeSpan existingEnd = ResolveLiveSegmentEnd(existingStart, existing.EndOffset);
+        return RangesOverlapOrTouch(existingStart, existingEnd, candidateStart, candidateEnd);
+    }
+
+    private static bool RangesOverlapOrTouch(
+        TimeSpan firstStart,
+        TimeSpan firstEnd,
+        TimeSpan secondStart,
+        TimeSpan secondEnd)
+    {
+        return secondStart <= firstEnd
+            && firstStart <= secondEnd;
+    }
+
+    private static TimeSpan ResolveLiveSegmentEnd(TimeSpan start, TimeSpan? end)
+    {
+        return end is TimeSpan resolvedEnd && resolvedEnd > start
+            ? resolvedEnd
+            : start;
+    }
+
+    private static string NormalizeLiveSegmentText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(text.Length);
+        bool previousWasWhitespace = false;
+        foreach (char value in text.Trim().ToLowerInvariant())
+        {
+            if (char.IsWhiteSpace(value))
+            {
+                if (!previousWasWhitespace)
+                {
+                    builder.Append(' ');
+                    previousWasWhitespace = true;
+                }
+
+                continue;
+            }
+
+            if (char.IsPunctuation(value) || char.IsSymbol(value))
+            {
+                continue;
+            }
+
+            builder.Append(value);
+            previousWasWhitespace = false;
+        }
+
+        return builder.ToString().Trim();
+    }
+
+    private static string FormatOffset(TimeSpan offset)
+    {
+        return offset.ToString(offset.TotalHours >= 1 ? @"hh\:mm\:ss" : @"mm\:ss");
+    }
+
+    private static string BuildPreview(string? text)
+    {
+        string trimmed = text?.Trim() ?? string.Empty;
+        return trimmed.Length <= 80 ? trimmed : $"{trimmed[..77]}...";
     }
 
     public void DeleteCurrentLiveSessionIfEmpty()
@@ -1199,6 +1339,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             $"Transcribe Audio starting. engine='{selectedEngineId}', audioPath='{audioFilePath}', " +
             $"pendingImportPath='{_pendingImportedAudioFilePath}'.");
         bool shouldRestoreAudioPreview = ReleaseAudioPreviewForProcessing(audioFilePath);
+        string transcriptionAudioFilePath = audioFilePath;
+        bool deleteTranscriptionAudioFile = false;
 
         if (!EnsureCurrentSessionForAudioFile(audioFilePath))
         {
@@ -1211,8 +1353,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         try
         {
             selectedEngineId = ResolveSelectedFileTranscriptionEngineId();
+            (transcriptionAudioFilePath, deleteTranscriptionAudioFile) =
+                PrepareAudioFilePathForTranscription(audioFilePath);
             TranscriptionResult result = await _audioTranscriptionService.TranscribeAudioFileAsync(
-                audioFilePath,
+                transcriptionAudioFilePath,
                 selectedEngineId,
                 cancellationToken,
                 progress);
@@ -1258,6 +1402,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
         finally
         {
+            if (deleteTranscriptionAudioFile)
+            {
+                DeleteTemporaryTranscriptionAudioFile(transcriptionAudioFilePath);
+            }
+
             RestoreAudioPreviewAfterProcessing(audioFilePath, shouldRestoreAudioPreview);
             IsBusy = false;
         }
@@ -1317,6 +1466,54 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         AppendLog("Detect Speakers canceled: existing speaker labels were left unchanged.");
         return false;
+    }
+
+    private (string AudioFilePath, bool IsTemporary) PrepareAudioFilePathForTranscription(string audioFilePath)
+    {
+        if (!IsCurrentSessionLiveRecordingManifest() || !IsLiveRecordingManifestPath(audioFilePath))
+        {
+            return (audioFilePath, false);
+        }
+
+        string tempPath = Path.Combine(
+            Path.GetTempPath(),
+            $"AudioScript-live-session-{Guid.NewGuid():N}.wav");
+        using var liveRecordingStream = new SegmentedLiveRecordingWaveStream(audioFilePath);
+        liveRecordingStream.Position = 0;
+        WaveFileWriter.CreateWaveFile(tempPath, liveRecordingStream);
+        AppendLog($"Prepared live recording WAV for transcription: {Path.GetFileName(tempPath)}.");
+        return (tempPath, true);
+    }
+
+    private bool IsCurrentSessionLiveRecordingManifest()
+    {
+        return string.Equals(
+            _currentSessionDocument?.Audio?.StorageKind,
+            AudioStorageKinds.LiveRecordingManifest,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLiveRecordingManifestPath(string filePath)
+    {
+        return string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase)
+            && filePath.Contains(
+                Path.Combine("audio", "live"),
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void DeleteTemporaryTranscriptionAudioFile(string filePath)
+    {
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                File.Delete(filePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Temporary transcription audio cleanup skipped: {ex.Message}");
+        }
     }
 
     public async Task<bool> RunSpeakerDetectionAsync(
@@ -2151,48 +2348,95 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private async Task DeleteSelectedSessionAsync()
     {
-        if (_currentSessionDocument is null)
+        string operationId = Guid.NewGuid().ToString("N")[..8];
+        TranscriptSessionSummary? selectedSession = SelectedRecentSession;
+        string? sessionId = selectedSession?.SessionId ?? _currentSessionDocument?.SessionId;
+        if (string.IsNullOrWhiteSpace(sessionId))
         {
+            LogDeleteTrace(operationId, "No session id resolved. Delete request ignored.");
             return;
         }
 
-        string sessionId = _currentSessionDocument.SessionId;
-        string sessionDisplayName = string.IsNullOrWhiteSpace(_currentSessionDocument.DisplayName)
-            ? _currentSessionDocument.Audio.OriginalFileName
-            : _currentSessionDocument.DisplayName;
+        bool deletingLoadedSession = _currentSessionDocument is not null
+            && string.Equals(_currentSessionDocument.SessionId, sessionId, StringComparison.OrdinalIgnoreCase);
+        string? sessionDisplayName = selectedSession?.DisplayName;
+        if (string.IsNullOrWhiteSpace(sessionDisplayName) && deletingLoadedSession)
+        {
+            sessionDisplayName = string.IsNullOrWhiteSpace(_currentSessionDocument!.DisplayName)
+                ? _currentSessionDocument.Audio.OriginalFileName
+                : _currentSessionDocument.DisplayName;
+        }
+
+        sessionDisplayName = string.IsNullOrWhiteSpace(sessionDisplayName)
+            ? sessionId
+            : sessionDisplayName;
+        LogDeleteTrace(
+            operationId,
+            $"Delete requested. targetSessionId='{sessionId}', displayName='{TrimForLog(sessionDisplayName)}', " +
+            $"selectedSessionId='{selectedSession?.SessionId ?? "(none)"}', loadedSessionId='{_currentSessionDocument?.SessionId ?? "(none)"}', " +
+            $"deletingLoadedSession={deletingLoadedSession}, recentCount={RecentSessions.Count}, " +
+            $"recentSample={BuildRecentSessionsSnapshot()}.");
+
         if (!ConfirmSessionDeletion())
         {
             AppendLog("Session deletion canceled.");
+            LogDeleteTrace(operationId, "Delete canceled by confirmation flow.");
             return;
         }
 
-        string? currentAudioPath = LoadedAudioFilePath;
+        string? currentAudioPath = deletingLoadedSession ? LoadedAudioFilePath : null;
 
         IsBusy = true;
         try
         {
             _sessionAutosaveTimer.Stop();
+            LogDeleteTrace(operationId, "Delete execution started. Autosave stopped.");
 
-            if (IsAudioFileLoaded)
+            if (deletingLoadedSession && IsAudioFileLoaded)
             {
                 _audioPlaybackService.UnloadFile();
                 LoadedAudioFilePath = string.Empty;
                 IsAudioPlaying = false;
                 ResetAudioTimeline();
+                LogDeleteTrace(operationId, "Loaded session audio unloaded before deletion.");
             }
 
             await _sessionSaveSemaphore.WaitAsync();
             try
             {
+                LogDeleteTrace(operationId, "Delete lock acquired. Calling SessionStore.DeleteSession.");
                 _sessionStore.DeleteSession(sessionId);
+                EnsureSessionDeletedFromStorage(sessionId);
+                LogDeleteTrace(operationId, "SessionStore delete completed and storage verification passed.");
             }
             finally
             {
                 _sessionSaveSemaphore.Release();
+                LogDeleteTrace(operationId, "Delete lock released.");
             }
 
-            ClearCurrentSessionAfterDeletion();
+            if (deletingLoadedSession)
+            {
+                ClearCurrentSessionAfterDeletion();
+            }
+            else if (SelectedRecentSession is not null
+                && string.Equals(SelectedRecentSession.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+            {
+                SelectedRecentSession = null;
+            }
+
+            RemoveSessionFromRecentSessions(sessionId);
+            LogDeleteTrace(
+                operationId,
+                $"Removed deleted session from in-memory list. recentCount={RecentSessions.Count}, " +
+                $"recentSample={BuildRecentSessionsSnapshot()}.");
+
             LoadRecentSessions(selectSessionId: null);
+            LogDeleteTrace(
+                operationId,
+                $"Recent sessions reloaded. selectedSessionId='{SelectedRecentSession?.SessionId ?? "(none)"}', " +
+                $"loadedSessionId='{_currentSessionDocument?.SessionId ?? "(none)"}', recentCount={RecentSessions.Count}, " +
+                $"recentSample={BuildRecentSessionsSnapshot()}.");
             AppendLog($"Session deleted: {sessionDisplayName}.");
         }
         catch (Exception ex)
@@ -2205,10 +2449,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             RaiseError($"Unable to delete session: {ex.Message}");
             AppendLog($"Session deletion failed: {ex.Message}");
+            LogDeleteTrace(operationId, $"Delete failed: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
             IsBusy = false;
+            LogDeleteTrace(operationId, "Delete operation finished.");
         }
     }
 
@@ -2343,7 +2589,60 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private bool CanDeleteSelectedSession()
     {
-        return HasCurrentSession && !IsBusy;
+        return (SelectedRecentSession is not null || HasCurrentSession) && !IsBusy;
+    }
+
+    private void EnsureSessionDeletedFromStorage(string sessionId)
+    {
+        string sessionDirectoryPath = _sessionStore.GetSessionDirectoryPath(sessionId);
+        if (!Directory.Exists(sessionDirectoryPath))
+        {
+            return;
+        }
+
+        for (int attempt = 0; attempt < 3 && Directory.Exists(sessionDirectoryPath); attempt++)
+        {
+            Thread.Sleep(50);
+        }
+
+        if (Directory.Exists(sessionDirectoryPath))
+        {
+            throw new IOException($"Session directory still exists after deletion: '{sessionDirectoryPath}'.");
+        }
+    }
+
+    private void RemoveSessionFromRecentSessions(string sessionId)
+    {
+        for (int index = RecentSessions.Count - 1; index >= 0; index--)
+        {
+            if (string.Equals(RecentSessions[index].SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+            {
+                RecentSessions.RemoveAt(index);
+            }
+        }
+
+        NotifyPropertyChanged(nameof(HasRecentSessions));
+    }
+
+    private string BuildRecentSessionsSnapshot()
+    {
+        if (RecentSessions.Count == 0)
+        {
+            return "[]";
+        }
+
+        return "[" + string.Join(
+            ",",
+            RecentSessions
+                .Take(6)
+                .Select(session => session.SessionId)) + (RecentSessions.Count > 6 ? ",..." : string.Empty) + "]";
+    }
+
+    private void LogDeleteTrace(string operationId, string message)
+    {
+        string payload = $"[{operationId}] {message}";
+        AppendLog($"Session delete trace: {payload}");
+        _processLogService.Log("SessionDelete", payload, ProcessLogLevel.Debug);
     }
 
     private bool CanPlayAudio()
@@ -2401,7 +2700,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             LiveAudioDeviceNumber: _preferredLiveAudioDeviceNumber,
             SelectedEngineId: SelectedEngineId,
             LiveAudioAutoGainEnabled: _liveAudioAutoGainEnabled,
-            LiveAudioGainLevel: _liveAudioGainLevel));
+            LiveAudioGainLevel: _liveAudioGainLevel,
+            TranscriptExportDirectory: _transcriptExportDirectory));
     }
 
     private bool EnsureSelectedModelConfigured()

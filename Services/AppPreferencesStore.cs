@@ -32,7 +32,8 @@ public sealed class AppPreferencesStore {
                 LiveAudioDeviceNumber: -1,
                 SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
                 LiveAudioAutoGainEnabled: true,
-                LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel);
+                LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel,
+                TranscriptExportDirectory: string.Empty);
         }
 
         try {
@@ -49,7 +50,8 @@ public sealed class AppPreferencesStore {
                     LiveAudioDeviceNumber: -1,
                     SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
                     LiveAudioAutoGainEnabled: true,
-                    LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel);
+                    LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel,
+                    TranscriptExportDirectory: string.Empty);
             }
 
             return new AppPreferencesSnapshot(
@@ -61,7 +63,8 @@ public sealed class AppPreferencesStore {
                 LiveAudioDeviceNumber: persisted.LiveAudioDeviceNumber ?? -1,
                 SelectedEngineId: NormalizeSelectedEngineId(persisted.SelectedEngineId),
                 LiveAudioAutoGainEnabled: persisted.LiveAudioAutoGainEnabled ?? true,
-                LiveAudioGainLevel: NormalizeLiveAudioGainLevel(persisted.LiveAudioGainLevel));
+                LiveAudioGainLevel: NormalizeLiveAudioGainLevel(persisted.LiveAudioGainLevel),
+                TranscriptExportDirectory: NormalizeTranscriptExportDirectory(persisted.TranscriptExportDirectory));
         }
         catch {
             return new AppPreferencesSnapshot(
@@ -73,7 +76,8 @@ public sealed class AppPreferencesStore {
                 LiveAudioDeviceNumber: -1,
                 SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
                 LiveAudioAutoGainEnabled: true,
-                LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel);
+                LiveAudioGainLevel: LiveAudioGainOptions.DefaultManualGainLevel,
+                TranscriptExportDirectory: string.Empty);
         }
     }
 
@@ -92,6 +96,7 @@ public sealed class AppPreferencesStore {
                 SelectedEngineId = snapshot.SelectedEngineId,
                 LiveAudioAutoGainEnabled = snapshot.LiveAudioAutoGainEnabled,
                 LiveAudioGainLevel = NormalizeLiveAudioGainLevel(snapshot.LiveAudioGainLevel),
+                TranscriptExportDirectory = NormalizeTranscriptExportDirectory(snapshot.TranscriptExportDirectory),
             };
 
             string json = JsonSerializer.Serialize(persisted, JsonOptions);
@@ -161,6 +166,11 @@ public sealed class AppPreferencesStore {
         return Math.Clamp(value.Value, 0, 1);
     }
 
+    private static string NormalizeTranscriptExportDirectory(string? value)
+    {
+        return value?.Trim() ?? string.Empty;
+    }
+
     private sealed class PersistedAppPreferences {
         public bool CopyFinalizedWithTimeline { get; init; }
 
@@ -179,6 +189,8 @@ public sealed class AppPreferencesStore {
         public bool? LiveAudioAutoGainEnabled { get; init; }
 
         public double? LiveAudioGainLevel { get; init; }
+
+        public string? TranscriptExportDirectory { get; init; }
     }
 }
 
@@ -191,7 +203,8 @@ public sealed record AppPreferencesSnapshot(
     int LiveAudioDeviceNumber,
     string SelectedEngineId = TranscriptionModelCatalog.WhisperSmall,
     bool LiveAudioAutoGainEnabled = true,
-    double LiveAudioGainLevel = LiveAudioGainOptions.DefaultManualGainLevel);
+    double LiveAudioGainLevel = LiveAudioGainOptions.DefaultManualGainLevel,
+    string TranscriptExportDirectory = "");
 
 
 

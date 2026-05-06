@@ -4,6 +4,8 @@ using AudioScript.Abstractions;
 using AudioScript.Audio;
 using AudioScript.Services;
 using AudioScript.ViewModels;
+using System.Windows;
+using System.Windows.Controls;
 using Xunit;
 
 namespace AudioScript.Tests;
@@ -20,6 +22,7 @@ public sealed class MainWindowTests
         Assert.Contains("<MenuItem Header=\"Separate into 2 rows\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Combine to previous row\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Rename Speaker To\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Merge adjacent rows for selected speaker\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Copy row text\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"Engine\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Insert Row Above\"", xaml, StringComparison.Ordinal);
@@ -32,6 +35,121 @@ public sealed class MainWindowTests
     }
 
     [Fact]
+    public void ResolveTranscriptContextMenuItemVisibility_ShowsSpeakerActionOnlyForSpeakerCell()
+    {
+        Visibility speakerCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
+            header: "Rename Speaker To",
+            isSpeakerCellMenu: true,
+            isTextCellMenu: false,
+            canRenameSpeaker: true);
+        Visibility textCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
+            header: "Rename Speaker To",
+            isSpeakerCellMenu: false,
+            isTextCellMenu: true,
+            canRenameSpeaker: true);
+
+        Assert.Equal(Visibility.Visible, speakerCellVisibility);
+        Assert.Equal(Visibility.Collapsed, textCellVisibility);
+
+        Visibility mergeOnSpeakerCell = MainWindow.ResolveTranscriptContextMenuItemVisibility(
+            header: "Merge adjacent rows for selected speaker",
+            isSpeakerCellMenu: true,
+            isTextCellMenu: false,
+            canRenameSpeaker: true);
+        Visibility mergeOnTextCell = MainWindow.ResolveTranscriptContextMenuItemVisibility(
+            header: "Merge adjacent rows for selected speaker",
+            isSpeakerCellMenu: false,
+            isTextCellMenu: true,
+            canRenameSpeaker: true);
+
+        Assert.Equal(Visibility.Visible, mergeOnSpeakerCell);
+        Assert.Equal(Visibility.Collapsed, mergeOnTextCell);
+    }
+
+    [Fact]
+    public void CanMergeAdjacentRowsAroundSelectedRow_RequiresAdjacencyToSelectedRow()
+    {
+        var lineA = new FinalizedTranscriptLineViewModel(TimeSpan.Zero, TimeSpan.FromSeconds(1), false, "a", "Speaker 1");
+        var lineB = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), false, "b", "Speaker 1");
+        var lineC = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3), false, "c", "Speaker 2");
+        var lineD = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(4), false, "d", "Speaker 1");
+        var lineE = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(5), false, "e", "Speaker 1");
+
+        Assert.True(MainWindow.CanMergeAdjacentRowsAroundSelectedRow([lineA, lineB, lineC], lineA));
+        Assert.False(MainWindow.CanMergeAdjacentRowsAroundSelectedRow([lineA, lineC, lineB], lineA));
+        Assert.False(MainWindow.CanMergeAdjacentRowsAroundSelectedRow([lineA, lineB, lineC], lineC));
+        Assert.True(MainWindow.CanMergeAdjacentRowsAroundSelectedRow([lineA, lineB, lineC, lineD, lineE], lineD));
+    }
+
+    [Fact]
+    public void TryResolveSelectedSpeakerMergeRange_UsesOnlySelectedAdjacentBlock()
+    {
+        var lineA = new FinalizedTranscriptLineViewModel(TimeSpan.Zero, TimeSpan.FromSeconds(1), false, "a", "Speaker 1");
+        var lineB = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), false, "b", "Speaker 1");
+        var lineC = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3), false, "c", "Speaker 2");
+        var lineD = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(4), false, "d", "Speaker 1");
+        var lineE = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(5), false, "e", "Speaker 1");
+
+        bool resolved = MainWindow.TryResolveSelectedSpeakerMergeRange(
+            [lineA, lineB, lineC, lineD, lineE],
+            lineD,
+            out int start,
+            out int end);
+
+        Assert.True(resolved);
+        Assert.Equal(3, start);
+        Assert.Equal(4, end);
+    }
+
+    [Fact]
+    public void NormalizeMergedRowTimelineNeighborhood_AlignsMergedEndToNextStart()
+    {
+        var merged = new FinalizedTranscriptLineViewModel(TimeSpan.Zero, TimeSpan.FromSeconds(5), false, "merged");
+        var next = new FinalizedTranscriptLineViewModel(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), false, "next");
+
+        int fixedRows = MainWindow.NormalizeMergedRowTimelineNeighborhood([merged, next], 0);
+
+        Assert.Equal(1, fixedRows);
+        Assert.Equal(TimeSpan.FromSeconds(3), merged.EndOffset);
+    }
+
+    [Fact]
+    public void ResolveTranscriptContextMenuItemVisibility_ShowsTextActionsOnAllColumns()
+    {
+        Visibility textCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
+            header: "Transcribe this row",
+            isSpeakerCellMenu: false,
+            isTextCellMenu: true,
+            canRenameSpeaker: false);
+        Visibility speakerCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
+            header: "Transcribe this row",
+            isSpeakerCellMenu: true,
+            isTextCellMenu: false,
+            canRenameSpeaker: false);
+        Visibility otherCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
+            header: "Transcribe this row",
+            isSpeakerCellMenu: false,
+            isTextCellMenu: false,
+            canRenameSpeaker: false);
+
+        Assert.Equal(Visibility.Visible, textCellVisibility);
+        Assert.Equal(Visibility.Visible, speakerCellVisibility);
+        Assert.Equal(Visibility.Visible, otherCellVisibility);
+    }
+
+    [Fact]
+    public void ResolveTranscriptContextMenuItemVisibility_AlwaysShowsGeneralActions()
+    {
+        Visibility otherCellVisibility = MainWindow.ResolveTranscriptContextMenuItemVisibility(
+            header: "Copy row text",
+            isSpeakerCellMenu: false,
+            isTextCellMenu: false,
+            canRenameSpeaker: false);
+
+        Assert.Equal(Visibility.Visible, otherCellVisibility);
+    }
+
+    [Fact]
     public void LiveTranscriptionWindow_ContainsAutomaticGainCheckbox()
     {
         string xamlPath = FindRepoFile("LiveTranscriptionWindow.xaml");
@@ -40,6 +158,38 @@ public sealed class MainWindowTests
         Assert.Contains("Content=\"Automatic gain\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("SourceDetailText", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("Automatic app gain", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public Task LiveTranscriptionWindow_PersistsAutomaticGainToggle()
+    {
+        return RunInStaAsync(() =>
+        {
+            LiveAudioGainOptions? persisted = null;
+            var window = new LiveTranscriptionWindow(
+                new[]
+                {
+                    new AudioInputDeviceOption(
+                        LiveAudioSourceKind.DefaultPlayback,
+                        -1,
+                        "Default playback"),
+                },
+                "Test engine",
+                _ => Task.FromResult(true),
+                () => Task.CompletedTask,
+                options => persisted = options);
+
+            window.SetGainOptions(new LiveAudioGainOptions(IsAutomaticGainEnabled: true, ManualGainLevel: 0.75));
+
+            CheckBox automaticGainCheckBox = Assert.IsType<CheckBox>(window.FindName("AutomaticGainCheckBox"));
+            automaticGainCheckBox.IsChecked = false;
+
+            Assert.NotNull(persisted);
+            Assert.False(persisted!.IsAutomaticGainEnabled);
+            Assert.Equal(0.75, persisted.ManualGainLevel, precision: 6);
+
+            return Task.CompletedTask;
+        });
     }
 
     [Theory]
@@ -409,18 +559,19 @@ public sealed class MainWindowTests
     }
 
     [Theory]
-    [InlineData("Previous row.", "Deleted row.", "Previous row.\nDeleted row.")]
+    [InlineData("Previous row.", "Deleted row.", "Previous row. Deleted row.")]
     [InlineData("", "Deleted row.", "Deleted row.")]
     [InlineData("Previous row.", "", "Previous row.")]
     [InlineData("", "", "")]
-    public void BuildMergedDeletedRowText_JoinsNonEmptyRowsWithLineFeed(
+    [InlineData("Previous row.\nPart 2", "Deleted\r\nrow.", "Previous row. Part 2 Deleted row.")]
+    public void BuildMergedDeletedRowText_JoinsRowsAsSingleParagraph(
         string previousText,
         string deletedText,
         string expectedText)
     {
         string text = MainWindow.BuildMergedDeletedRowText(previousText, deletedText);
 
-        Assert.Equal(expectedText.Replace("\n", Environment.NewLine), text);
+        Assert.Equal(expectedText, text);
     }
 
     [Fact]
@@ -447,7 +598,7 @@ public sealed class MainWindowTests
 
         MainWindow.MergeDeletedRowTextIntoPreviousRow(previous, deleted);
 
-        Assert.Equal($"Previous row.{Environment.NewLine}Deleted row.", previous.Text);
+        Assert.Equal("Previous row. Deleted row.", previous.Text);
         Assert.Equal("Maria", previous.SpeakerLabel);
         Assert.Equal(SpeakerLabelSources.Manual, previous.SpeakerLabelSource);
         Assert.Equal(3, previous.DiarizationRevision);

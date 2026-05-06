@@ -59,6 +59,8 @@ public sealed class LiveRecordingSession : IAsyncDisposable
 
     public event EventHandler<Exception>? Faulted;
 
+    public event EventHandler<LiveRecordingSegmentFinalizedEventArgs>? SegmentFinalized;
+
     public string ManifestPath => _manifestPath;
 
     public string ManifestRelativePath => _manifestRelativePath;
@@ -291,19 +293,22 @@ public sealed class LiveRecordingSession : IAsyncDisposable
             ? Path.GetFileName(segmentPath)
             : NormalizeRelativePath(Path.Combine(_recordingRelativeDirectoryPath, Path.GetFileName(segmentPath)));
 
-        Manifest.Segments.Add(new LiveRecordingSegmentManifest
+        var segment = new LiveRecordingSegmentManifest
         {
             RelativePath = relativePath,
             StartSeconds = startSeconds,
             DurationSeconds = durationSeconds,
             FileSizeBytes = info.Length,
-        });
+        };
+
+        Manifest.Segments.Add(segment);
         UpdateManifestTotals();
         SaveManifest();
         Log(
             $"Finalized live recording segment file='{segmentPath}', relativePath='{relativePath}', " +
             $"duration={durationSeconds:0.###}s, pcmBytes={segmentBytes:N0}, fileSizeBytes={info.Length:N0}, " +
             $"segmentCount={Manifest.Segments.Count:N0}.");
+        SegmentFinalized?.Invoke(this, new LiveRecordingSegmentFinalizedEventArgs(segment, segmentPath));
     }
 
     private void ReportFault(Exception ex)
