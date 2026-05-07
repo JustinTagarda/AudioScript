@@ -433,7 +433,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             && SupportedAudioFileExtensions.Contains(extension);
     }
 
-    public bool CanRunLiveTranscribePrimaryAction =>
+    public bool CanRunLivePrimaryAction =>
         !IsGenerationRunning && !IsBusy;
 
     public bool CanRunTranscribeAudioPrimaryAction =>
@@ -2720,7 +2720,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(IsEngineSelectionEnabled));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptionEnabled));
         NotifyPropertyChanged(nameof(IsTranscriptGenerationEnabled));
-        NotifyPropertyChanged(nameof(CanRunLiveTranscribePrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunLivePrimaryAction));
         NotifyPropertyChanged(nameof(CanRunTranscribeAudioPrimaryAction));
         NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
     }

@@ -510,24 +510,10 @@
 
                 <Border Grid.Row="0"
                         Margin="0,0,0,6"
-                        Padding="0">
+                        Padding="0"
+                        Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal"
                                 HorizontalAlignment="Left">
-                        <Button
-                                Content="Open Audio"
-                                VerticalAlignment="Center"
-                                Padding="8,0"
-                                Tag="&#xE838;"
-                                Style="{StaticResource ToolbarButtonStyle}"
-                                Command="{Binding OpenAudioFileCommand}"/>
-                        <Button
-                                x:Name="LiveTranscribePrimaryActionButton"
-                                Content="Live Transcribe"
-                                Padding="8,0"
-                                Tag="&#xE720;"
-                                IsEnabled="{Binding CanRunLiveTranscribePrimaryAction}"
-                                Style="{StaticResource ToolbarPrimaryButtonStyle}"
-                                Click="LiveTranscribePrimaryAction_Click"/>
                         <Button
                                 Content="{x:Null}"
                                 Width="32"
@@ -550,7 +536,7 @@
 
                     <Border Grid.Column="0"
                             Margin="0,0,6,0"
-                            Padding="6"
+                            Padding="0"
                             BorderThickness="1"
                             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                             Background="{x:Null}"
@@ -570,13 +556,49 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0"
-                                       Text="Sessions"
-                                       Style="{StaticResource SectionHeaderTextBlockStyle}"/>
+                            <Grid Grid.Row="0"
+                                  Margin="2">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0"
+                                            Content="Open Audio"
+                                            Margin="0"
+                                            VerticalAlignment="Center"
+                                            Padding="8,0"
+                                            Tag="&#xE838;"
+                                            Style="{StaticResource ToolbarButtonStyle}"
+                                            Command="{Binding OpenAudioFileCommand}"/>
+                                    <Button Grid.Column="1"
+                                            x:Name="LiveTranscriptionPrimaryActionButton"
+                                            Content="Live Transcription"
+                                            Margin="2,0,0,0"
+                                            Padding="8,0"
+                                            Tag="&#xE720;"
+                                            IsEnabled="{Binding CanRunLivePrimaryAction}"
+                                            Style="{StaticResource ToolbarPrimaryButtonStyle}"
+                                            Click="LiveTranscriptionPrimaryAction_Click"/>
+                                    <Button Grid.Column="2"
+                                            Content="{x:Null}"
+                                            Margin="2,0,0,0"
+                                            Height="32"
+                                            HorizontalAlignment="Stretch"
+                                            Padding="0"
+                                            ToolTip="Settings"
+                                            AutomationProperties.Name="Settings"
+                                            Tag="&#xE713;"
+                                            Style="{StaticResource ToolbarButtonStyle}"
+                                            Click="Settings_Click"/>
+                                </Grid>
+                            </Grid>
 
                             <Grid Grid.Row="1">
                                 <ListBox ItemsSource="{Binding RecentSessions}"
                                          SelectedItem="{Binding SelectedRecentSession, Mode=TwoWay}"
+                                         Margin="2,0"
                                          HorizontalContentAlignment="Stretch"
                                          Background="{x:Null}"
                                          ItemContainerStyle="{StaticResource SessionsListBoxItemStyle}"

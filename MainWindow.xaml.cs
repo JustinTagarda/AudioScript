@@ -268,7 +268,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
-    private void LiveTranscribePrimaryAction_Click(object sender, RoutedEventArgs e)
+    private void LiveTranscriptionPrimaryAction_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm)
         {
