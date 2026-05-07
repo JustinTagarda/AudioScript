@@ -449,10 +449,49 @@
                        Padding="6,2">
                 <StatusBarItem DockPanel.Dock="Right"
                                Padding="0">
-                    <TextBlock Text="{Binding ApplicationVersionStatusText}"
-                               ToolTip="{Binding ApplicationVersionStatusText}"
-                               FontSize="12"
-                               TextTrimming="CharacterEllipsis"/>
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                ToolTip="{Binding ApplicationUpdateStatusText}">
+                        <TextBlock Text="{Binding ApplicationUpdateStatusText}"
+                                   FontSize="12"
+                                   TextTrimming="CharacterEllipsis">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground"
+                                            Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsMandatoryApplicationUpdateAvailable}"
+                                                     Value="True">
+                                            <Setter Property="Foreground"
+                                                    Value="{DynamicResource SystemFillColorCautionBrush}"/>
+                                            <Setter Property="FontWeight"
+                                                    Value="SemiBold"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ProgressBar Width="96"
+                                     Height="6"
+                                     Margin="10,0,0,0"
+                                     Minimum="0"
+                                     Maximum="100"
+                                     Value="{Binding ApplicationUpdateProgressPercent}">
+                            <ProgressBar.Style>
+                                <Style TargetType="ProgressBar">
+                                    <Setter Property="Visibility"
+                                            Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsApplicationUpdateProgressVisible}"
+                                                     Value="True">
+                                            <Setter Property="Visibility"
+                                                    Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ProgressBar.Style>
+                        </ProgressBar>
+                    </StackPanel>
                 </StatusBarItem>
 
                 <StatusBarItem DockPanel.Dock="Left"
@@ -733,7 +772,7 @@
                                                                         Header="Timeline"
                                                                         CanUserSort="False"
                                                                         IsReadOnly="True"
-                                                                        Width="78">
+                                                                        Width="Auto">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <Border Margin="6,0,0,0"
@@ -777,7 +816,7 @@
                                                                     Header="Speaker"
                                                                     Binding="{Binding SpeakerLabel}"
                                                                     EditingElementStyle="{StaticResource TranscriptSpeakerEditorTextBoxStyle}"
-                                                                    Width="136"
+                                                                    Width="Auto"
                                                                     Visibility="Collapsed"/>
                                                 <DataGridTemplateColumn x:Name="TranscriptTextColumn"
                                                                         Header="Text"

@@ -2,6 +2,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using AudioScript.Audio;
 using AudioScript.Services;
@@ -21,6 +22,7 @@ public partial class App : System.Windows.Application
     private ProcessLogService? _processLogService;
 
     private MainViewModel? _mainViewModel;
+    private IAppUpdateService? _appUpdateService;
     private WindowPlacementService? _windowPlacementService;
     private AppPreferencesStore? _appPreferencesStore;
     private AppThemeService? _appThemeService;
@@ -116,6 +118,15 @@ public partial class App : System.Windows.Application
         _windowPlacementService = new WindowPlacementService(
             Path.Combine(appDataPathProvider.SettingsPath, "window-placement.json"));
 
+        MainWindow? updateBusyWindow = null;
+        IntPtr updateOwnerWindowHandle = IntPtr.Zero;
+        var appVersionProvider = new AppVersionProvider();
+        _appUpdateService = new AppUpdateService(
+            appVersionProvider,
+            new StoreUpdateClient(processLogService, () => updateOwnerWindowHandle),
+            processLogService,
+            () => updateBusyWindow is MainWindow window && window.IsBusyForAppUpdate);
+
         _mainViewModel = new MainViewModel(
             whisperModelManager.GetSelectableTranscriptionModels(),
             whisperTranscriptionService,
@@ -125,7 +136,8 @@ public partial class App : System.Windows.Application
             sessionStore,
             _appPreferencesStore,
             _appThemeService,
-            appPreferencesSnapshot);
+            appPreferencesSnapshot,
+            _appUpdateService);
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
@@ -145,11 +157,14 @@ public partial class App : System.Windows.Application
         {
             DataContext = _mainViewModel,
         };
+        updateBusyWindow = mainWindow;
         _windowPlacementService.Apply(mainWindow);
         _windowPlacementService.Attach(mainWindow);
 
         MainWindow = mainWindow;
         mainWindow.Show();
+        updateOwnerWindowHandle = new WindowInteropHelper(mainWindow).Handle;
+        _ = _appUpdateService.StartAsync();
         processLogService.Log("App", "Application startup completed.");
     }
 
@@ -182,7 +197,10 @@ public partial class App : System.Windows.Application
         _processLogService?.Log("App", "Application exit initiated.");
         try
         {
+            _appUpdateService?.StopAsync().GetAwaiter().GetResult();
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            _appUpdateService?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            _appUpdateService = null;
         }
         finally
         {

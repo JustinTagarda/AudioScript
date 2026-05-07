@@ -37,10 +37,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private readonly TranscriptSessionStore _sessionStore;
     private readonly AppPreferencesStore _appPreferencesStore;
     private readonly AppThemeService _appThemeService;
+    private readonly IAppUpdateService? _appUpdateService;
     private readonly SynchronizationContext _uiContext;
     private readonly DispatcherTimer _audioTimelineTimer;
     private readonly DispatcherTimer _sessionAutosaveTimer;
     private readonly SemaphoreSlim _sessionSaveSemaphore = new(1, 1);
+    private readonly object _processLogsSync = new();
 
     private readonly EngineOptionViewModel _autoTranscribeEngine;
     private EngineOptionViewModel? _selectedEngine;
@@ -72,7 +74,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool _isApplyingSpeakerDiarizationLabels;
     private bool _pendingSpeakerDiarizationResume;
     private bool _suppressSessionAutosave;
-    private string _applicationVersionStatusText = string.Empty;
+    private AppUpdateSnapshot _appUpdateSnapshot;
     private int _selectedTranscriptViewIndex;
     private string _pendingImportedAudioFilePath = string.Empty;
     private string _transcriptExportDirectory = string.Empty;
@@ -86,7 +88,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         TranscriptSessionStore sessionStore,
         AppPreferencesStore appPreferencesStore,
         AppThemeService appThemeService,
-        AppPreferencesSnapshot appPreferencesSnapshot)
+        AppPreferencesSnapshot appPreferencesSnapshot,
+        IAppUpdateService? appUpdateService = null)
     {
         _audioTranscriptionService = audioTranscriptionService;
         _speakerDiarizationService = speakerDiarizationService;
@@ -95,7 +98,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _sessionStore = sessionStore;
         _appPreferencesStore = appPreferencesStore;
         _appThemeService = appThemeService;
+        _appUpdateService = appUpdateService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
+        _appUpdateSnapshot = appUpdateService?.CurrentSnapshot
+            ?? AppUpdateSnapshot.Idle(new AppVersionProvider().InstalledVersion);
 
         _autoPlayTimelineSelection = appPreferencesSnapshot.AutoPlayTimelineSelection;
         _selectedThemePreference = appPreferencesSnapshot.ThemePreference;
@@ -147,7 +153,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             appPreferencesSnapshot.SelectedEngineId,
             _autoTranscribeEngine.DisplayName);
         SelectedTranscriptViewIndex = 0;
-        _applicationVersionStatusText = BuildInstalledVersionStatus();
+        if (_appUpdateService is not null)
+        {
+            _appUpdateService.SnapshotChanged += OnAppUpdateSnapshotChanged;
+        }
 
         AppendLogCore("Application initialized.");
         AppendLogCore($"Loaded {Engines.Count} transcription mode option(s).");
@@ -488,6 +497,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         get
         {
+            if (HasCurrentTranscriptLines)
+            {
+                return "Transcript rows are available.";
+            }
+
             if (IsAudioFileLoaded && !HasCurrentTranscriptLines)
             {
                 return "Click the button below to transcribe this audio file.";
@@ -545,9 +559,40 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public string ApplicationVersionStatusText
     {
-        get => _applicationVersionStatusText;
-        private set => SetProperty(ref _applicationVersionStatusText, value);
+        get => $"Version {_appUpdateSnapshot.InstalledVersion}";
     }
+
+    public string ApplicationUpdateStatusText
+    {
+        get
+        {
+            if (_appUpdateSnapshot.State == AppUpdateState.Idle
+                || string.IsNullOrWhiteSpace(_appUpdateSnapshot.StageText))
+            {
+                return ApplicationVersionStatusText;
+            }
+
+            return string.IsNullOrWhiteSpace(_appUpdateSnapshot.StatusMessage)
+                ? $"{ApplicationVersionStatusText} - {_appUpdateSnapshot.StageText}"
+                : $"{ApplicationVersionStatusText} - {_appUpdateSnapshot.StageText}: {_appUpdateSnapshot.StatusMessage}";
+        }
+    }
+
+    public string ApplicationUpdateStageText => _appUpdateSnapshot.StageText;
+
+    public string ApplicationUpdateMessageText => _appUpdateSnapshot.StatusMessage;
+
+    public AppUpdateState ApplicationUpdateState => _appUpdateSnapshot.State;
+
+    public bool IsApplicationUpdateProgressVisible => _appUpdateSnapshot.IsProgressVisible;
+
+    public double ApplicationUpdateProgressPercent => _appUpdateSnapshot.ProgressValue * 100;
+
+    public bool IsApplicationUpdateActive =>
+        _appUpdateSnapshot.State != AppUpdateState.Idle;
+
+    public bool IsMandatoryApplicationUpdateAvailable =>
+        _appUpdateSnapshot.IsMandatoryUpdateAvailable;
 
     public string LoadedAudioFilePath
     {
@@ -709,6 +754,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         AppendLog("Disposing transcription resources...");
 
+        if (_appUpdateService is not null)
+        {
+            _appUpdateService.SnapshotChanged -= OnAppUpdateSnapshotChanged;
+        }
+
         _sessionAutosaveTimer.Stop();
         _sessionAutosaveTimer.Tick -= OnSessionAutosaveTimerTick;
         TrySaveCurrentSession(
@@ -790,35 +840,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _audioPlaybackService.Pause();
         IsAudioPlaying = _audioPlaybackService.IsPlaying;
         UpdateAudioTimelineFromPlayback();
-    }
-
-    public void PrepareForRequiredUpdateShutdown()
-    {
-        AppendLog("An application update is required. Canceling active work.");
-
-        try
-        {
-            if (IsAudioFileLoaded)
-            {
-                _audioPlaybackService.Stop();
-            }
-        }
-        catch (Exception ex)
-        {
-            AppendLog($"Audio stop during update shutdown failed: {ex.Message}");
-        }
-
-        IsAudioPlaying = _audioPlaybackService.IsPlaying;
-
-        if (IsAudioFileLoaded)
-        {
-            UpdateAudioTimelineFromPlayback();
-        }
-        else
-        {
-            ResetAudioTimeline();
-        }
-
     }
 
     public void SetGenerationRunning(bool isRunning, bool isLiveTranscriptionRunning = false)
@@ -1542,6 +1563,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         string previousLoadedAudioFilePath = LoadedAudioFilePath;
         bool shouldRestoreAudioPreview = ReleaseAudioPreviewForProcessing(previousLoadedAudioFilePath);
+        SpeakerDiarizationRowSnapshot[] preRunSpeakerLabels = CaptureSpeakerLabelSnapshots();
 
         IsBusy = true;
         try
@@ -1669,6 +1691,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         catch (Exception ex)
         {
             MarkSpeakerDiarizationJobStopped(SpeakerDiarizationJobStatuses.Failed, ex.Message);
+            RestorePreRunSpeakerLabelsIfNoChunkCompleted(preRunSpeakerLabels);
             if (!SaveSpeakerDiarizationCheckpoint("Speaker diarization failed; partial speaker labels were kept."))
             {
                 AppendLog("Speaker diarization failure state could not be saved.");
@@ -1875,21 +1898,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         SpeakerDiarizationJobDocument job,
         SpeakerDiarizationChunkCheckpoint checkpoint)
     {
-        _isApplyingSpeakerDiarizationLabels = true;
-        try
-        {
-            foreach (SpeakerDiarizationRowSnapshot row in checkpoint.Rows)
-            {
-                row.Line.SpeakerLabel = row.SpeakerLabel;
-                row.Line.SpeakerLabelSource = row.SpeakerLabelSource;
-                row.Line.DiarizationRevision = row.DiarizationRevision;
-                row.Line.LastDiarizedChunkIndex = row.LastDiarizedChunkIndex;
-            }
-        }
-        finally
-        {
-            _isApplyingSpeakerDiarizationLabels = false;
-        }
+        RestoreSpeakerLabelSnapshots(checkpoint.Rows);
 
         job.LastCompletedChunkIndex = checkpoint.LastCompletedChunkIndex;
         job.LastUpdatedUtc = checkpoint.LastUpdatedUtc;
@@ -1906,6 +1915,48 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         RebuildFinalizedTextFromLines();
         NotifyCurrentTranscriptStateChanged();
+    }
+
+    private SpeakerDiarizationRowSnapshot[] CaptureSpeakerLabelSnapshots() =>
+        FinalizedTranscriptLines
+            .Select(line => new SpeakerDiarizationRowSnapshot(
+                line,
+                line.SpeakerLabel,
+                line.SpeakerLabelSource,
+                line.DiarizationRevision,
+                line.LastDiarizedChunkIndex))
+            .ToArray();
+
+    private void RestorePreRunSpeakerLabelsIfNoChunkCompleted(SpeakerDiarizationRowSnapshot[] snapshots)
+    {
+        if (_currentSessionDocument?.Transcript.SpeakerDiarizationJob is not SpeakerDiarizationJobDocument job
+            || job.LastCompletedChunkIndex >= 0)
+        {
+            return;
+        }
+
+        RestoreSpeakerLabelSnapshots(snapshots);
+        RebuildFinalizedTextFromLines();
+        NotifyCurrentTranscriptStateChanged();
+    }
+
+    private void RestoreSpeakerLabelSnapshots(IEnumerable<SpeakerDiarizationRowSnapshot> snapshots)
+    {
+        _isApplyingSpeakerDiarizationLabels = true;
+        try
+        {
+            foreach (SpeakerDiarizationRowSnapshot row in snapshots)
+            {
+                row.Line.SpeakerLabel = row.SpeakerLabel;
+                row.Line.SpeakerLabelSource = row.SpeakerLabelSource;
+                row.Line.DiarizationRevision = row.DiarizationRevision;
+                row.Line.LastDiarizedChunkIndex = row.LastDiarizedChunkIndex;
+            }
+        }
+        finally
+        {
+            _isApplyingSpeakerDiarizationLabels = false;
+        }
     }
 
     private IReadOnlyList<SpeakerDiarizationRowWorkItem> BuildSpeakerDiarizationRowWorkItems(AudioChunkPlan plan)
@@ -2484,7 +2535,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             UnsubscribeFromFinalizedLineChanges();
             FinalizedTranscriptLines.Clear();
             FinalizedText = string.Empty;
-            ProcessLogs.Clear();
+            ClearProcessLogs();
         }
         finally
         {
@@ -2527,7 +2578,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             FinalizedTranscriptLines.Clear();
             FinalizedText = string.Empty;
 
-            ProcessLogs.Clear();
+            ClearProcessLogs();
         }
         finally
         {
@@ -2589,7 +2640,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private bool CanDeleteSelectedSession()
     {
-        return (SelectedRecentSession is not null || HasCurrentSession) && !IsBusy;
+        return HasCurrentSession && !IsBusy;
     }
 
     private void EnsureSessionDeletedFromStorage(string sessionId)
@@ -4213,6 +4264,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _uiContext.Post(_ => ToastRequested?.Invoke(this, new ToastNotification(title, message, type)), null);
     }
 
+    private void OnAppUpdateSnapshotChanged(object? sender, AppUpdateSnapshot snapshot)
+    {
+        _uiContext.Post(_ =>
+        {
+            _appUpdateSnapshot = snapshot;
+            NotifyPropertyChanged(nameof(ApplicationVersionStatusText));
+            NotifyPropertyChanged(nameof(ApplicationUpdateStatusText));
+            NotifyPropertyChanged(nameof(ApplicationUpdateStageText));
+            NotifyPropertyChanged(nameof(ApplicationUpdateMessageText));
+            NotifyPropertyChanged(nameof(ApplicationUpdateState));
+            NotifyPropertyChanged(nameof(IsApplicationUpdateProgressVisible));
+            NotifyPropertyChanged(nameof(ApplicationUpdateProgressPercent));
+            NotifyPropertyChanged(nameof(IsApplicationUpdateActive));
+            NotifyPropertyChanged(nameof(IsMandatoryApplicationUpdateAvailable));
+        }, null);
+    }
+
     public void LogHandledException(string source, Exception ex)
     {
         if (ex is null)
@@ -4260,10 +4328,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return;
         }
 
-        ProcessLogs.Add(
-            new ProcessLogEntryViewModel(
-                DateTime.Now.ToString("HH:mm:ss"),
-                message.Trim()));
+        lock (_processLogsSync)
+        {
+            ProcessLogs.Add(
+                new ProcessLogEntryViewModel(
+                    DateTime.Now.ToString("HH:mm:ss"),
+                    message.Trim()));
+        }
+    }
+
+    private void ClearProcessLogs()
+    {
+        lock (_processLogsSync)
+        {
+            ProcessLogs.Clear();
+        }
     }
 
     private static string TrimForLog(string text, int maxLength = 140)
@@ -4281,23 +4360,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         return $"{singleLine[..maxLength]}...";
-    }
-
-    private static string BuildInstalledVersionStatus()
-    {
-        Version version = ApplicationDeploymentInfo.CurrentVersion;
-
-        if (version.Revision > 0)
-        {
-            return $"Version {version.ToString(4)}";
-        }
-
-        if (version.Build >= 0)
-        {
-            return $"Version {version.ToString(3)}";
-        }
-
-        return $"Version {version.ToString(2)}";
     }
 
     private static EngineOptionViewModel ResolveEngine(

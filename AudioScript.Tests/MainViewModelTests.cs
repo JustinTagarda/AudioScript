@@ -85,7 +85,7 @@ public sealed class MainViewModelTests
         await RunInStaAsync(async () =>
         {
             string rootPath = CreateTempDirectory();
-            string audioPath = CreateSilentWaveFile(16000);
+            string audioPath = CreateSilentWaveFile(160000);
             var queuedContext = new QueuedSynchronizationContext();
             SynchronizationContext? previousContext = SynchronizationContext.Current;
             SynchronizationContext.SetSynchronizationContext(queuedContext);
@@ -204,7 +204,7 @@ public sealed class MainViewModelTests
         await RunInStaAsync(async () =>
         {
             string rootPath = CreateTempDirectory();
-            string audioPath = CreateSilentWaveFile(16000);
+            string audioPath = CreateSilentWaveFile(160000);
             var queuedContext = new QueuedSynchronizationContext();
             SynchronizationContext? previousContext = SynchronizationContext.Current;
             SynchronizationContext.SetSynchronizationContext(queuedContext);
@@ -582,7 +582,7 @@ public sealed class MainViewModelTests
         await RunInStaAsync(async () =>
         {
             string rootPath = CreateTempDirectory();
-            string audioPath = CreateSilentWaveFile(16000);
+            string audioPath = CreateSilentWaveFile(160000);
             var queuedContext = new QueuedSynchronizationContext();
             SynchronizationContext? previousContext = SynchronizationContext.Current;
             SynchronizationContext.SetSynchronizationContext(queuedContext);
@@ -632,7 +632,14 @@ public sealed class MainViewModelTests
                     await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
                     queuedContext.Drain();
 
-                    bool completed = await viewModel.RunSpeakerDetectionAsync(CancellationToken.None);
+                    Task<bool> runTask = viewModel.RunSpeakerDetectionAsync(CancellationToken.None);
+                    while (!runTask.IsCompleted)
+                    {
+                        queuedContext.Drain();
+                        await Task.Delay(10).ConfigureAwait(false);
+                    }
+
+                    bool completed = await runTask.ConfigureAwait(false);
 
                     Assert.True(completed);
                     Assert.Equal(1, diarizationEngine.RequestCount);
@@ -928,8 +935,15 @@ public sealed class MainViewModelTests
                     await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
                     queuedContext.Drain();
 
-                    await Assert.ThrowsAsync<ApplicationException>(async () =>
+                    Task<ApplicationException> failureTask = Assert.ThrowsAsync<ApplicationException>(async () =>
                         await viewModel.RunSpeakerDetectionAsync(CancellationToken.None));
+                    while (!failureTask.IsCompleted)
+                    {
+                        queuedContext.Drain();
+                        await Task.Delay(10).ConfigureAwait(false);
+                    }
+
+                    await failureTask.ConfigureAwait(false);
 
                     Assert.Equal("Existing", viewModel.FinalizedTranscriptLines.Single().SpeakerLabel);
                 }

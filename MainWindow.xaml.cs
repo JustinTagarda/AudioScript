@@ -15,6 +15,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using AudioScript.Abstractions;
 using AudioScript.Audio;
@@ -125,7 +126,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isClosingAfterLiveTranscriptionStop;
     private bool _forceCancelLiveChunkTranscriptions;
     private bool _isLiveTranscriptionStopping;
-    private int _requiredUpdateShutdownStarted;
 
     public MainWindow(
         Func<PlaybackTranscriptionSession>? playbackTranscriptionSessionFactory = null,
@@ -871,6 +871,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return options;
     }
 
+    public bool IsBusyForAppUpdate =>
+        IsTranscribeAudioBatchTranscribing
+        || IsTranscribeAudioBatchPendingStart
+        || IsTranscriptProcessingCanceling
+        || IsLiveTranscribing
+        || _isRowFileTranscriptionRunning
+        || _liveRecordingCaptureSession is not null
+        || _activePlaybackEditTranscription is not null
+        || (_boundViewModel?.IsBusy ?? false)
+        || (_boundViewModel?.IsGenerationRunning ?? false)
+        || (_boundViewModel?.IsLiveTranscriptionRunning ?? false)
+        || (_boundViewModel?.IsAudioPlaying ?? false);
+
     private async Task StopLiveTranscriptionAsync(
         MainViewModel vm,
         bool showToast,
@@ -1539,6 +1552,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _boundViewModel.NewAudioFileStagedForTranscribeAudio += OnNewAudioFileStagedForTranscribeAudio;
             _boundViewModel.PropertyChanged += OnViewModelPropertyChanged;
             _boundViewModel.FinalizedTranscriptLines.CollectionChanged += OnFinalizedTranscriptLinesCollectionChanged;
+            ApplyApplicationUpdateTaskbarProgress(vm);
             UpdateTranscriptGridPresentation();
             UpdatePlaybackTimelineHighlight();
             UpdateTranscriptRowActionsVisibility();
@@ -2118,6 +2132,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (e.PropertyName is nameof(MainViewModel.ApplicationUpdateState)
+            or nameof(MainViewModel.ApplicationUpdateProgressPercent)
+            or nameof(MainViewModel.IsApplicationUpdateProgressVisible))
+        {
+            if (sender is MainViewModel vm)
+            {
+                ApplyApplicationUpdateTaskbarProgress(vm);
+            }
+
+            return;
+        }
+
         if (e.PropertyName == nameof(MainViewModel.HasSpeakerLabels))
         {
             UpdateTranscriptGridPresentation();
@@ -2155,6 +2181,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             EnforcePlaybackEditTranscriptionStop();
             UpdatePlaybackTimelineHighlight();
         }
+    }
+
+    private void ApplyApplicationUpdateTaskbarProgress(MainViewModel vm)
+    {
+        TaskbarItemInfo ??= new TaskbarItemInfo();
+        TaskbarItemInfo.ProgressValue = Math.Clamp(vm.ApplicationUpdateProgressPercent / 100d, 0, 1);
+        TaskbarItemInfo.ProgressState = vm.ApplicationUpdateState switch
+        {
+            AppUpdateState.Checking => TaskbarItemProgressState.Indeterminate,
+            AppUpdateState.Downloading or AppUpdateState.Installing => TaskbarItemProgressState.Normal,
+            AppUpdateState.Deferred => TaskbarItemProgressState.Paused,
+            AppUpdateState.Failed => TaskbarItemProgressState.Error,
+            _ => TaskbarItemProgressState.None,
+        };
     }
 
     private void ApplyFloatingSurfaceTheme()
@@ -2646,64 +2686,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _transcribeAudioBatchTranscriptionCts.Cancel();
             LogTranscribeAudioBatch("Detect Speakers cancellation requested.");
         }
-    }
-
-    public async Task PrepareForRequiredUpdateShutdownAsync()
-    {
-        if (Interlocked.Exchange(ref _requiredUpdateShutdownStarted, 1) != 0)
-        {
-            return;
-        }
-
-        MainViewModel? vm = _boundViewModel ?? DataContext as MainViewModel;
-        LogPlaybackEdit("Preparing for required update shutdown.");
-        LogTranscribeAudioBatch("Preparing for required update shutdown.");
-
-        if (_liveRecordingCaptureSession is not null && vm is not null)
-        {
-            await StopLiveTranscriptionAsync(vm, showToast: false);
-        }
-
-        if (_transcribeAudioBatchTranscriptionCts is not null && !_transcribeAudioBatchTranscriptionCts.IsCancellationRequested)
-        {
-            ApplyTranscriptProcessingCancelingState();
-            _transcribeAudioBatchTranscriptionCts.Cancel();
-        }
-
-        PlaybackEditTranscriptionState? state = _activePlaybackEditTranscription;
-        if (state is not null)
-        {
-            await StopPlaybackEditTranscriptionAsync(
-                state,
-                vm,
-                pausePlayback: true,
-                reason: "application update required",
-                discardResults: true);
-        }
-
-        vm?.PrepareForRequiredUpdateShutdown();
-
-        TranscribeAudioBatchOverlay.IsHitTestVisible = false;
-        TranscribeAudioBatchOverlay.Visibility = Visibility.Collapsed;
-        MainContentHost.IsEnabled = false;
-        MainContentHost.IsHitTestVisible = false;
-
-        ClearTranscriptEditPlaybackLoop();
-
-        try
-        {
-            FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Cell, true);
-            FinalizedTranscriptGrid.CommitEdit(DataGridEditingUnit.Row, true);
-        }
-        catch
-        {
-            // Best-effort edit shutdown.
-        }
-
-        FinalizedTranscriptGrid.SelectedCells.Clear();
-        FinalizedTranscriptGrid.UnselectAllCells();
-        FinalizedTranscriptGrid.CurrentCell = default;
-        Keyboard.ClearFocus();
     }
 
     private void InsertTranscriptRowBelow_Click(object sender, RoutedEventArgs e)

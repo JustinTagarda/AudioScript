@@ -174,7 +174,6 @@ public sealed class MainWindowTests
                         -1,
                         "Default playback"),
                 },
-                "Test engine",
                 _ => Task.FromResult(true),
                 () => Task.CompletedTask,
                 options => persisted = options);

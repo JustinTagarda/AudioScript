@@ -114,4 +114,4 @@ The packaging script:
 ## Notes
 
 - Transcription is offline-only and does not require an API key.
-- Version-check/update components exist in the codebase (`ApplicationVersionCheckService`, `UpdateRequiredDialogWindow`) but are not currently wired into app startup/runtime flow.
+- Microsoft Store packaged builds use the Store update APIs for passive update detection, background download, and idle-gated install; unpackaged builds skip Store update checks safely.
