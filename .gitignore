@@ -10,6 +10,7 @@ AudioScript.Package/BundleArtifacts/
 assets/models/
 assets/pyannote/
 assets/python/
+/store-assets/
 
 # User-local IDE files
 *.user

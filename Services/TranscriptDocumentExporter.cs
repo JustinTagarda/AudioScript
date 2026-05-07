@@ -62,13 +62,14 @@ public static class TranscriptDocumentExporter
         body.Append(BuildMetadataParagraph("Exported", metadata.ExportedAt.ToString("yyyy-MM-dd HH:mm:ss zzz")));
         body.Append(new Paragraph(new Run(new Text(string.Empty))));
 
+        bool hasSpeakerLabels = lines.Any(line => !string.IsNullOrWhiteSpace(line.SpeakerLabel));
         if (options.Format == TranscriptDocumentFormat.InterviewLayout)
         {
-            AppendInterviewLayout(body, lines);
+            AppendInterviewLayout(body, lines, hasSpeakerLabels);
         }
         else
         {
-            body.Append(BuildOptionOneTable(lines, options));
+            body.Append(BuildOptionOneTable(lines, options, hasSpeakerLabels));
         }
 
         mainPart.Document.Append(body);
@@ -93,7 +94,8 @@ public static class TranscriptDocumentExporter
 
     private static Table BuildOptionOneTable(
         IReadOnlyCollection<FinalizedTranscriptLineViewModel> lines,
-        TranscriptDocumentExportOptions options)
+        TranscriptDocumentExportOptions options,
+        bool hasSpeakerLabels)
     {
         var table = new Table(
             new TableProperties(
@@ -107,10 +109,19 @@ public static class TranscriptDocumentExporter
                     new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4 },
                     new InsideVerticalBorder { Val = BorderValues.Single, Size = 4 })));
 
-        table.Append(new TableRow(
-            CreateTableCell("Timestamp", isHeader: true, noWrap: true),
-            CreateTableCell("Speaker", isHeader: true, noWrap: true),
-            CreateTableCell("Text", isHeader: true, noWrap: false)));
+        if (hasSpeakerLabels)
+        {
+            table.Append(new TableRow(
+                CreateTableCell("Timestamp", isHeader: true, noWrap: true),
+                CreateTableCell("Speaker", isHeader: true, noWrap: true),
+                CreateTableCell("Text", isHeader: true, noWrap: false)));
+        }
+        else
+        {
+            table.Append(new TableRow(
+                CreateTableCell("Timestamp", isHeader: true, noWrap: true),
+                CreateTableCell("Text", isHeader: true, noWrap: false)));
+        }
 
         foreach (FinalizedTranscriptLineViewModel line in lines)
         {
@@ -119,7 +130,7 @@ public static class TranscriptDocumentExporter
                 : string.Empty;
             string speakerLabel = line.SpeakerLabel?.Trim() ?? string.Empty;
             string text = line.Text?.Trim() ?? string.Empty;
-            string speaker = options.IncludeSpeakerLabels ? speakerLabel : string.Empty;
+            string speaker = hasSpeakerLabels && options.IncludeSpeakerLabels ? speakerLabel : string.Empty;
             if (string.IsNullOrWhiteSpace(timestamp)
                 && string.IsNullOrWhiteSpace(speaker)
                 && string.IsNullOrWhiteSpace(text))
@@ -127,10 +138,19 @@ public static class TranscriptDocumentExporter
                 continue;
             }
 
-            table.Append(new TableRow(
-                CreateTableCell(timestamp, noWrap: true),
-                CreateTableCell(speaker, noWrap: true),
-                CreateTableCell(text, noWrap: false)));
+            if (hasSpeakerLabels)
+            {
+                table.Append(new TableRow(
+                    CreateTableCell(timestamp, noWrap: true),
+                    CreateTableCell(speaker, noWrap: true),
+                    CreateTableCell(text, noWrap: false)));
+            }
+            else
+            {
+                table.Append(new TableRow(
+                    CreateTableCell(timestamp, noWrap: true),
+                    CreateTableCell(text, noWrap: false)));
+            }
         }
 
         return table;
@@ -163,8 +183,33 @@ public static class TranscriptDocumentExporter
             paragraph);
     }
 
-    private static void AppendInterviewLayout(Body body, IReadOnlyCollection<FinalizedTranscriptLineViewModel> lines)
+    private static void AppendInterviewLayout(
+        Body body,
+        IReadOnlyCollection<FinalizedTranscriptLineViewModel> lines,
+        bool hasSpeakerLabels)
     {
+        if (!hasSpeakerLabels)
+        {
+            foreach (FinalizedTranscriptLineViewModel line in lines)
+            {
+                string text = line.Text?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+
+                body.Append(new Paragraph(
+                    CreateSingleSpacingParagraphProperties(),
+                    new Run(new Text(text) { Space = SpaceProcessingModeValues.Preserve })));
+                body.Append(new Paragraph(CreateSingleSpacingParagraphProperties(), new Run(new Text(string.Empty))));
+            }
+
+            body.Append(new Paragraph(
+                CreateSingleSpacingParagraphProperties(),
+                new Run(new Text("END OF TRANSCRIPT") { Space = SpaceProcessingModeValues.Preserve })));
+            return;
+        }
+
         var speakerStyleByName = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         int distinctSpeakerCount = 0;
 

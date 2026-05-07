@@ -268,7 +268,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
-    private void LiveTranscriptionPrimaryAction_Click(object sender, RoutedEventArgs e)
+    private async void LiveTranscriptionPrimaryAction_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm)
         {
@@ -280,7 +280,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        ShowLiveTranscriptionWindow(vm);
+        await ShowLiveTranscriptionWindowAsync(vm);
     }
 
     private async void TranscribeAudioPrimaryAction_Click(object sender, RoutedEventArgs e)
@@ -303,11 +303,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OpenTranscribeAudioBatchDialog(vm);
     }
 
-    private void DetectSpeakerPrimaryAction_Click(object sender, RoutedEventArgs e)
+    private async void DetectSpeakerPrimaryAction_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm || IsTranscribeAudioBatchTranscribing || IsTranscribeAudioBatchPendingStart)
         {
             return;
+        }
+
+        if (!vm.CanUseSpeakerDiarization)
+        {
+            if (!await PromptPremiumFeatureAsync(
+                "Detect Speaker",
+                $"Detect Speaker is available with {vm.PremiumProductDisplayName}. Upgrade in Microsoft Store to unlock this feature."))
+            {
+                return;
+            }
         }
 
         OpenDetectSpeakersDialog(vm);
@@ -665,12 +675,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void ShowLiveTranscriptionWindow(MainViewModel vm)
+    private async Task ShowLiveTranscriptionWindowAsync(MainViewModel vm)
     {
         if (_liveTranscriptionWindow is not null)
         {
             _liveTranscriptionWindow.Activate();
             return;
+        }
+
+        if (!vm.CanUseLiveTranscription)
+        {
+            if (!await PromptPremiumFeatureAsync(
+                "Live Transcription",
+                $"Live Transcription is available with {vm.PremiumProductDisplayName}. Upgrade in Microsoft Store to unlock this feature."))
+            {
+                return;
+            }
         }
 
         IAudioTranscriptionService? audioTranscriptionService = _rowAudioTranscriptionService;
@@ -1525,6 +1545,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MessageBoxImage.Warning);
     }
 
+    private async Task<bool> PromptPremiumFeatureAsync(string featureName, string message)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return false;
+        }
+
+        var dialog = new ConfirmationDialogWindow(
+            "Premium feature",
+            message,
+            "Get Premium",
+            "Not now")
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return false;
+        }
+
+        PremiumPurchaseResult result = await vm.RequestPremiumPurchaseAsync();
+        switch (result.Status)
+        {
+            case PremiumPurchaseStatus.Succeeded:
+            case PremiumPurchaseStatus.AlreadyOwned:
+                ShowCopyToast(
+                    "Premium unlocked",
+                    result.Message,
+                    ToastNotificationType.Success);
+                return true;
+
+            case PremiumPurchaseStatus.Canceled:
+                return false;
+
+            default:
+                ShowErrorDialog(result.Message, title: $"{featureName} unavailable");
+                return false;
+        }
+    }
+
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (_boundViewModel is not null)
@@ -1715,16 +1776,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     IncludeTimestamps: selectedFormat == TranscriptDocumentFormat.TabDelimited,
                     IncludeSpeakerLabels: true,
                     Format: selectedFormat.Value));
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = saveDialog.FileName,
-                UseShellExecute = true,
-            });
 
             ShowCopyToast(
                 "Transcript exported",
                 $"Saved to {saveDialog.FileName}.",
                 ToastNotificationType.Success);
+
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = saveDialog.FileName,
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception openEx)
+            {
+                vm.LogHandledException("open exported transcript document", openEx);
+                ShowCopyToast(
+                    "Document saved",
+                    "Transcript was exported, but no app is available to open .docx files.",
+                    ToastNotificationType.Warning);
+            }
         }
         catch (Exception ex)
         {

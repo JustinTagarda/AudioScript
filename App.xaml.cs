@@ -23,6 +23,7 @@ public partial class App : System.Windows.Application
 
     private MainViewModel? _mainViewModel;
     private IAppUpdateService? _appUpdateService;
+    private IEntitlementService? _entitlementService;
     private WindowPlacementService? _windowPlacementService;
     private AppPreferencesStore? _appPreferencesStore;
     private AppThemeService? _appThemeService;
@@ -121,6 +122,10 @@ public partial class App : System.Windows.Application
         MainWindow? updateBusyWindow = null;
         IntPtr updateOwnerWindowHandle = IntPtr.Zero;
         var appVersionProvider = new AppVersionProvider();
+        _entitlementService = new StoreEntitlementService(
+            appVersionProvider,
+            processLogService,
+            () => updateOwnerWindowHandle);
         _appUpdateService = new AppUpdateService(
             appVersionProvider,
             new StoreUpdateClient(processLogService, () => updateOwnerWindowHandle),
@@ -137,7 +142,9 @@ public partial class App : System.Windows.Application
             _appPreferencesStore,
             _appThemeService,
             appPreferencesSnapshot,
-            _appUpdateService);
+            _appUpdateService,
+            _entitlementService,
+            () => whisperModelManager.GetSelectableTranscriptionModels());
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
@@ -164,6 +171,7 @@ public partial class App : System.Windows.Application
         MainWindow = mainWindow;
         mainWindow.Show();
         updateOwnerWindowHandle = new WindowInteropHelper(mainWindow).Handle;
+        _ = _entitlementService.RefreshAsync();
         _ = _appUpdateService.StartAsync();
         processLogService.Log("App", "Application startup completed.");
     }
@@ -200,7 +208,9 @@ public partial class App : System.Windows.Application
             _appUpdateService?.StopAsync().GetAwaiter().GetResult();
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
             _appUpdateService?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            _entitlementService?.DisposeAsync().AsTask().GetAwaiter().GetResult();
             _appUpdateService = null;
+            _entitlementService = null;
         }
         finally
         {

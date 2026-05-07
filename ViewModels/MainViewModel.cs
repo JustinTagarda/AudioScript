@@ -38,6 +38,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private readonly AppPreferencesStore _appPreferencesStore;
     private readonly AppThemeService _appThemeService;
     private readonly IAppUpdateService? _appUpdateService;
+    private readonly IEntitlementService? _entitlementService;
+    private readonly Func<IReadOnlyList<TranscriptionModelOption>> _availableModelsProvider;
     private readonly SynchronizationContext _uiContext;
     private readonly DispatcherTimer _audioTimelineTimer;
     private readonly DispatcherTimer _sessionAutosaveTimer;
@@ -75,6 +77,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool _pendingSpeakerDiarizationResume;
     private bool _suppressSessionAutosave;
     private AppUpdateSnapshot _appUpdateSnapshot;
+    private AppEntitlementSnapshot _entitlementSnapshot;
     private int _selectedTranscriptViewIndex;
     private string _pendingImportedAudioFilePath = string.Empty;
     private string _transcriptExportDirectory = string.Empty;
@@ -89,7 +92,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppPreferencesStore appPreferencesStore,
         AppThemeService appThemeService,
         AppPreferencesSnapshot appPreferencesSnapshot,
-        IAppUpdateService? appUpdateService = null)
+        IAppUpdateService? appUpdateService = null,
+        IEntitlementService? entitlementService = null,
+        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null)
     {
         _audioTranscriptionService = audioTranscriptionService;
         _speakerDiarizationService = speakerDiarizationService;
@@ -99,9 +104,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _appPreferencesStore = appPreferencesStore;
         _appThemeService = appThemeService;
         _appUpdateService = appUpdateService;
+        _entitlementService = entitlementService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
         _appUpdateSnapshot = appUpdateService?.CurrentSnapshot
             ?? AppUpdateSnapshot.Idle(new AppVersionProvider().InstalledVersion);
+        _entitlementSnapshot = entitlementService?.CurrentSnapshot
+            ?? AppEntitlementSnapshot.Development("AudioScript Premium");
+        _availableModelsProvider = availableModelsProvider ?? (() => models.ToArray());
 
         _autoPlayTimelineSelection = appPreferencesSnapshot.AutoPlayTimelineSelection;
         _selectedThemePreference = appPreferencesSnapshot.ThemePreference;
@@ -112,7 +121,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _transcriptExportDirectory = appPreferencesSnapshot.TranscriptExportDirectory?.Trim() ?? string.Empty;
 
         Engines = new ObservableCollection<EngineOptionViewModel>(
-            models.Select(model => new EngineOptionViewModel(model)));
+            FilterAccessibleEngines(models).Select(model => new EngineOptionViewModel(model)));
         _autoTranscribeEngine = ResolveEngine(
             Engines,
             TranscriptionModelCatalog.WhisperSmall,
@@ -158,6 +167,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             _appUpdateService.SnapshotChanged += OnAppUpdateSnapshotChanged;
         }
 
+        if (_entitlementService is not null)
+        {
+            _entitlementService.SnapshotChanged += OnEntitlementSnapshotChanged;
+        }
+
         AppendLogCore("Application initialized.");
         AppendLogCore($"Loaded {Engines.Count} transcription mode option(s).");
 
@@ -200,7 +214,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         EngineOptionViewModel? fallbackEngine = null;
         Engines.Clear();
 
-        foreach (TranscriptionModelOption model in models)
+        foreach (TranscriptionModelOption model in FilterAccessibleEngines(models))
         {
             var option = new EngineOptionViewModel(model);
             Engines.Add(option);
@@ -353,6 +367,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool IsEngineSelectionEnabled =>
         !IsBusy;
 
+    public bool HasPremium =>
+        _entitlementSnapshot.HasPremium;
+
+    public bool IsPremiumProductAvailable =>
+        _entitlementSnapshot.IsPremiumProductAvailable;
+
+    public string PremiumProductDisplayName =>
+        _entitlementSnapshot.PremiumProductDisplayName;
+
+    public bool CanUseLiveTranscription =>
+        AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, HasPremium);
+
+    public bool CanUseSpeakerDiarization =>
+        AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, HasPremium);
+
     public bool IsTranscribeAudioTranscriptionEnabled =>
         SelectedEngine is not null
         && TranscriptionModelCatalog.SupportsFileTranscription(SelectedEngine.Id)
@@ -444,6 +473,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         && HasCurrentTranscriptLines
         && !IsGenerationRunning
         && !IsBusy;
+
+    public bool CanRunDetectSpeakersPrimaryAction =>
+        CanRunDetectSpeakerPrimaryAction;
 
     public LiveAudioSourceKind PreferredLiveAudioSourceKind => _preferredLiveAudioSourceKind;
 
@@ -593,6 +625,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool IsMandatoryApplicationUpdateAvailable =>
         _appUpdateSnapshot.IsMandatoryUpdateAvailable;
+
+    public string PremiumStatusText =>
+        _entitlementSnapshot.StatusMessage;
 
     public string LoadedAudioFilePath
     {
@@ -757,6 +792,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         if (_appUpdateService is not null)
         {
             _appUpdateService.SnapshotChanged -= OnAppUpdateSnapshotChanged;
+        }
+        if (_entitlementService is not null)
+        {
+            _entitlementService.SnapshotChanged -= OnEntitlementSnapshotChanged;
         }
 
         _sessionAutosaveTimer.Stop();
@@ -2556,6 +2595,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
             NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
             NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
+            NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
         }
 
@@ -2718,11 +2758,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private void NotifyInteractionAvailabilityChanged()
     {
         NotifyPropertyChanged(nameof(IsEngineSelectionEnabled));
+        NotifyPropertyChanged(nameof(HasPremium));
+        NotifyPropertyChanged(nameof(IsPremiumProductAvailable));
+        NotifyPropertyChanged(nameof(PremiumProductDisplayName));
+        NotifyPropertyChanged(nameof(CanUseLiveTranscription));
+        NotifyPropertyChanged(nameof(CanUseSpeakerDiarization));
+        NotifyPropertyChanged(nameof(PremiumStatusText));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptionEnabled));
         NotifyPropertyChanged(nameof(IsTranscriptGenerationEnabled));
         NotifyPropertyChanged(nameof(CanRunLivePrimaryAction));
         NotifyPropertyChanged(nameof(CanRunTranscribeAudioPrimaryAction));
         NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
     }
 
     private void NotifyCurrentTranscriptStateChanged()
@@ -2734,6 +2781,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
         NotifyPropertyChanged(nameof(CanCopyTranscript));
         NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptViewSelected));
         NotifyPropertyChanged(nameof(HasSpeakerLabels));
         NotifyPropertyChanged(nameof(TranscriptEmptyStateTitle));
@@ -2997,6 +3045,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
             NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
             NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
+            NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
             RefreshCommandStates();
 
@@ -3803,6 +3852,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
         NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
         NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
         NotifyPropertyChanged(nameof(LoadedAudioFileName));
         RefreshCommandStates();
     }
@@ -4279,6 +4329,65 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(IsApplicationUpdateActive));
             NotifyPropertyChanged(nameof(IsMandatoryApplicationUpdateAvailable));
         }, null);
+    }
+
+    private void OnEntitlementSnapshotChanged(object? sender, AppEntitlementSnapshot snapshot)
+    {
+        _uiContext.Post(_ =>
+        {
+            bool hadPremium = _entitlementSnapshot.HasPremium;
+            _entitlementSnapshot = snapshot;
+            NotifyInteractionAvailabilityChanged();
+
+            if (hadPremium != snapshot.HasPremium)
+            {
+                RefreshEngines(_availableModelsProvider());
+            }
+            else
+            {
+                EnsureSelectedEngineAllowed();
+            }
+        }, null);
+    }
+
+    public bool CanInstallModel(string modelId)
+    {
+        return AppFeatureAccess.CanInstallModel(modelId, HasPremium);
+    }
+
+    public async Task<PremiumPurchaseResult> RequestPremiumPurchaseAsync(CancellationToken cancellationToken = default)
+    {
+        if (_entitlementService is null)
+        {
+            return new PremiumPurchaseResult(
+                PremiumPurchaseStatus.NotAvailable,
+                $"{PremiumProductDisplayName} purchase is unavailable in this build.");
+        }
+
+        PremiumPurchaseResult result = await _entitlementService.RequestPremiumPurchaseAsync(cancellationToken);
+        if (result.Status is PremiumPurchaseStatus.Succeeded or PremiumPurchaseStatus.AlreadyOwned)
+        {
+            RefreshEngines(_availableModelsProvider());
+        }
+
+        return result;
+    }
+
+    private IEnumerable<TranscriptionModelOption> FilterAccessibleEngines(IEnumerable<TranscriptionModelOption> models)
+    {
+        return models.Where(model => AppFeatureAccess.CanUseModel(model.Id, HasPremium));
+    }
+
+    private void EnsureSelectedEngineAllowed()
+    {
+        if (SelectedEngine is null || AppFeatureAccess.CanUseModel(SelectedEngine.Id, HasPremium))
+        {
+            return;
+        }
+
+        EngineOptionViewModel fallback = ResolveEngine(Engines, TranscriptionModelCatalog.WhisperSmall, "Whisper small");
+        SelectedEngine = fallback;
+        AppendLog("Selected model reverted to Whisper small because Premium is required for the previous engine.");
     }
 
     public void LogHandledException(string source, Exception ex)

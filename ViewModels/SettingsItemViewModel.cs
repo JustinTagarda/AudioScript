@@ -7,15 +7,17 @@ namespace AudioScript.ViewModels;
 public sealed class SettingsItemViewModel : INotifyPropertyChanged
 {
     private bool _isInstalled;
+    private bool _hasPremiumAccess;
     private bool _isBusy;
     private bool _isOperationBlocked;
     private double _progressPercent;
     private string _progressText = string.Empty;
 
-    public SettingsItemViewModel(WhisperEngineModelDefinition definition, bool isInstalled)
+    public SettingsItemViewModel(WhisperEngineModelDefinition definition, bool isInstalled, bool hasPremiumAccess)
     {
         Definition = definition;
         _isInstalled = isInstalled;
+        _hasPremiumAccess = hasPremiumAccess;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -35,6 +37,8 @@ public sealed class SettingsItemViewModel : INotifyPropertyChanged
     public string Notes => Definition.Notes;
 
     public bool IsFixedInstalled => Definition.IsFixedInstalled;
+
+    public bool IsPremiumOnlyEngine => AppFeatureAccess.IsPremiumOnlyModel(Id);
 
     public bool IsInstalled
     {
@@ -88,15 +92,26 @@ public sealed class SettingsItemViewModel : INotifyPropertyChanged
         ? "Installing"
         : IsInstalled
             ? "Installed"
+            : RequiresPremiumToInstall
+                ? "Premium required"
             : "Not installed";
 
-    public bool CanInstall => !IsInstalled && !IsFixedInstalled && !IsBusy && !IsOperationBlocked;
+    public bool CanInstall =>
+        !RequiresPremiumToInstall && !IsInstalled && !IsFixedInstalled && !IsBusy && !IsOperationBlocked;
 
     public bool CanUninstall => IsInstalled && !IsFixedInstalled && !IsBusy && !IsOperationBlocked;
 
     public bool CanCancel => IsBusy;
 
+    public bool ShowInstallButton => !IsInstalled && !IsBusy;
+
     public bool ShowFixedInstalledNotice => IsFixedInstalled;
+
+    public bool RequiresPremiumToInstall => IsPremiumOnlyEngine && !_hasPremiumAccess;
+
+    public bool ShowPremiumUpsell => RequiresPremiumToInstall && !IsBusy;
+
+    public string PremiumUpsellText => "Premium required to install this engine.";
 
     public void RefreshInstalled(bool isInstalled)
     {
@@ -122,13 +137,27 @@ public sealed class SettingsItemViewModel : INotifyPropertyChanged
         ProgressPercent = IsInstalled ? 100 : 0;
     }
 
+    public void SetPremiumAccess(bool hasPremiumAccess)
+    {
+        if (SetProperty(ref _hasPremiumAccess, hasPremiumAccess))
+        {
+            NotifyActionPropertiesChanged();
+            OnPropertyChanged(nameof(RequiresPremiumToInstall));
+            OnPropertyChanged(nameof(ShowPremiumUpsell));
+        }
+    }
+
     private void NotifyActionPropertiesChanged()
     {
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(CanInstall));
         OnPropertyChanged(nameof(CanUninstall));
         OnPropertyChanged(nameof(CanCancel));
+        OnPropertyChanged(nameof(ShowInstallButton));
         OnPropertyChanged(nameof(ShowFixedInstalledNotice));
+        OnPropertyChanged(nameof(RequiresPremiumToInstall));
+        OnPropertyChanged(nameof(ShowPremiumUpsell));
+        OnPropertyChanged(nameof(PremiumUpsellText));
     }
 
     private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

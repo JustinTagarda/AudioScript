@@ -26,12 +26,13 @@ public partial class SettingsWindow : Window
         _processLogService = processLogService;
         Items = new ObservableCollection<SettingsItemViewModel>(
             _modelManager.Models.Select(model =>
-                new SettingsItemViewModel(model, _modelManager.IsModelInstalled(model.Id))));
+                new SettingsItemViewModel(model, _modelManager.IsModelInstalled(model.Id), _viewModel.HasPremium)));
 
         InitializeComponent();
         ModelsItemsControl.ItemsSource = Items;
         Closing += OnWindowClosing;
         Closed += OnWindowClosed;
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
     }
 
     public ObservableCollection<SettingsItemViewModel> Items { get; }
@@ -44,6 +45,12 @@ public partial class SettingsWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is not SettingsItemViewModel item)
         {
+            return;
+        }
+
+        if (!_viewModel.CanInstallModel(item.Id))
+        {
+            await RequestPremiumPurchaseAsync(item.DisplayName);
             return;
         }
 
@@ -165,8 +172,19 @@ public partial class SettingsWindow : Window
     {
         Closing -= OnWindowClosing;
         Closed -= OnWindowClosed;
+        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _activeInstallCts?.Dispose();
         _activeInstallCts = null;
+    }
+
+    private async void GetPremiumButton_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SettingsItemViewModel item)
+        {
+            return;
+        }
+
+        await RequestPremiumPurchaseAsync(item.DisplayName);
     }
 
     private void SetOperationState(SettingsItemViewModel activeItem, bool isBusy)
@@ -183,6 +201,49 @@ public partial class SettingsWindow : Window
         foreach (SettingsItemViewModel item in Items)
         {
             item.RefreshInstalled(_modelManager.IsModelInstalled(item.Id));
+        }
+    }
+
+    private void RefreshPremiumAccess()
+    {
+        foreach (SettingsItemViewModel item in Items)
+        {
+            item.SetPremiumAccess(_viewModel.HasPremium);
+        }
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(e.PropertyName, nameof(MainViewModel.HasPremium), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        RefreshPremiumAccess();
+    }
+
+    private async Task RequestPremiumPurchaseAsync(string featureName)
+    {
+        try
+        {
+            PremiumPurchaseResult result = await _viewModel.RequestPremiumPurchaseAsync();
+            RefreshPremiumAccess();
+            if (result.Status is PremiumPurchaseStatus.Succeeded or PremiumPurchaseStatus.AlreadyOwned)
+            {
+                return;
+            }
+
+            if (result.Status == PremiumPurchaseStatus.Canceled)
+            {
+                return;
+            }
+
+            ShowError(result.Message);
+        }
+        catch (Exception ex)
+        {
+            _processLogService.LogException("Premium", $"Unable to open Premium purchase flow for '{featureName}'.", ex);
+            ShowError($"Unable to open Microsoft Store for {_viewModel.PremiumProductDisplayName}: {ex.Message}");
         }
     }
 

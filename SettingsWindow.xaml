@@ -128,7 +128,8 @@
                                                 MinWidth="86"
                                                 Tag="&#xE896;"
                                                 Style="{StaticResource ToolbarPrimaryButtonStyle}"
-                                                Visibility="{Binding CanInstall, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                Visibility="{Binding ShowInstallButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                IsEnabled="{Binding CanInstall}"
                                                 Click="InstallButton_Click"/>
                                         <Button Content="Uninstall"
                                                 MinWidth="94"
@@ -160,6 +161,19 @@
                                                    FontSize="11"
                                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                                    TextWrapping="Wrap"/>
+                                        <StackPanel Margin="0,8,0,0"
+                                                    Visibility="{Binding ShowPremiumUpsell, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <TextBlock Text="{Binding PremiumUpsellText}"
+                                                       Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                                                       TextWrapping="Wrap"/>
+                                            <Button Content="Get Premium in Microsoft Store"
+                                                    Margin="0,6,0,0"
+                                                    MinWidth="220"
+                                                    HorizontalAlignment="Left"
+                                                    Tag="&#xE8D4;"
+                                                    Style="{StaticResource ToolbarButtonStyle}"
+                                                    Click="GetPremiumButton_Click"/>
+                                        </StackPanel>
                                     </StackPanel>
 
                                     <StackPanel Grid.Row="2"
