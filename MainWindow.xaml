@@ -476,7 +476,7 @@
                                      Margin="10,0,0,0"
                                      Minimum="0"
                                      Maximum="100"
-                                     Value="{Binding ApplicationUpdateProgressPercent}">
+                                     Value="{Binding ApplicationUpdateProgressPercent, Mode=OneWay}">
                             <ProgressBar.Style>
                                 <Style TargetType="ProgressBar">
                                     <Setter Property="Visibility"
@@ -514,71 +514,27 @@
                     <StackPanel Orientation="Horizontal"
                                 HorizontalAlignment="Left">
                         <Button
-                                Content="Select Audio"
+                                Content="Open Audio"
                                 VerticalAlignment="Center"
                                 Padding="8,0"
                                 Tag="&#xE838;"
                                 Style="{StaticResource ToolbarButtonStyle}"
                                 Command="{Binding OpenAudioFileCommand}"/>
                         <Button
-                                x:Name="TranscribeAudioPrimaryActionButton"
-                                Content="Transcribe Audio"
-                                Padding="8,0"
-                                Tag="&#xE7F0;"
-                                IsEnabled="{Binding CanRunTranscribeAudioPrimaryAction}"
-                                Style="{StaticResource TranscribeAudioButtonStyle}"
-                                Click="TranscribeAudioPrimaryAction_Click"/>
-                        <Button
-                                x:Name="LiveTranscriptionPrimaryActionButton"
-                                Content="Live Transcription"
+                                x:Name="LiveTranscribePrimaryActionButton"
+                                Content="Live Transcribe"
                                 Padding="8,0"
                                 Tag="&#xE720;"
-                                IsEnabled="{Binding CanRunLivePrimaryAction}"
+                                IsEnabled="{Binding CanRunLiveTranscribePrimaryAction}"
                                 Style="{StaticResource ToolbarPrimaryButtonStyle}"
-                                Click="LiveTranscriptionPrimaryAction_Click"/>
+                                Click="LiveTranscribePrimaryAction_Click"/>
                         <Button
-                                x:Name="DetectSpeakersPrimaryActionButton"
-                                Content="Detect Speakers"
-                                Padding="8,0"
-                                Tag="&#xE716;"
-                                IsEnabled="{Binding CanRunDetectSpeakersPrimaryAction}"
-                                Style="{StaticResource ToolbarButtonStyle}"
-                                Click="DetectSpeakersPrimaryAction_Click"/>
-                        <Button
-                                VerticalAlignment="Center"
-                                Padding="8,0"
-                                ToolTip="Copy to Clipboard"
-                                AutomationProperties.Name="Copy to Clipboard"
-                                Tag="&#xE8C8;"
-                                Style="{StaticResource ToolbarButtonStyle}"
-                                IsEnabled="{Binding CanCopyTranscript}"
-                                Click="CopyFinalizedToClipboard_Click"
-                                Content="Copy"/>
-                        <Button
-                                VerticalAlignment="Center"
-                                Padding="8,0"
-                                ToolTip="Export transcript to Word document"
-                                AutomationProperties.Name="Export transcript"
-                                Tag="&#xE8A5;"
-                                Style="{StaticResource ToolbarButtonStyle}"
-                                IsEnabled="{Binding CanCopyTranscript}"
-                                Click="ExportTranscriptToDocument_Click"
-                                Content="Export"/>
-                        <Button
-                                Content="Close"
-                                VerticalAlignment="Center"
-                                Padding="8,0"
-                                Tag="&#xE711;"
-                                Style="{StaticResource ToolbarButtonStyle}"
-                                Command="{Binding CloseCommand}"/>
-                        <Button
-                                Content="Delete"
-                                Tag="&#xE74D;"
-                                Style="{StaticResource ToolbarButtonStyle}"
-                                Command="{Binding DeleteSelectedSessionCommand}"/>
-                        <Button
-                                Content="Settings"
-                                Padding="8,0"
+                                Content="{x:Null}"
+                                Width="32"
+                                Height="32"
+                                Padding="0"
+                                ToolTip="Settings"
+                                AutomationProperties.Name="Settings"
                                 Tag="&#xE713;"
                                 Style="{StaticResource ToolbarButtonStyle}"
                                 Click="Settings_Click"/>
@@ -734,7 +690,60 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
-                                <Grid Grid.Row="0"/>
+                                <Grid Grid.Row="0"
+                                      Margin="2">
+                                    <StackPanel Orientation="Horizontal"
+                                                HorizontalAlignment="Left">
+                                        <Button x:Name="TranscribeAudioPrimaryActionButton"
+                                                Content="Transcribe Audio"
+                                                Margin="0"
+                                                Padding="8,0"
+                                                Tag="&#xE7F0;"
+                                                IsEnabled="{Binding CanRunTranscribeAudioPrimaryAction}"
+                                                Style="{StaticResource TranscribeAudioButtonStyle}"
+                                                Click="TranscribeAudioPrimaryAction_Click"/>
+                                        <Button x:Name="DetectSpeakerPrimaryActionButton"
+                                                Content="Detect Speaker"
+                                                Margin="2,0,0,0"
+                                                Padding="8,0"
+                                                Tag="&#xE716;"
+                                                IsEnabled="{Binding CanRunDetectSpeakerPrimaryAction}"
+                                                Style="{StaticResource ToolbarButtonStyle}"
+                                                Click="DetectSpeakerPrimaryAction_Click"/>
+                                        <Button Content="Copy"
+                                                Margin="2,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Padding="8,0"
+                                                ToolTip="Copy to Clipboard"
+                                                AutomationProperties.Name="Copy to Clipboard"
+                                                Tag="&#xE8C8;"
+                                                Style="{StaticResource ToolbarButtonStyle}"
+                                                IsEnabled="{Binding CanCopyTranscript}"
+                                                Click="CopyFinalizedToClipboard_Click"/>
+                                        <Button Content="Export"
+                                                Margin="2,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Padding="8,0"
+                                                ToolTip="Export transcript to Word document"
+                                                AutomationProperties.Name="Export transcript"
+                                                Tag="&#xE8A5;"
+                                                Style="{StaticResource ToolbarButtonStyle}"
+                                                IsEnabled="{Binding CanCopyTranscript}"
+                                                Click="ExportTranscriptToDocument_Click"/>
+                                        <Button Content="Close"
+                                                Margin="2,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Padding="8,0"
+                                                Tag="&#xE711;"
+                                                Style="{StaticResource ToolbarButtonStyle}"
+                                                Command="{Binding CloseCommand}"/>
+                                        <Button Content="Delete"
+                                                Margin="2,0,0,0"
+                                                Tag="&#xE74D;"
+                                                Style="{StaticResource ToolbarButtonStyle}"
+                                                Command="{Binding DeleteSelectedSessionCommand}"/>
+                                    </StackPanel>
+                                </Grid>
 
                                 <Border Grid.Row="1"
                                         ClipToBounds="True"
@@ -892,7 +901,7 @@
                                                            FontSize="11"
                                                            TextAlignment="Center"
                                                            TextWrapping="Wrap"/>
-                                                <Button Content="Select Audio"
+                                                <Button Content="Open Audio"
                                                         Margin="0,12,0,0"
                                                         HorizontalAlignment="Center"
                                                         Tag="&#xE838;"

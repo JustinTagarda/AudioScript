@@ -254,7 +254,8 @@
                                                Style="{StaticResource ToolbarButtonIconTextStyle}"
                                                Text="{TemplateBinding Tag}"
                                                Margin="0,0,6,0"/>
-                                    <ContentPresenter HorizontalAlignment="Center"
+                                    <ContentPresenter x:Name="ContentPresenter"
+                                                      HorizontalAlignment="Center"
                                                       VerticalAlignment="Center"/>
                                 </StackPanel>
                             </Border>
@@ -262,6 +263,15 @@
                                 <Trigger Property="Tag"
                                          Value="{x:Null}">
                                     <Setter TargetName="IconText"
+                                            Property="Visibility"
+                                            Value="Collapsed"/>
+                                </Trigger>
+                                <Trigger Property="Content"
+                                         Value="{x:Null}">
+                                    <Setter TargetName="IconText"
+                                            Property="Margin"
+                                            Value="0"/>
+                                    <Setter TargetName="ContentPresenter"
                                             Property="Visibility"
                                             Value="Collapsed"/>
                                 </Trigger>

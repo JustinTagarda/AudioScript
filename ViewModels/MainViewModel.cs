@@ -433,13 +433,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             && SupportedAudioFileExtensions.Contains(extension);
     }
 
-    public bool CanRunLivePrimaryAction =>
+    public bool CanRunLiveTranscribePrimaryAction =>
         !IsGenerationRunning && !IsBusy;
 
     public bool CanRunTranscribeAudioPrimaryAction =>
         !IsGenerationRunning && IsTranscribeAudioTranscriptionEnabled;
 
-    public bool CanRunDetectSpeakersPrimaryAction =>
+    public bool CanRunDetectSpeakerPrimaryAction =>
         HasCurrentSession
         && HasCurrentTranscriptLines
         && !IsGenerationRunning
@@ -1451,13 +1451,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         if (handler is null)
         {
             RaiseError("The confirmation dialog is unavailable. Existing speaker labels were left unchanged.");
-            AppendLog("Detect Speakers canceled: speaker label overwrite confirmation is unavailable.");
+            AppendLog("Detect Speaker canceled: speaker label overwrite confirmation is unavailable.");
             return false;
         }
 
         var request = new ConfirmationRequest(
             title: "Overwrite speaker labels?",
-            message: "This session already has speaker labels. Detect Speakers will replace the existing speaker column values.",
+            message: "This session already has speaker labels. Detect Speaker will replace the existing speaker column values.",
             confirmButtonText: "Overwrite",
             cancelButtonText: "Cancel");
 
@@ -1475,7 +1475,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         catch (Exception ex)
         {
             RaiseError($"Unable to confirm speaker label overwrite: {ex.Message}");
-            AppendLog($"Detect Speakers canceled: speaker label overwrite confirmation failed: {ex.Message}");
+            AppendLog($"Detect Speaker canceled: speaker label overwrite confirmation failed: {ex.Message}");
             return false;
         }
 
@@ -1485,7 +1485,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return true;
         }
 
-        AppendLog("Detect Speakers canceled: existing speaker labels were left unchanged.");
+        AppendLog("Detect Speaker canceled: existing speaker labels were left unchanged.");
         return false;
     }
 
@@ -1543,20 +1543,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         if (_currentSessionDocument is null)
         {
-            AppendLog("Detect Speakers aborted: no session is loaded.");
+            AppendLog("Detect Speaker aborted: no session is loaded.");
             return false;
         }
 
         if (FinalizedTranscriptLines.Count == 0)
         {
-            AppendLog("Detect Speakers aborted: no transcript rows are present.");
+            AppendLog("Detect Speaker aborted: no transcript rows are present.");
             return false;
         }
 
         string? audioFilePath = _sessionStore.ResolveStoredAudioPathForPlayback(_currentSessionDocument);
         if (string.IsNullOrWhiteSpace(audioFilePath) || !File.Exists(audioFilePath))
         {
-            AppendLog("Detect Speakers aborted: session audio is unavailable.");
+            AppendLog("Detect Speaker aborted: session audio is unavailable.");
             RaiseError("Session audio is unavailable. Restore or reopen the session audio before detecting speakers.");
             return false;
         }
@@ -1568,7 +1568,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         IsBusy = true;
         try
         {
-            AppendLog($"Detect Speakers starting. audioPath='{audioFilePath}'.");
+            AppendLog($"Detect Speaker starting. audioPath='{audioFilePath}'.");
             TranscriptionResult transcriptionResult = BuildCurrentSessionTranscriptionResult();
             string audioFingerprint = BuildSpeakerDiarizationAudioFingerprint(_currentSessionDocument);
             string transcriptFingerprint = BuildSpeakerDiarizationTranscriptFingerprint();
@@ -1590,14 +1590,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 job.Status = SpeakerDiarizationJobStatuses.Running;
                 job.LastError = string.Empty;
                 job.LastUpdatedUtc = DateTimeOffset.UtcNow;
-                AppendLog($"Detect Speakers resuming from chunk {job.LastCompletedChunkIndex + 2:N0} of {job.TotalChunks:N0}.");
+                AppendLog($"Detect Speaker resuming from chunk {job.LastCompletedChunkIndex + 2:N0} of {job.TotalChunks:N0}.");
             }
 
             _lastSpeakerDetectionUsedHeuristicFallback = false;
             NotifyPropertyChanged(nameof(LastSpeakerDetectionUsedHeuristicFallback));
             if (!SaveSpeakerDiarizationCheckpoint("Speaker diarization checkpoint saved."))
             {
-                AppendLog("Detect Speakers aborted: initial speaker diarization checkpoint could not be saved.");
+                AppendLog("Detect Speaker aborted: initial speaker diarization checkpoint could not be saved.");
                 return false;
             }
 
@@ -1638,7 +1638,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     if (!SaveSpeakerDiarizationCheckpoint($"Speaker diarization checkpoint saved after chunk {chunkIndex + 1:N0} of {chunkedAudio.Chunks.Count:N0}."))
                     {
                         RestoreSpeakerDiarizationChunkCheckpoint(job, checkpoint);
-                        AppendLog($"Detect Speakers aborted: checkpoint save failed after chunk {chunkIndex + 1:N0}.");
+                        AppendLog($"Detect Speaker aborted: checkpoint save failed after chunk {chunkIndex + 1:N0}.");
                         return false;
                     }
                 }
@@ -1648,7 +1648,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     job.LastUpdatedUtc = DateTimeOffset.UtcNow;
                     if (!SaveSpeakerDiarizationCheckpoint($"Speaker diarization checkpoint saved after chunk {chunkIndex + 1:N0} of {chunkedAudio.Chunks.Count:N0}."))
                     {
-                        AppendLog($"Detect Speakers aborted: checkpoint save failed after chunk {chunkIndex + 1:N0}.");
+                        AppendLog($"Detect Speaker aborted: checkpoint save failed after chunk {chunkIndex + 1:N0}.");
                         return false;
                     }
                 }
@@ -1668,14 +1668,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             if (!TrySaveCurrentSession(
                     updatedTranscriptMode: null,
                     showErrorDialog: true,
-                    successLogMessage: "Session saved after Detect Speakers."))
+                    successLogMessage: "Session saved after Detect Speaker."))
             {
-                AppendLog("Detect Speakers aborted: speaker labels could not be saved.");
+                AppendLog("Detect Speaker aborted: speaker labels could not be saved.");
                 return false;
             }
 
             LoadRecentSessions(_currentSessionDocument.SessionId);
-            AppendLog($"Detect Speakers completed for {FinalizedTranscriptLines.Count:N0} line(s).");
+            AppendLog($"Detect Speaker completed for {FinalizedTranscriptLines.Count:N0} line(s).");
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1685,7 +1685,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 AppendLog("Speaker diarization cancellation state could not be saved.");
             }
-            AppendLog("Detect Speakers canceled.");
+            AppendLog("Detect Speaker canceled.");
             return false;
         }
         catch (Exception ex)
@@ -1696,7 +1696,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 AppendLog("Speaker diarization failure state could not be saved.");
             }
-            AppendLog($"Detect Speakers failed. audioPath='{audioFilePath}', error='{ex.Message}'.");
+            AppendLog($"Detect Speaker failed. audioPath='{audioFilePath}', error='{ex.Message}'.");
             throw;
         }
         finally
@@ -1724,7 +1724,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         if (handler is null)
         {
             shouldResume = true;
-            AppendLog("Detect Speakers will resume an incomplete speaker diarization job.");
+            AppendLog("Detect Speaker will resume an incomplete speaker diarization job.");
             return true;
         }
 
@@ -1748,7 +1748,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         catch (Exception ex)
         {
             RaiseError($"Unable to confirm speaker detection resume: {ex.Message}");
-            AppendLog($"Detect Speakers canceled: resume confirmation failed: {ex.Message}");
+            AppendLog($"Detect Speaker canceled: resume confirmation failed: {ex.Message}");
             return false;
         }
 
@@ -2555,7 +2555,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
             NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
             NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
-            NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
+            NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
         }
 
@@ -2720,9 +2720,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(IsEngineSelectionEnabled));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptionEnabled));
         NotifyPropertyChanged(nameof(IsTranscriptGenerationEnabled));
-        NotifyPropertyChanged(nameof(CanRunLivePrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunLiveTranscribePrimaryAction));
         NotifyPropertyChanged(nameof(CanRunTranscribeAudioPrimaryAction));
-        NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
     }
 
     private void NotifyCurrentTranscriptStateChanged()
@@ -2733,7 +2733,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
         NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
         NotifyPropertyChanged(nameof(CanCopyTranscript));
-        NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptViewSelected));
         NotifyPropertyChanged(nameof(HasSpeakerLabels));
         NotifyPropertyChanged(nameof(TranscriptEmptyStateTitle));
@@ -2996,7 +2996,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
             NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
             NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
-            NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
+            NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
             RefreshCommandStates();
 
@@ -3802,7 +3802,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
         NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
         NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
-        NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
+        NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
         NotifyPropertyChanged(nameof(LoadedAudioFileName));
         RefreshCommandStates();
     }

@@ -268,7 +268,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
-    private void LiveTranscriptionPrimaryAction_Click(object sender, RoutedEventArgs e)
+    private void LiveTranscribePrimaryAction_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm)
         {
@@ -303,7 +303,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OpenTranscribeAudioBatchDialog(vm);
     }
 
-    private void DetectSpeakersPrimaryAction_Click(object sender, RoutedEventArgs e)
+    private void DetectSpeakerPrimaryAction_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm || IsTranscribeAudioBatchTranscribing || IsTranscribeAudioBatchPendingStart)
         {
@@ -344,7 +344,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void OpenDetectSpeakersDialog(MainViewModel vm)
     {
-        if (!vm.CanRunDetectSpeakersPrimaryAction)
+        if (!vm.CanRunDetectSpeakerPrimaryAction)
         {
             return;
         }
@@ -355,7 +355,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         ConfigureTranscriptProcessingUi(
-            title: "Detect Speakers",
+            title: "Detect Speaker",
             allowMute: false);
         _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.DetectSpeakers;
         TranscriptProcessingDetail = "Review the session audio, then click Start.";
@@ -451,7 +451,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
-            LogTranscribeAudioBatch("Detect Speakers requested.");
+            LogTranscribeAudioBatch("Detect Speaker requested.");
             var progress = new Progress<TranscriptionProgressSnapshot>(ApplyTranscriptionProgress);
 
             bool completed = await vm.RunSpeakerDetectionAsync(cancellationToken, progress);
@@ -462,7 +462,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             if (!completed)
             {
-                ShowTranscribeAudioErrorDialog("Detect Speakers did not complete.");
+                ShowTranscribeAudioErrorDialog("Detect Speaker did not complete.");
                 return;
             }
 
@@ -482,9 +482,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         catch (Exception ex)
         {
-            vm.LogHandledException("Detect Speakers", ex);
-            LogTranscribeAudioBatch($"Detect Speakers failed: {ex.Message}");
-            ShowErrorDialog(BuildDetectSpeakersFailureMessage(vm, ex), title: "Detect Speakers failed");
+            vm.LogHandledException("Detect Speaker", ex);
+            LogTranscribeAudioBatch($"Detect Speaker failed: {ex.Message}");
+            ShowErrorDialog(BuildDetectSpeakerFailureMessage(vm, ex), title: "Detect Speaker failed");
         }
         finally
         {
@@ -1871,7 +1871,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return string.IsNullOrWhiteSpace(sanitized) ? "transcript" : sanitized;
     }
 
-    private static string BuildDetectSpeakersFailureMessage(MainViewModel vm, Exception ex)
+    private static string BuildDetectSpeakerFailureMessage(MainViewModel vm, Exception ex)
     {
         string fileName = string.IsNullOrWhiteSpace(vm.LoadedAudioFileName)
             ? "the selected audio file"
@@ -2684,7 +2684,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             ApplyTranscriptProcessingCancelingState();
             _transcribeAudioBatchTranscriptionCts.Cancel();
-            LogTranscribeAudioBatch("Detect Speakers cancellation requested.");
+            LogTranscribeAudioBatch("Detect Speaker cancellation requested.");
         }
     }
 
