@@ -91,16 +91,21 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
 
     public void UpdateProgress(AssetProvisioningProgress progress)
     {
-        if (Assets.FirstOrDefault(asset => string.Equals(asset.AssetId, progress.AssetId, StringComparison.OrdinalIgnoreCase)) is { } asset)
-        {
-            asset.Update(progress.Status, progress.Percent);
-        }
+        SetAssetStatus(progress.AssetId, progress.Status, progress.Percent);
 
         CurrentAssetText = progress.DisplayName;
         CurrentActivityText = $"{progress.DisplayName} is {progress.Status.TrimEnd('.').ToLowerInvariant()}";
         ShowCancelButton = true;
         ShowCloseButton = false;
         WasSuccessful = false;
+    }
+
+    public void SetAssetStatus(string assetId, string statusText, double percent)
+    {
+        if (Assets.FirstOrDefault(asset => string.Equals(asset.AssetId, assetId, StringComparison.OrdinalIgnoreCase)) is { } asset)
+        {
+            asset.Update(statusText, percent);
+        }
     }
 
     public void MarkCompleted()

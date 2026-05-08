@@ -692,12 +692,6 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
             return;
         }
 
-        if (CanStreamExtractDirectoryArchive(descriptor, source))
-        {
-            await DownloadDirectoryWithRetryAsync(descriptor, source, tempDirectoryPath, progress, cancellationToken);
-            return;
-        }
-
         if (TryParseHuggingFaceModelApiSource(source, out Uri modelApiUri, out string modelRepositoryId))
         {
             await DownloadHuggingFaceModelRepositoryAsync(
@@ -707,6 +701,12 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
                 tempDirectoryPath,
                 progress,
                 cancellationToken);
+            return;
+        }
+
+        if (CanStreamExtractDirectoryArchive(descriptor, source))
+        {
+            await DownloadDirectoryWithRetryAsync(descriptor, source, tempDirectoryPath, progress, cancellationToken);
             return;
         }
 

@@ -34,6 +34,20 @@ public sealed class StartupAssetProvisioningCoordinator
             .ToArray();
     }
 
+    public IReadOnlyList<ProvisionedAssetDescriptor> GetRequiredAssetsForStartupDisplay()
+    {
+        return _assetProvisioningService
+            .GetManifestAssets()
+            .Where(asset => asset.Required)
+            .Where(asset => IsSupportedOnCurrentArchitecture(asset))
+            .ToArray();
+    }
+
+    public AssetProvisioningStatus GetAssetStatus(string assetId)
+    {
+        return _assetProvisioningService.GetStatus(assetId);
+    }
+
     public async Task<StartupProvisioningResult> ProvisionRequiredAssetsAsync(
         IProgress<AssetProvisioningProgress>? progress,
         CancellationToken cancellationToken)

@@ -55,6 +55,57 @@
       "supportedArchitectures": [
         "x64"
       ]
+    },
+    {
+      "id": "whisper-medium",
+      "displayName": "Whisper medium",
+      "version": "2.0.0.0",
+      "downloadUri": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
+      "downloadSources": [
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
+        "https://huggingface.co/mobilint/whisper.cpp/resolve/main/ggml-medium.bin?download=true",
+        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+      ],
+      "developmentSourceRelativePath": "assets/models/ggml-medium.bin",
+      "installKind": "File",
+      "installRoot": "Models",
+      "installRelativePath": "ggml-medium.bin",
+      "expectedBytes": 1534000000,
+      "required": false
+    },
+    {
+      "id": "whisper-large-v3",
+      "displayName": "Whisper large-v3",
+      "version": "2.0.0.0",
+      "downloadUri": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin?download=true",
+      "downloadSources": [
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin?download=true",
+        "https://huggingface.co/mobilint/whisper.cpp/resolve/main/ggml-large-v3.bin?download=true",
+        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
+      ],
+      "developmentSourceRelativePath": "assets/models/ggml-large-v3.bin",
+      "installKind": "File",
+      "installRoot": "Models",
+      "installRelativePath": "ggml-large-v3.bin",
+      "expectedBytes": 3100000000,
+      "required": false
+    },
+    {
+      "id": "whisper-large-v3-turbo",
+      "displayName": "Whisper large-v3-turbo",
+      "version": "2.0.0.0",
+      "downloadUri": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin?download=true",
+      "downloadSources": [
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin?download=true",
+        "https://huggingface.co/mobilint/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin?download=true",
+        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+      ],
+      "developmentSourceRelativePath": "assets/models/ggml-large-v3-turbo.bin",
+      "installKind": "File",
+      "installRoot": "Models",
+      "installRelativePath": "ggml-large-v3-turbo.bin",
+      "expectedBytes": 1620000000,
+      "required": false
     }
   ]
 }

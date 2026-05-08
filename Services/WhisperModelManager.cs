@@ -6,9 +6,10 @@ namespace AudioScript.Services;
 
 public sealed class WhisperModelManager
 {
-    private const int InstallRetryCount = 5;
-    private const int CopyBufferSize = 128 * 1024;
     private const string WhisperSmallAssetId = "whisper-small";
+    private const string WhisperMediumAssetId = "whisper-medium";
+    private const string WhisperLargeV3AssetId = "whisper-large-v3";
+    private const string WhisperLargeV3TurboAssetId = "whisper-large-v3-turbo";
 
     private static readonly IReadOnlyList<WhisperEngineModelDefinition> ModelDefinitions = new[] {
         new WhisperEngineModelDefinition(
@@ -124,73 +125,19 @@ public sealed class WhisperModelManager
             return;
         }
 
-        if (string.Equals(definition.Id, TranscriptionModelCatalog.WhisperSmall, StringComparison.OrdinalIgnoreCase))
+        if (_assetProvisioningService is not null
+            && TryResolveProvisionedAssetId(definition.Id, out string assetId))
         {
-            if (_assetProvisioningService is null)
-            {
-                throw new InvalidOperationException("Whisper small provisioning is not configured.");
-            }
-
             var adapter = progress is null
                 ? null
                 : new Progress<AssetProvisioningProgress>(assetProgress =>
                     Report(progress, assetProgress.Status, assetProgress.BytesReceived, assetProgress.TotalBytes, assetProgress.Percent));
-            await _assetProvisioningService.InstallAssetAsync(WhisperSmallAssetId, adapter, cancellationToken);
+            await _assetProvisioningService.InstallAssetAsync(assetId, adapter, cancellationToken);
             return;
         }
 
-        if (definition.GgmlType is null)
-        {
-            throw new InvalidOperationException($"{definition.DisplayName} cannot be downloaded.");
-        }
-
-        Directory.CreateDirectory(_optionalModelsDirectoryPath);
-        string tempPath = $"{modelPath}.{Guid.NewGuid():N}.download";
-        DeleteTemporaryFile(tempPath);
-        Log($"Installing {definition.DisplayName}. tempPath='{tempPath}', finalPath='{modelPath}'.");
-
-        try
-        {
-            Report(progress, "Connecting...", 0, definition.ExpectedBytes, 0);
-            await using Stream modelStream = await WhisperGgmlDownloader.Default.GetGgmlModelAsync(
-                definition.GgmlType.Value,
-                QuantizationType.NoQuantization,
-                cancellationToken);
-            long totalRead;
-            await using (FileStream fileStream = File.Open(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                byte[] buffer = new byte[CopyBufferSize];
-                totalRead = 0;
-                int read;
-                while ((read = await modelStream.ReadAsync(buffer, cancellationToken)) > 0)
-                {
-                    await fileStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                    totalRead += read;
-                    double percent = definition.ExpectedBytes is > 0
-                        ? Math.Min(99, totalRead * 100d / definition.ExpectedBytes.Value)
-                        : 0;
-                    Report(progress, "Downloading...", totalRead, definition.ExpectedBytes, percent);
-                }
-
-                await fileStream.FlushAsync(cancellationToken);
-            }
-
-            Report(progress, "Finalizing install...", totalRead, definition.ExpectedBytes, 99);
-            await FinalizeModelInstallAsync(tempPath, modelPath, cancellationToken);
-            Report(progress, "Installed", new FileInfo(modelPath).Length, definition.ExpectedBytes, 100);
-            Log($"Installed {definition.DisplayName}. path='{modelPath}'.");
-        }
-        catch (OperationCanceledException)
-        {
-            DeleteTemporaryFile(tempPath);
-            Log($"Canceled installation for {definition.DisplayName}.");
-            throw;
-        }
-        catch
-        {
-            DeleteTemporaryFile(tempPath);
-            throw;
-        }
+        throw new InvalidOperationException(
+            $"{definition.DisplayName} provisioning is not configured.");
     }
 
     public WhisperModelUninstallResult UninstallModel(string modelId)
@@ -250,44 +197,18 @@ public sealed class WhisperModelManager
         return Path.Combine(_optionalModelsDirectoryPath, definition.FileName);
     }
 
-    private async Task FinalizeModelInstallAsync(
-        string tempPath,
-        string modelPath,
-        CancellationToken cancellationToken)
+    private static bool TryResolveProvisionedAssetId(string modelId, out string assetId)
     {
-        Exception? lastException = null;
-
-        for (int attempt = 1; attempt <= InstallRetryCount; attempt++)
+        assetId = modelId.Trim() switch
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            TranscriptionModelCatalog.WhisperSmall => WhisperSmallAssetId,
+            TranscriptionModelCatalog.WhisperMedium => WhisperMediumAssetId,
+            TranscriptionModelCatalog.WhisperLargeV3 => WhisperLargeV3AssetId,
+            TranscriptionModelCatalog.WhisperLargeV3Turbo => WhisperLargeV3TurboAssetId,
+            _ => string.Empty,
+        };
 
-            try
-            {
-                if (File.Exists(modelPath))
-                {
-                    File.Delete(modelPath);
-                }
-
-                File.Move(tempPath, modelPath);
-                return;
-            }
-            catch (IOException ex)
-            {
-                lastException = ex;
-                Log($"Whisper model install attempt {attempt}/{InstallRetryCount} failed: {ex.Message}");
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                lastException = ex;
-                Log($"Whisper model install attempt {attempt}/{InstallRetryCount} failed: {ex.Message}");
-            }
-
-            await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
-        }
-
-        throw new IOException(
-            $"Unable to finalize Whisper model install to '{modelPath}' after {InstallRetryCount} attempts.",
-            lastException);
+        return !string.IsNullOrWhiteSpace(assetId);
     }
 
     private static void Report(
@@ -298,21 +219,6 @@ public sealed class WhisperModelManager
         double percent)
     {
         progress?.Report(new WhisperModelInstallProgress(status, bytesReceived, totalBytes, percent));
-    }
-
-    private static void DeleteTemporaryFile(string filePath)
-    {
-        try
-        {
-            if (File.Exists(filePath))
-            {
-                File.Delete(filePath);
-            }
-        }
-        catch
-        {
-            // Best-effort cleanup for canceled or failed model downloads.
-        }
     }
 
     private void Log(string message)

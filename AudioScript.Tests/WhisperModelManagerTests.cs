@@ -83,13 +83,42 @@ public sealed class WhisperModelManagerTests {
             Directory.CreateDirectory(optionalPath);
             File.WriteAllBytes(Path.Combine(sourcePath, "ggml-small.bin"), [1, 2, 3]);
             using var logs = new ProcessLogService(logsPath);
-            var service = new StubAssetProvisioningService(Path.Combine(sourcePath, "ggml-small.bin"));
+            var service = new StubAssetProvisioningService(sourcePath, optionalPath);
             var manager = new WhisperModelManager(logs, optionalPath, assetProvisioningService: service);
 
             await manager.InstallModelAsync(TranscriptionModelCatalog.WhisperSmall, progress: null, CancellationToken.None);
 
             Assert.True(manager.IsModelInstalled(TranscriptionModelCatalog.WhisperSmall));
             Assert.True(service.WasInstallCalled);
+        }
+        finally
+        {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task InstallModelAsync_InstallsWhisperMediumFromProvisioningService()
+    {
+        string rootPath = CreateTempDirectory();
+        string sourcePath = Path.Combine(rootPath, "source");
+        string optionalPath = Path.Combine(rootPath, "optional");
+        string logsPath = Path.Combine(rootPath, "logs");
+
+        try
+        {
+            Directory.CreateDirectory(sourcePath);
+            Directory.CreateDirectory(optionalPath);
+            File.WriteAllBytes(Path.Combine(sourcePath, "ggml-medium.bin"), [7, 8, 9]);
+            using var logs = new ProcessLogService(logsPath);
+            var service = new StubAssetProvisioningService(sourcePath, optionalPath);
+            var manager = new WhisperModelManager(logs, optionalPath, assetProvisioningService: service);
+
+            await manager.InstallModelAsync(TranscriptionModelCatalog.WhisperMedium, progress: null, CancellationToken.None);
+
+            Assert.True(manager.IsModelInstalled(TranscriptionModelCatalog.WhisperMedium));
+            Assert.True(service.WasInstallCalled);
+            Assert.Equal("whisper-medium", service.LastInstalledAssetId);
         }
         finally
         {
@@ -138,14 +167,17 @@ public sealed class WhisperModelManagerTests {
 
     private sealed class StubAssetProvisioningService : IAssetProvisioningService
     {
-        private readonly string _sourcePath;
+        private readonly string _sourceDirectoryPath;
+        private readonly string _installDirectoryPath;
 
-        public StubAssetProvisioningService(string sourcePath)
+        public StubAssetProvisioningService(string sourcePath, string installDirectoryPath)
         {
-            _sourcePath = sourcePath;
+            _sourceDirectoryPath = sourcePath;
+            _installDirectoryPath = installDirectoryPath;
         }
 
         public bool WasInstallCalled { get; private set; }
+        public string? LastInstalledAssetId { get; private set; }
 
         public IReadOnlyList<ProvisionedAssetDescriptor> GetManifestAssets()
         {
@@ -159,7 +191,7 @@ public sealed class WhisperModelManagerTests {
 
         public string ResolveInstallPath(string assetId)
         {
-            return Path.Combine(Path.GetDirectoryName(_sourcePath)!, "..", "optional", "ggml-small.bin");
+            return Path.Combine(_installDirectoryPath, ResolveFileName(assetId));
         }
 
         public bool IsInstalled(string assetId)
@@ -170,9 +202,11 @@ public sealed class WhisperModelManagerTests {
         public Task InstallAssetAsync(string assetId, IProgress<AssetProvisioningProgress>? progress, CancellationToken cancellationToken)
         {
             WasInstallCalled = true;
+            LastInstalledAssetId = assetId;
             string targetPath = Path.GetFullPath(ResolveInstallPath(assetId));
             Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-            File.Copy(_sourcePath, targetPath, overwrite: true);
+            string sourcePath = Path.Combine(_sourceDirectoryPath, ResolveFileName(assetId));
+            File.Copy(sourcePath, targetPath, overwrite: true);
             return Task.CompletedTask;
         }
 
@@ -185,6 +219,18 @@ public sealed class WhisperModelManagerTests {
             }
 
             return Task.CompletedTask;
+        }
+
+        private static string ResolveFileName(string assetId)
+        {
+            return assetId switch
+            {
+                "whisper-small" => "ggml-small.bin",
+                "whisper-medium" => "ggml-medium.bin",
+                "whisper-large-v3" => "ggml-large-v3.bin",
+                "whisper-large-v3-turbo" => "ggml-large-v3-turbo.bin",
+                _ => throw new InvalidOperationException($"Unknown test asset id '{assetId}'."),
+            };
         }
     }
 }

@@ -77,6 +77,7 @@ public partial class App : System.Windows.Application
             assetProvisioningService,
             processLogService);
 
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
         if (!RunStartupProvisioningIfRequired(startupProvisioningCoordinator, processLogService))
         {
             Shutdown();
@@ -196,6 +197,7 @@ public partial class App : System.Windows.Application
 
         MainWindow = mainWindow;
         mainWindow.Show();
+        ShutdownMode = ShutdownMode.OnMainWindowClose;
         updateOwnerWindowHandle = new WindowInteropHelper(mainWindow).Handle;
         _ = _entitlementService.RefreshAsync();
         _ = _appUpdateService.StartAsync();
@@ -206,8 +208,9 @@ public partial class App : System.Windows.Application
         StartupAssetProvisioningCoordinator startupProvisioningCoordinator,
         ProcessLogService processLogService)
     {
-        IReadOnlyList<ProvisionedAssetDescriptor> requiredAssets = startupProvisioningCoordinator.GetRequiredAssetsNeedingInstall();
-        if (requiredAssets.Count == 0)
+        IReadOnlyList<ProvisionedAssetDescriptor> requiredAssetsForDisplay = startupProvisioningCoordinator.GetRequiredAssetsForStartupDisplay();
+        IReadOnlyList<ProvisionedAssetDescriptor> requiredAssetsNeedingInstall = startupProvisioningCoordinator.GetRequiredAssetsNeedingInstall();
+        if (requiredAssetsNeedingInstall.Count == 0)
         {
             processLogService.Log(
                 nameof(StartupAssetProvisioningCoordinator),
@@ -216,7 +219,20 @@ public partial class App : System.Windows.Application
         }
 
         var startupWindow = new StartupProvisioningWindow();
-        var viewModel = new StartupProvisioningWindowViewModel(requiredAssets);
+        var viewModel = new StartupProvisioningWindowViewModel(requiredAssetsForDisplay);
+        foreach (ProvisionedAssetDescriptor asset in requiredAssetsForDisplay)
+        {
+            AssetProvisioningStatus status = startupProvisioningCoordinator.GetAssetStatus(asset.Id);
+            (string statusLabel, double percent) = status.State switch
+            {
+                AssetProvisioningState.Ready => ("Ready", 100),
+                AssetProvisioningState.Unsupported => ("Unsupported", 0),
+                AssetProvisioningState.Unconfigured => ("Unconfigured", 0),
+                _ => ("Waiting...", 0),
+            };
+            viewModel.SetAssetStatus(asset.Id, statusLabel, percent);
+        }
+
         startupWindow.DataContext = viewModel;
         processLogService.Log("StartupProvisioning", "Startup provisioning dialog opened modally.");
 
