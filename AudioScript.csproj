@@ -10,12 +10,13 @@
     <UseWindowsForms>true</UseWindowsForms>
     <StartupObject>AudioScript.App</StartupObject>
     <!-- 4-part version required by MSIX / Microsoft Store -->
-    <Version>0.1.6.0</Version>
+    <Version>2.0.1.0</Version>
     <ApplicationIcon>assets\AudioScript.ico</ApplicationIcon>
     <Company>Justin Tagarda</Company>
     <Product>AudioScript</Product>
     <Copyright>© 2026 Justin Tagarda. All rights reserved.</Copyright>
     <Description>Offline audio transcription for local files and live playback capture.</Description>
+    <DefaultItemExcludes>$(DefaultItemExcludes);AudioScript.Package\AppPackages\**;artifacts\**;publish\**;AudioScript.Tests\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(StoreSelfContained)' == 'true'">
@@ -35,10 +36,20 @@
   <ItemGroup>
     <Compile Remove="bin\\**\\*.cs" />
     <Compile Remove="obj\\**\\*.cs" />
+    <Compile Remove="AudioScript.Package\\**\\*.cs" />
     <Compile Remove="artifacts\\**\\*.cs" />
     <Compile Remove="publish\\**\\*.cs" />
     <Compile Remove="AudioScript.Tests\\**\\*.cs" />
     <Compile Remove="assets\\python\\**\\*.cs" />
+    <None Remove="assets\\models\\ggml-small.bin" />
+    <None Remove="assets\\pyannote\\**\\*" />
+    <None Remove="assets\\python\\**\\*" />
+    <Content Remove="assets\\models\\ggml-small.bin" />
+    <Content Remove="assets\\pyannote\\**\\*" />
+    <Content Remove="assets\\python\\**\\*" />
+    <Resource Remove="assets\\models\\ggml-small.bin" />
+    <Resource Remove="assets\\pyannote\\**\\*" />
+    <Resource Remove="assets\\python\\**\\*" />
     <EmbeddedResource Remove="AudioScript.Tests\\**\\*" />
     <EmbeddedResource Remove="assets\\python\\**\\*" />
     <Page Remove="AudioScript.Tests\\**\\*" />
@@ -56,19 +67,30 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="assets\models\ggml-small.bin">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
-    <Content Include="assets\pyannote\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
-    <Content Include="assets\python\**\*">
+    <Content Include="assets\bootstrap\asset-manifest.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
+
+  <Target Name="PruneHeavyProvisionedAssetsFromOutput" AfterTargets="Build;Publish">
+    <PropertyGroup>
+      <_ProvisionedAssetsRoot>$(TargetDir)assets</_ProvisionedAssetsRoot>
+      <_PublishAssetsRoot Condition="'$(PublishDir)' != ''">$(PublishDir)assets</_PublishAssetsRoot>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_HeavyAssetFiles Include="$(_ProvisionedAssetsRoot)\models\ggml-small.bin" />
+      <_HeavyAssetFiles Include="$(_PublishAssetsRoot)\models\ggml-small.bin" Condition="'$(_PublishAssetsRoot)' != ''" />
+      <_HeavyAssetDirectories Include="$(_ProvisionedAssetsRoot)\pyannote" />
+      <_HeavyAssetDirectories Include="$(_ProvisionedAssetsRoot)\python" />
+      <_HeavyAssetDirectories Include="$(_PublishAssetsRoot)\pyannote" Condition="'$(_PublishAssetsRoot)' != ''" />
+      <_HeavyAssetDirectories Include="$(_PublishAssetsRoot)\python" Condition="'$(_PublishAssetsRoot)' != ''" />
+    </ItemGroup>
+
+    <Delete Files="@(_HeavyAssetFiles)" TreatErrorsAsWarnings="true" />
+    <RemoveDir Directories="@(_HeavyAssetDirectories)" Condition="Exists('%(Identity)')" />
+  </Target>
 
 </Project>
 

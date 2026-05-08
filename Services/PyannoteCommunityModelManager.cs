@@ -5,57 +5,85 @@ namespace AudioScript.Services;
 
 public sealed class PyannoteCommunityModelManager
 {
-    private const string ModelRelativePath = "pyannote/speaker-diarization-community-1";
-    private const string RunnerScriptRelativePath = "pyannote/run_community_diarization.py";
+    public const string PyannoteModelAssetId = "pyannote-community-model";
+    public const string PyannoteRunnerAssetId = "pyannote-community-runner";
+    public const string PyannotePythonX64AssetId = "pyannote-python-x64";
 
-    private readonly string _assetsDirectoryPath;
+    private readonly AppDataPathProvider _paths;
+    private readonly IAssetProvisioningService _assetProvisioningService;
     private readonly Func<Architecture> _architectureResolver;
 
     public PyannoteCommunityModelManager(
-        string? assetsDirectoryPath = null,
+        IAssetProvisioningService assetProvisioningService,
+        AppDataPathProvider? paths = null,
         Func<Architecture>? architectureResolver = null)
     {
-        _assetsDirectoryPath = string.IsNullOrWhiteSpace(assetsDirectoryPath)
-            ? Path.Combine(AppContext.BaseDirectory, "assets")
-            : Path.GetFullPath(assetsDirectoryPath);
+        _assetProvisioningService = assetProvisioningService;
+        _paths = paths ?? AppDataPathProvider.Create();
         _architectureResolver = architectureResolver ?? (() => RuntimeInformation.ProcessArchitecture);
     }
 
-    public string ModelDirectoryPath => Path.Combine(_assetsDirectoryPath, ModelRelativePath);
+    public string ModelDirectoryPath => Path.Combine(_paths.PyannoteAssetsPath, "speaker-diarization-community-1");
 
-    public string RunnerScriptPath => Path.Combine(_assetsDirectoryPath, RunnerScriptRelativePath);
+    public string RunnerScriptPath => Path.Combine(_paths.PyannoteAssetsPath, "run_community_diarization.py");
 
-    public string RuntimeDirectoryPath => Path.Combine(_assetsDirectoryPath, "python", ResolveRuntimeDirectoryName());
+    public string RuntimeDirectoryPath => Path.Combine(_paths.PythonRuntimesPath, ResolveRuntimeDirectoryName());
 
     public string PythonExecutablePath => Path.Combine(RuntimeDirectoryPath, "python.exe");
 
+    public bool IsSupportedOnCurrentArchitecture => _architectureResolver() == Architecture.X64;
+
     public void EnsureInstalled()
     {
+        EnsureSupportedArchitecture();
+
         if (!Directory.Exists(ModelDirectoryPath))
         {
             throw new DirectoryNotFoundException(
-                $"Bundled pyannote Community-1 model was not found. Reinstall or repair AudioScript. Path: {ModelDirectoryPath}");
+                $"Pyannote Community-1 model is not installed. Download the speaker detection files and try again. Path: {ModelDirectoryPath}");
         }
 
         if (!File.Exists(RunnerScriptPath))
         {
             throw new FileNotFoundException(
-                "Bundled pyannote diarization runner was not found. Reinstall or repair AudioScript.",
+                "Pyannote diarization runner is not installed. Download the speaker detection files and try again.",
                 RunnerScriptPath);
         }
 
         if (!Directory.Exists(RuntimeDirectoryPath))
         {
             throw new DirectoryNotFoundException(
-                $"Bundled pyannote Python runtime was not found. Reinstall or repair AudioScript. Path: {RuntimeDirectoryPath}");
+                $"Pyannote Python runtime is not installed. Download the speaker detection files and try again. Path: {RuntimeDirectoryPath}");
         }
 
         if (!File.Exists(PythonExecutablePath))
         {
             throw new FileNotFoundException(
-                "Bundled pyannote Python executable was not found. Reinstall or repair AudioScript.",
+                "Pyannote Python executable is not installed. Download the speaker detection files and try again.",
                 PythonExecutablePath);
         }
+    }
+
+    public bool IsInstalled()
+    {
+        if (!IsSupportedOnCurrentArchitecture)
+        {
+            return false;
+        }
+
+        return _assetProvisioningService.IsInstalled(PyannoteModelAssetId)
+            && _assetProvisioningService.IsInstalled(PyannoteRunnerAssetId)
+            && _assetProvisioningService.IsInstalled(PyannotePythonX64AssetId);
+    }
+
+    public async Task EnsureProvisionedAsync(
+        IProgress<AssetProvisioningProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        EnsureSupportedArchitecture();
+        await InstallAssetAsync(PyannoteModelAssetId, progress, cancellationToken);
+        await InstallAssetAsync(PyannoteRunnerAssetId, progress, cancellationToken);
+        await InstallAssetAsync(PyannotePythonX64AssetId, progress, cancellationToken);
     }
 
     private string ResolveRuntimeDirectoryName()
@@ -63,7 +91,7 @@ public sealed class PyannoteCommunityModelManager
         return _architectureResolver() switch
         {
             Architecture.X64 => "win-x64",
-            Architecture.Arm64 => "win-arm64",
+            Architecture.Arm64 => throw new PlatformNotSupportedException("Speaker diarization is not supported on ARM64 devices in this version."),
             Architecture.X86 => throw new PlatformNotSupportedException("Pyannote Community-1 requires a 64-bit AudioScript build."),
             Architecture.Arm => throw new PlatformNotSupportedException("Pyannote Community-1 requires a 64-bit AudioScript build."),
             Architecture.Wasm => throw new PlatformNotSupportedException("Pyannote Community-1 is not supported on WebAssembly."),
@@ -71,5 +99,27 @@ public sealed class PyannoteCommunityModelManager
             Architecture.Ppc64le => throw new PlatformNotSupportedException("Pyannote Community-1 is not supported on ppc64le."),
             _ => throw new PlatformNotSupportedException($"Unsupported process architecture '{_architectureResolver()}'."),
         };
+    }
+
+    private void EnsureSupportedArchitecture()
+    {
+        if (!IsSupportedOnCurrentArchitecture)
+        {
+            throw new PlatformNotSupportedException("Speaker diarization is not supported on ARM64 devices in this version.");
+        }
+    }
+
+    private async Task InstallAssetAsync(
+        string assetId,
+        IProgress<AssetProvisioningProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        AssetProvisioningStatus status = _assetProvisioningService.GetStatus(assetId);
+        if (status.State == AssetProvisioningState.Ready)
+        {
+            return;
+        }
+
+        await _assetProvisioningService.InstallAssetAsync(assetId, progress, cancellationToken);
     }
 }

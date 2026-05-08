@@ -24,6 +24,10 @@ public sealed class AppDataPathProvider
             ? Path.Combine(localAppData, "Packages", normalizedPackageFamilyName!, "LocalState")
             : LegacyRootPath;
         ModelsPath = Path.Combine(RootPath, "Models");
+        ProvisioningPath = Path.Combine(RootPath, "Provisioning");
+        ProvisionedAssetsPath = Path.Combine(RootPath, "Assets");
+        PyannoteAssetsPath = Path.Combine(ProvisionedAssetsPath, "Pyannote");
+        PythonRuntimesPath = Path.Combine(ProvisionedAssetsPath, "Python");
         SessionsPath = Path.Combine(RootPath, "Sessions");
         LogsPath = Path.Combine(RootPath, "Logs");
         TempPath = Path.Combine(RootPath, "Temp");
@@ -34,6 +38,14 @@ public sealed class AppDataPathProvider
     public string RootPath { get; }
 
     public string ModelsPath { get; }
+
+    public string ProvisioningPath { get; }
+
+    public string ProvisionedAssetsPath { get; }
+
+    public string PyannoteAssetsPath { get; }
+
+    public string PythonRuntimesPath { get; }
 
     public string SessionsPath { get; }
 

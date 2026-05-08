@@ -14,8 +14,14 @@ using NAudio.Wave;
 
 namespace AudioScript.ViewModels;
 
+public sealed record PremiumUpsellRequest(
+    string FeatureName,
+    string Message);
+
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
+    private const int BasicSessionLimit = 10;
+    private const string SessionLimitUpsellMessage = "Basic is limited to 10 sessions. Delete sessions or upgrade to Premium to add more.";
     private const string AudioFileDialogFilter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*";
     private const string SpeakerDiarizationEngineId = "pyannote-community-1";
     private const int SpeakerDiarizationJobVersion = 1;
@@ -187,6 +193,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public event EventHandler<ConfirmationRequest>? ConfirmationRequested;
     public event EventHandler<ToastNotification>? ToastRequested;
     public event EventHandler? NewAudioFileStagedForTranscribeAudio;
+    public event EventHandler<PremiumUpsellRequest>? PremiumUpsellRequested;
 
     public ObservableCollection<EngineOptionViewModel> Engines { get; }
     public ObservableCollection<ProcessLogEntryViewModel> ProcessLogs { get; }
@@ -923,6 +930,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return true;
         }
 
+        if (!EnsureCanCreateNewSession("live transcription session"))
+        {
+            return false;
+        }
+
         try
         {
             TranscriptSessionLoadResult loadResult = _sessionStore.CreateLiveSession(
@@ -993,6 +1005,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool InitializeNewLiveTranscriptSession(string inputDeviceName)
     {
+        if (!EnsureCanCreateNewSession("live transcription session"))
+        {
+            return false;
+        }
+
         try
         {
             _sessionAutosaveTimer.Stop();
@@ -2426,8 +2443,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         AppendLog($"Audio file dropped: {Path.GetFileName(filePath)}");
-        HandleSelectedAudioFile(filePath);
-        return true;
+        return HandleSelectedAudioFile(filePath);
     }
 
     public Task LoadRecentSessionAsync(TranscriptSessionSummary session)
@@ -2921,7 +2937,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
-    private void HandleSelectedAudioFile(string sourceFilePath)
+    private bool HandleSelectedAudioFile(string sourceFilePath)
     {
         try
         {
@@ -2938,7 +2954,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 LoadSessionResult(loadResult, showAudioIssueDialog: true);
                 LoadRecentSessions(loadResult.Document.SessionId);
                 AppendLog("Selected audio matched an existing session and was loaded.");
-                return;
+                return true;
+            }
+
+            if (!EnsureCanCreateNewSession("audio session"))
+            {
+                AppendLog("Audio selection blocked: Basic session limit reached.");
+                return false;
             }
 
             ClearOutputCore(unloadAudioPreview: true, clearSessionContext: true);
@@ -2946,16 +2968,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 RaiseError("Unable to load the selected audio file for preview.");
                 AppendLog("Selected audio could not be staged because preview loading failed.");
-                return;
+                return false;
             }
 
             _pendingImportedAudioFilePath = sourceFilePath;
             AppendLog("Selected audio does not have an existing session. Preview loaded and session creation is deferred until Generate is clicked.");
             _uiContext.Post(_ => NewAudioFileStagedForTranscribeAudio?.Invoke(this, EventArgs.Empty), null);
+            return true;
         }
         catch (Exception ex)
         {
             RaiseError($"Unable to process selected audio file: {ex.Message}");
+            return false;
         }
     }
 
@@ -2977,6 +3001,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         if (string.IsNullOrWhiteSpace(sourcePathForSessionImport))
         {
+            return false;
+        }
+
+        if (!EnsureCanCreateNewSession("audio session"))
+        {
+            AppendLog("Session creation for loaded audio blocked: Basic session limit reached.");
             return false;
         }
 
@@ -4329,6 +4359,40 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(IsApplicationUpdateActive));
             NotifyPropertyChanged(nameof(IsMandatoryApplicationUpdateAvailable));
         }, null);
+    }
+
+    private bool EnsureCanCreateNewSession(string contextLabel)
+    {
+        if (HasPremium)
+        {
+            return true;
+        }
+
+        int sessionCount;
+        try
+        {
+            sessionCount = _sessionStore.ListRecentSessions().Count;
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Session limit check skipped for {contextLabel}: {ex.Message}");
+            return true;
+        }
+
+        if (sessionCount < BasicSessionLimit)
+        {
+            return true;
+        }
+
+        AppendLog(
+            $"Session creation blocked for {contextLabel}: Basic limit reached " +
+            $"({sessionCount}/{BasicSessionLimit}).");
+        PremiumUpsellRequested?.Invoke(
+            this,
+            new PremiumUpsellRequest(
+                "Session limit reached",
+                SessionLimitUpsellMessage));
+        return false;
     }
 
     private void OnEntitlementSnapshotChanged(object? sender, AppEntitlementSnapshot snapshot)

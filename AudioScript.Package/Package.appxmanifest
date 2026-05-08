@@ -12,7 +12,7 @@
        • Package/Identity Name       → replace "PACKAGE_IDENTITY_NAME" below
        • Package/Identity Publisher  → replace "CN=PUBLISHER_CN" below
        • PublisherDisplayName        → replace "PUBLISHER_DISPLAY_NAME" below
-  3. Confirm the Version matches AudioScript.csproj <Version> (currently 0.1.6.0).
+  3. Confirm the Version matches AudioScript.csproj <Version> (currently 2.0.1.0).
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -26,7 +26,7 @@
   <Identity
     Name="JustinTagardaSoftware.AudioScript"
     Publisher="CN=68EC506E-4B5E-416B-93E8-BA707CA3BE0F"
-    Version="0.1.6.0" />
+    Version="2.0.1.0" />
 
   <!-- ═══════════════════════════════════════════════════════════════════
        PROPERTIES

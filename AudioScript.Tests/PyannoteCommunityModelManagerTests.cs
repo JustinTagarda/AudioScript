@@ -13,13 +13,15 @@ public sealed class PyannoteCommunityModelManagerTests
     public void EnsureInstalled_Succeeds_WhenBundledAssetsExist()
     {
         string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
 
         try
         {
-            CreatePyannoteAssets(assetsPath, Architecture.X64);
+            CreatePyannoteAssets(paths, Architecture.X64);
 
             var manager = new PyannoteCommunityModelManager(
-                assetsPath,
+                new StubAssetProvisioningService(),
+                paths,
                 architectureResolver: () => Architecture.X64);
 
             manager.EnsureInstalled();
@@ -34,13 +36,15 @@ public sealed class PyannoteCommunityModelManagerTests
     public void EnsureInstalled_Throws_WhenModelIsMissing()
     {
         string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
 
         try
         {
-            CreateRunnerScript(assetsPath);
-            CreatePythonRuntime(assetsPath, "win-x64");
+            CreateRunnerScript(paths);
+            CreatePythonRuntime(paths, "win-x64");
             var manager = new PyannoteCommunityModelManager(
-                assetsPath,
+                new StubAssetProvisioningService(),
+                paths,
                 architectureResolver: () => Architecture.X64);
 
             Assert.Throws<DirectoryNotFoundException>(manager.EnsureInstalled);
@@ -51,30 +55,45 @@ public sealed class PyannoteCommunityModelManagerTests
         }
     }
 
-    [Theory]
-    [InlineData("x64")]
-    [InlineData("arm64")]
-    public void RuntimePaths_SelectArchitectureSpecificRuntime(string architecture)
+    [Fact]
+    public void RuntimePaths_SelectX64Runtime()
     {
         string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
 
         try
         {
-            Architecture processArchitecture = architecture == "arm64"
-                ? Architecture.Arm64
-                : Architecture.X64;
-            string expectedRuntime = architecture == "arm64"
-                ? "win-arm64"
-                : "win-x64";
-            CreatePyannoteAssets(assetsPath, processArchitecture);
+            CreatePyannoteAssets(paths, Architecture.X64);
 
             var manager = new PyannoteCommunityModelManager(
-                assetsPath,
-                architectureResolver: () => processArchitecture);
+                new StubAssetProvisioningService(),
+                paths,
+                architectureResolver: () => Architecture.X64);
 
-            Assert.Equal(Path.Combine(assetsPath, "python", expectedRuntime), manager.RuntimeDirectoryPath);
-            Assert.Equal(Path.Combine(assetsPath, "python", expectedRuntime, "python.exe"), manager.PythonExecutablePath);
+            Assert.Equal(Path.Combine(paths.PythonRuntimesPath, "win-x64"), manager.RuntimeDirectoryPath);
+            Assert.Equal(Path.Combine(paths.PythonRuntimesPath, "win-x64", "python.exe"), manager.PythonExecutablePath);
             manager.EnsureInstalled();
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Fact]
+    public void EnsureInstalled_ThrowsPlatformNotSupported_OnArm64()
+    {
+        string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
+
+        try
+        {
+            var manager = new PyannoteCommunityModelManager(
+                new StubAssetProvisioningService(),
+                paths,
+                architectureResolver: () => Architecture.Arm64);
+
+            Assert.Throws<PlatformNotSupportedException>(manager.EnsureInstalled);
         }
         finally
         {
@@ -87,12 +106,14 @@ public sealed class PyannoteCommunityModelManagerTests
     {
         string assetsPath = CreateTempDirectory();
         string audioPath = CreateSilentWaveFile(TimeSpan.FromSeconds(2));
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
 
         try
         {
-            CreatePyannoteAssets(assetsPath, Architecture.X64);
+            CreatePyannoteAssets(paths, Architecture.X64);
             var manager = new PyannoteCommunityModelManager(
-                assetsPath,
+                new StubAssetProvisioningService(),
+                paths,
                 architectureResolver: () => Architecture.X64);
             var runner = new StubPyannoteCommunityProcessRunner(
                 """[{"speaker":"SPEAKER_00","start":0.1,"end":1.2},{"speaker":"custom","start":1.3,"end":2.0}]""");
@@ -126,12 +147,14 @@ public sealed class PyannoteCommunityModelManagerTests
         string assetsPath = CreateTempDirectory();
         string audioPath = CreateSilentWaveFile(TimeSpan.FromSeconds(2));
         string logsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
 
         try
         {
-            CreatePyannoteAssets(assetsPath, Architecture.X64);
+            CreatePyannoteAssets(paths, Architecture.X64);
             var manager = new PyannoteCommunityModelManager(
-                assetsPath,
+                new StubAssetProvisioningService(),
+                paths,
                 architectureResolver: () => Architecture.X64);
             var runner = new StubPyannoteCommunityProcessRunner(
                 """[{"speaker":"SPEAKER_00","start":0.1,"end":1.2}]""",
@@ -160,30 +183,30 @@ public sealed class PyannoteCommunityModelManagerTests
         }
     }
 
-    private static void CreatePyannoteAssets(string assetsPath, Architecture architecture)
+    private static void CreatePyannoteAssets(AppDataPathProvider paths, Architecture architecture)
     {
-        CreateRunnerScript(assetsPath);
-        CreateModelDirectory(assetsPath);
-        CreatePythonRuntime(assetsPath, architecture == Architecture.Arm64 ? "win-arm64" : "win-x64");
+        CreateRunnerScript(paths);
+        CreateModelDirectory(paths);
+        CreatePythonRuntime(paths, architecture == Architecture.Arm64 ? "win-arm64" : "win-x64");
     }
 
-    private static void CreateModelDirectory(string assetsPath)
+    private static void CreateModelDirectory(AppDataPathProvider paths)
     {
-        string modelPath = Path.Combine(assetsPath, "pyannote", "speaker-diarization-community-1");
+        string modelPath = Path.Combine(paths.PyannoteAssetsPath, "speaker-diarization-community-1");
         Directory.CreateDirectory(modelPath);
         File.WriteAllText(Path.Combine(modelPath, "config.yaml"), "pipeline: community-1");
     }
 
-    private static void CreateRunnerScript(string assetsPath)
+    private static void CreateRunnerScript(AppDataPathProvider paths)
     {
-        string runnerPath = Path.Combine(assetsPath, "pyannote", "run_community_diarization.py");
+        string runnerPath = Path.Combine(paths.PyannoteAssetsPath, "run_community_diarization.py");
         Directory.CreateDirectory(Path.GetDirectoryName(runnerPath)!);
         File.WriteAllText(runnerPath, "print('stub')");
     }
 
-    private static void CreatePythonRuntime(string assetsPath, string runtimeDirectoryName)
+    private static void CreatePythonRuntime(AppDataPathProvider paths, string runtimeDirectoryName)
     {
-        string runtimePath = Path.Combine(assetsPath, "python", runtimeDirectoryName);
+        string runtimePath = Path.Combine(paths.PythonRuntimesPath, runtimeDirectoryName);
         Directory.CreateDirectory(runtimePath);
         File.WriteAllText(Path.Combine(runtimePath, "python.exe"), string.Empty);
     }
@@ -276,6 +299,34 @@ public sealed class PyannoteCommunityModelManagerTests
             }
 
             return Task.FromResult(new PyannoteCommunityProcessResult(0, _standardOutput, string.Join(Environment.NewLine, _standardErrorLines)));
+        }
+    }
+
+    private sealed class StubAssetProvisioningService : IAssetProvisioningService
+    {
+        public AssetProvisioningStatus GetStatus(string assetId)
+        {
+            return new AssetProvisioningStatus(assetId, assetId, AssetProvisioningState.Ready, string.Empty);
+        }
+
+        public string ResolveInstallPath(string assetId)
+        {
+            return string.Empty;
+        }
+
+        public bool IsInstalled(string assetId)
+        {
+            return true;
+        }
+
+        public Task InstallAssetAsync(string assetId, IProgress<AssetProvisioningProgress>? progress, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAssetAsync(string assetId, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
         }
     }
 }

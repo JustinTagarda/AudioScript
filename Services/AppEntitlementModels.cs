@@ -113,6 +113,14 @@ public sealed class StoreEntitlementService : IEntitlementService
         _processLogService = processLogService ?? throw new ArgumentNullException(nameof(processLogService));
         _ownerWindowHandleProvider = ownerWindowHandleProvider;
         _options = options ?? new StoreEntitlementServiceOptions();
+        if (_appVersionProvider.IsPackaged && string.IsNullOrWhiteSpace(_options.PremiumStoreId))
+        {
+            const string message =
+                "Premium Store add-on ID is required for packaged builds. Configure StoreEntitlementServiceOptions.PremiumStoreId.";
+            _processLogService.Log("Premium", $"configuration_error; {message}");
+            throw new InvalidOperationException(message);
+        }
+
         _currentSnapshot = _appVersionProvider.IsPackaged || !_options.TreatUnpackagedBuildsAsPremium
             ? new AppEntitlementSnapshot(
                 IsPackaged: _appVersionProvider.IsPackaged,
@@ -272,9 +280,14 @@ public sealed class StoreEntitlementService : IEntitlementService
             {
                 return exact;
             }
+
+            if (_appVersionProvider.IsPackaged)
+            {
+                return null;
+            }
         }
 
-        if (!string.IsNullOrWhiteSpace(keyword))
+        if (!_appVersionProvider.IsPackaged && !string.IsNullOrWhiteSpace(keyword))
         {
             StoreProduct? keywordMatch = products.FirstOrDefault(product =>
                 ContainsKeyword(product.Title, keyword)
@@ -283,6 +296,11 @@ public sealed class StoreEntitlementService : IEntitlementService
             {
                 return keywordMatch;
             }
+        }
+
+        if (_appVersionProvider.IsPackaged)
+        {
+            return null;
         }
 
         StoreProduct[] durableProducts = products.ToArray();

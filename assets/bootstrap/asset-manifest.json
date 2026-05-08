@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "id": "whisper-small",
+      "displayName": "Whisper small",
+      "version": "2.0.0.0",
+      "downloadUri": "https://assets.audioscript.app/models/2.0.0.0/ggml-small.bin",
+      "developmentSourceRelativePath": "assets/models/ggml-small.bin",
+      "installKind": "File",
+      "installRoot": "Models",
+      "installRelativePath": "ggml-small.bin",
+      "expectedBytes": 487601967,
+      "required": true
+    },
+    {
+      "id": "pyannote-community-model",
+      "displayName": "Pyannote Community-1 model",
+      "version": "2.0.0.0",
+      "downloadUri": "https://assets.audioscript.app/pyannote/2.0.0.0/speaker-diarization-community-1.zip",
+      "developmentSourceRelativePath": "assets/pyannote/speaker-diarization-community-1",
+      "installKind": "Directory",
+      "installRoot": "Pyannote",
+      "installRelativePath": "speaker-diarization-community-1",
+      "required": true,
+      "supportedArchitectures": [
+        "x64"
+      ]
+    },
+    {
+      "id": "pyannote-community-runner",
+      "displayName": "Pyannote Community-1 runner",
+      "version": "2.0.0.0",
+      "downloadUri": "https://assets.audioscript.app/pyannote/2.0.0.0/run_community_diarization.py",
+      "developmentSourceRelativePath": "assets/pyannote/run_community_diarization.py",
+      "installKind": "File",
+      "installRoot": "Pyannote",
+      "installRelativePath": "run_community_diarization.py",
+      "required": true,
+      "supportedArchitectures": [
+        "x64"
+      ]
+    },
+    {
+      "id": "pyannote-python-x64",
+      "displayName": "Pyannote Python runtime (x64)",
+      "version": "2.0.0.0",
+      "downloadUri": "https://assets.audioscript.app/python/2.0.0.0/win-x64.zip",
+      "developmentSourceRelativePath": "assets/python/win-x64",
+      "installKind": "Directory",
+      "installRoot": "Python",
+      "installRelativePath": "win-x64",
+      "required": true,
+      "supportedArchitectures": [
+        "x64"
+      ]
+    }
+  ]
+}

@@ -81,6 +81,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly WaveClipExtractor? _rowWaveClipExtractor;
     private readonly ProcessLogService? _processLogService;
     private readonly WhisperModelManager? _whisperModelManager;
+    private readonly PyannoteCommunityModelManager? _pyannoteCommunityModelManager;
     private bool _isTranscribeAudioBatchTranscribing;
     private bool _isRowFileTranscriptionRunning;
     private bool _isLiveTranscribing;
@@ -134,7 +135,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         AudioStandardizer? rowAudioStandardizer = null,
         WaveClipExtractor? rowWaveClipExtractor = null,
         ProcessLogService? processLogService = null,
-        WhisperModelManager? whisperModelManager = null)
+        WhisperModelManager? whisperModelManager = null,
+        PyannoteCommunityModelManager? pyannoteCommunityModelManager = null)
     {
         _playbackTranscriptionSessionFactory = playbackTranscriptionSessionFactory;
         _liveRecordingCaptureSessionFactory = liveRecordingCaptureSessionFactory;
@@ -143,6 +145,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _rowWaveClipExtractor = rowWaveClipExtractor;
         _processLogService = processLogService;
         _whisperModelManager = whisperModelManager;
+        _pyannoteCommunityModelManager = pyannoteCommunityModelManager;
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Closing += OnMainWindowClosing;
@@ -359,6 +362,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (_pyannoteCommunityModelManager is null)
+        {
+            ShowBlockingMessage(
+                "Speaker detection unavailable",
+                "Speaker detection is not configured in this build.");
+            return;
+        }
+
+        if (!_pyannoteCommunityModelManager.IsSupportedOnCurrentArchitecture)
+        {
+            ShowBlockingMessage(
+                "Speaker detection unavailable",
+                "Speaker diarization is not supported on ARM64 devices in this version.");
+            return;
+        }
+
         if (!vm.ConfirmSpeakerLabelOverwrite())
         {
             return;
@@ -462,6 +481,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             LogTranscribeAudioBatch("Detect Speaker requested.");
+            if (!await EnsureSpeakerDetectionAssetsReadyAsync(cancellationToken))
+            {
+                return;
+            }
+
             var progress = new Progress<TranscriptionProgressSnapshot>(ApplyTranscriptionProgress);
 
             bool completed = await vm.RunSpeakerDetectionAsync(cancellationToken, progress);
@@ -1499,25 +1523,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var dialog = new SettingsWindow(
-            vm,
-            _whisperModelManager,
-            _processLogService ?? new ProcessLogService())
-        {
-            Owner = this,
-        };
-
-        dialog.ShowDialog();
-        vm.RefreshEngines(
-            _whisperModelManager.GetSelectableTranscriptionModels(),
-            dialog.LastInstalledModelId);
-        if (dialog.HasModelChanges)
-        {
-            ShowCopyToast(
-                "Engine models updated",
-                "Installed engine choices were refreshed.",
-                ToastNotificationType.Success);
-        }
+        OpenSettingsDialog(vm, null);
     }
 
     private bool EnsureSelectedEngineReady(MainViewModel vm, string operationName)
@@ -1532,7 +1538,48 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return false;
         }
 
+        if (_whisperModelManager is not null
+            && TranscriptionModelCatalog.IsLocalWhisper(selectedEngineId)
+            && !_whisperModelManager.IsModelInstalled(selectedEngineId))
+        {
+            ShowBlockingMessage(
+                "Transcription model required",
+                $"{operationName} was stopped because {ResolveCurrentEngineLabel(vm)} is not installed yet. Install it in Settings and try again.");
+            OpenSettingsDialog(vm, selectedEngineId);
+            return false;
+        }
+
         return true;
+    }
+
+    private bool OpenSettingsDialog(MainViewModel vm, string? preferredModelId)
+    {
+        if (_whisperModelManager is null)
+        {
+            return false;
+        }
+
+        var dialog = new SettingsWindow(
+            vm,
+            _whisperModelManager,
+            _processLogService ?? new ProcessLogService())
+        {
+            Owner = this,
+        };
+
+        dialog.ShowDialog();
+        vm.RefreshEngines(
+            _whisperModelManager.GetSelectableTranscriptionModels(),
+            dialog.LastInstalledModelId ?? preferredModelId);
+        if (dialog.HasModelChanges)
+        {
+            ShowCopyToast(
+                "Engine models updated",
+                "Installed engine choices were refreshed.",
+                ToastNotificationType.Success);
+        }
+
+        return dialog.HasModelChanges;
     }
 
     private void ShowBlockingMessage(string title, string message)
@@ -1599,6 +1646,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _boundViewModel.ConfirmationRequested -= OnConfirmationRequested;
             _boundViewModel.ToastRequested -= OnToastRequested;
             _boundViewModel.NewAudioFileStagedForTranscribeAudio -= OnNewAudioFileStagedForTranscribeAudio;
+            _boundViewModel.PremiumUpsellRequested -= OnPremiumUpsellRequested;
             _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
             _boundViewModel.FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
             _boundViewModel = null;
@@ -1611,6 +1659,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _boundViewModel.ConfirmationRequested += OnConfirmationRequested;
             _boundViewModel.ToastRequested += OnToastRequested;
             _boundViewModel.NewAudioFileStagedForTranscribeAudio += OnNewAudioFileStagedForTranscribeAudio;
+            _boundViewModel.PremiumUpsellRequested += OnPremiumUpsellRequested;
             _boundViewModel.PropertyChanged += OnViewModelPropertyChanged;
             _boundViewModel.FinalizedTranscriptLines.CollectionChanged += OnFinalizedTranscriptLinesCollectionChanged;
             ApplyApplicationUpdateTaskbarProgress(vm);
@@ -1699,6 +1748,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         };
 
         request.IsConfirmed = dialog.ShowDialog() == true;
+    }
+
+    private async void OnPremiumUpsellRequested(object? sender, PremiumUpsellRequest request)
+    {
+        if (request is null)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.InvokeAsync(async () => await PromptPremiumFeatureAsync(request.FeatureName, request.Message));
+            return;
+        }
+
+        await PromptPremiumFeatureAsync(request.FeatureName, request.Message);
     }
 
     private async void OnMainWindowClosing(object? sender, CancelEventArgs e)
@@ -1847,6 +1912,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _boundViewModel.ConfirmationRequested -= OnConfirmationRequested;
         _boundViewModel.ToastRequested -= OnToastRequested;
         _boundViewModel.NewAudioFileStagedForTranscribeAudio -= OnNewAudioFileStagedForTranscribeAudio;
+        _boundViewModel.PremiumUpsellRequested -= OnPremiumUpsellRequested;
         _boundViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _boundViewModel.FinalizedTranscriptLines.CollectionChanged -= OnFinalizedTranscriptLinesCollectionChanged;
         _boundViewModel = null;
@@ -1956,11 +2022,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 .Select(candidate => candidate.Message)
                 .Where(message => !string.IsNullOrWhiteSpace(message)));
 
+        if (combinedMessages.Contains("ARM64", StringComparison.OrdinalIgnoreCase)
+            || ex is PlatformNotSupportedException)
+        {
+            return "Speaker diarization is not supported on ARM64 devices in this version.";
+        }
+
         if (combinedMessages.Contains("pyannote", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("model", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("asset", StringComparison.OrdinalIgnoreCase))
         {
-            return "Required speaker detection files are missing or unavailable. Reinstall or repair AudioScript and try again.";
+            return "Required speaker detection files are missing or unavailable. Download the speaker detection files and try again.";
         }
 
         if (root is FileNotFoundException or IOException)
@@ -1999,6 +2071,90 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         return current;
+    }
+
+    private async Task<bool> EnsureSpeakerDetectionAssetsReadyAsync(CancellationToken cancellationToken)
+    {
+        if (_pyannoteCommunityModelManager is null)
+        {
+            ShowTranscribeAudioErrorDialog("Speaker detection is not configured in this build.");
+            return false;
+        }
+
+        if (!_pyannoteCommunityModelManager.IsSupportedOnCurrentArchitecture)
+        {
+            ShowTranscribeAudioErrorDialog("Speaker diarization is not supported on ARM64 devices in this version.");
+            return false;
+        }
+
+        if (_pyannoteCommunityModelManager.IsInstalled())
+        {
+            return true;
+        }
+
+        TranscriptProcessingTitle = "Detect Speaker";
+        TranscriptProcessingEngineText = "Pyannote Community-1";
+        TranscriptProcessingDetail = "Downloading speaker detection files.";
+        TranscriptProcessingChunkText = "Progress 0%";
+        TranscriptProcessingAudioText = "Download 0 B / unknown size";
+        TranscriptProcessingElapsedText = "Elapsed 00:00";
+        TranscriptProcessingEtaText = "ETA calculating";
+        IsTranscriptProcessingIndeterminate = true;
+        TranscriptProcessingPercent = 0;
+
+        var progress = new Progress<AssetProvisioningProgress>(assetProgress =>
+        {
+            TranscriptProcessingPercent = assetProgress.Percent;
+            IsTranscriptProcessingIndeterminate = assetProgress.TotalBytes is not > 0;
+            TranscriptProcessingDetail = $"{assetProgress.DisplayName}: {assetProgress.Status}";
+            TranscriptProcessingChunkText = $"Progress {assetProgress.Percent:0}%";
+            TranscriptProcessingAudioText = $"Download {FormatDownloadBytes(assetProgress.BytesReceived)} / {FormatDownloadBytes(assetProgress.TotalBytes)}";
+        });
+
+        try
+        {
+            await _pyannoteCommunityModelManager.EnsureProvisionedAsync(progress, cancellationToken);
+            TranscriptProcessingDetail = "Speaker detection files are ready.";
+            TranscriptProcessingChunkText = "Progress 100%";
+            TranscriptProcessingAudioText = "Download completed";
+            TranscriptProcessingPercent = 100;
+            IsTranscriptProcessingIndeterminate = false;
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _boundViewModel?.LogHandledException("speaker detection asset provisioning", ex);
+            string message = DataContext is MainViewModel vm
+                ? BuildDetectSpeakerFailureMessage(vm, ex)
+                : ex.Message;
+            ShowTranscribeAudioErrorDialog(message);
+            return false;
+        }
+    }
+
+    private static string FormatDownloadBytes(long? bytes)
+    {
+        if (bytes is null || bytes <= 0)
+        {
+            return "unknown size";
+        }
+
+        if (bytes >= 1_000_000_000)
+        {
+            return $"{bytes.Value / 1_000_000_000d:F2} GB";
+        }
+
+        if (bytes >= 1_000_000)
+        {
+            return $"{bytes.Value / 1_000_000d:F1} MB";
+        }
+
+        if (bytes >= 1_000)
+        {
+            return $"{bytes.Value / 1_000d:F1} KB";
+        }
+
+        return $"{bytes:N0} B";
     }
 
     private static IEnumerable<Exception> EnumerateExceptionChain(Exception ex)

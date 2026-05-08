@@ -5,7 +5,7 @@ namespace AudioScript.Tests;
 
 public sealed class WhisperModelManagerTests {
     [Fact]
-    public void GetSelectableTranscriptionModels_IncludesBundledSmallAndInstalledOptionalModels() {
+    public void GetSelectableTranscriptionModels_IncludesInstalledSmallAndOptionalModels() {
         string rootPath = CreateTempDirectory();
         string bundledPath = Path.Combine(rootPath, "bundled");
         string optionalPath = Path.Combine(rootPath, "optional");
@@ -37,7 +37,7 @@ public sealed class WhisperModelManagerTests {
     }
 
     [Fact]
-    public void UninstallModel_RemovesOptionalModelButRejectsBundledSmall() {
+    public void UninstallModel_RemovesInstalledModels() {
         string rootPath = CreateTempDirectory();
         string bundledPath = Path.Combine(rootPath, "bundled");
         string optionalPath = Path.Combine(rootPath, "optional");
@@ -54,17 +54,45 @@ public sealed class WhisperModelManagerTests {
             File.WriteAllBytes(mediumPath, [1]);
 
             WhisperModelUninstallResult result = manager.UninstallModel(TranscriptionModelCatalog.WhisperMedium);
+            WhisperModelUninstallResult smallResult = manager.UninstallModel(TranscriptionModelCatalog.WhisperSmall);
 
             Assert.True(result.WasDeleted);
             Assert.Equal(1, result.DeletedBytes);
             Assert.Equal(TranscriptionModelCatalog.WhisperMedium, result.ModelId);
             Assert.Equal(mediumPath, result.ModelPath);
-            Assert.True(File.Exists(smallPath));
+            Assert.True(smallResult.WasDeleted);
+            Assert.False(File.Exists(smallPath));
             Assert.False(File.Exists(mediumPath));
-            Assert.Throws<InvalidOperationException>(() =>
-                manager.UninstallModel(TranscriptionModelCatalog.WhisperSmall));
         }
         finally {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public async Task InstallModelAsync_InstallsWhisperSmallFromProvisioningService()
+    {
+        string rootPath = CreateTempDirectory();
+        string sourcePath = Path.Combine(rootPath, "source");
+        string optionalPath = Path.Combine(rootPath, "optional");
+        string logsPath = Path.Combine(rootPath, "logs");
+
+        try
+        {
+            Directory.CreateDirectory(sourcePath);
+            Directory.CreateDirectory(optionalPath);
+            File.WriteAllBytes(Path.Combine(sourcePath, "ggml-small.bin"), [1, 2, 3]);
+            using var logs = new ProcessLogService(logsPath);
+            var service = new StubAssetProvisioningService(Path.Combine(sourcePath, "ggml-small.bin"));
+            var manager = new WhisperModelManager(logs, optionalPath, assetProvisioningService: service);
+
+            await manager.InstallModelAsync(TranscriptionModelCatalog.WhisperSmall, progress: null, CancellationToken.None);
+
+            Assert.True(manager.IsModelInstalled(TranscriptionModelCatalog.WhisperSmall));
+            Assert.True(service.WasInstallCalled);
+        }
+        finally
+        {
             DeleteDirectory(rootPath);
         }
     }
@@ -106,5 +134,52 @@ public sealed class WhisperModelManagerTests {
         }
 
         Directory.Delete(path, recursive: true);
+    }
+
+    private sealed class StubAssetProvisioningService : IAssetProvisioningService
+    {
+        private readonly string _sourcePath;
+
+        public StubAssetProvisioningService(string sourcePath)
+        {
+            _sourcePath = sourcePath;
+        }
+
+        public bool WasInstallCalled { get; private set; }
+
+        public AssetProvisioningStatus GetStatus(string assetId)
+        {
+            return new AssetProvisioningStatus(assetId, assetId, AssetProvisioningState.Missing, ResolveInstallPath(assetId));
+        }
+
+        public string ResolveInstallPath(string assetId)
+        {
+            return Path.Combine(Path.GetDirectoryName(_sourcePath)!, "..", "optional", "ggml-small.bin");
+        }
+
+        public bool IsInstalled(string assetId)
+        {
+            return File.Exists(ResolveInstallPath(assetId));
+        }
+
+        public Task InstallAssetAsync(string assetId, IProgress<AssetProvisioningProgress>? progress, CancellationToken cancellationToken)
+        {
+            WasInstallCalled = true;
+            string targetPath = Path.GetFullPath(ResolveInstallPath(assetId));
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            File.Copy(_sourcePath, targetPath, overwrite: true);
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAssetAsync(string assetId, CancellationToken cancellationToken)
+        {
+            string targetPath = Path.GetFullPath(ResolveInstallPath(assetId));
+            if (File.Exists(targetPath))
+            {
+                File.Delete(targetPath);
+            }
+
+            return Task.CompletedTask;
+        }
     }
 }

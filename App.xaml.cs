@@ -14,12 +14,14 @@ public partial class App : System.Windows.Application
 {
     private const string SingleInstanceMutexName = @"Local\AudioScript_SingleInstance";
     private const string ActivateEventName = @"Local\AudioScript_Activate";
+    private const string PremiumStoreId = "9PD5288V5Q49";
 
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
     private CancellationTokenSource? _activationListenerCts;
     private Task? _activationListenerTask;
     private ProcessLogService? _processLogService;
+    private AssetProvisioningService? _assetProvisioningService;
 
     private MainViewModel? _mainViewModel;
     private IAppUpdateService? _appUpdateService;
@@ -68,9 +70,12 @@ public partial class App : System.Windows.Application
             $"App data root resolved. root='{appDataPathProvider.RootPath}', packaged={appDataPathProvider.IsPackaged}.");
 
         var transcriptionOptions = new TranscriptionOptions();
+        var assetProvisioningService = new AssetProvisioningService(processLogService, appDataPathProvider);
+        _assetProvisioningService = assetProvisioningService;
         var whisperModelManager = new WhisperModelManager(
             processLogService,
-            appDataPathProvider.ModelsPath);
+            appDataPathProvider.ModelsPath,
+            assetProvisioningService: assetProvisioningService);
         var appDataMigrationService = new AppDataMigrationService(appDataPathProvider, processLogService);
         appDataMigrationService.MigrateLegacyData(whisperModelManager.Models);
         _appPreferencesStore = new AppPreferencesStore(appDataPathProvider.SettingsFilePath);
@@ -97,7 +102,9 @@ public partial class App : System.Windows.Application
             transcriptionOptions,
             processLogService,
             whisperModelManager);
-        var pyannoteCommunityModelManager = new PyannoteCommunityModelManager();
+        var pyannoteCommunityModelManager = new PyannoteCommunityModelManager(
+            assetProvisioningService,
+            appDataPathProvider);
         var pyannoteCommunityDiarizationEngine = new PyannoteCommunityDiarizationEngine(
             audioStandardizer,
             pyannoteCommunityModelManager,
@@ -125,7 +132,13 @@ public partial class App : System.Windows.Application
         _entitlementService = new StoreEntitlementService(
             appVersionProvider,
             processLogService,
-            () => updateOwnerWindowHandle);
+            () => updateOwnerWindowHandle,
+            new StoreEntitlementServiceOptions
+            {
+                PremiumProductDisplayName = "AudioScript Premium",
+                PremiumStoreId = PremiumStoreId,
+                PremiumKeyword = "premium",
+            });
         _appUpdateService = new AppUpdateService(
             appVersionProvider,
             new StoreUpdateClient(processLogService, () => updateOwnerWindowHandle),
@@ -160,7 +173,8 @@ public partial class App : System.Windows.Application
             rowAudioStandardizer: audioStandardizer,
             rowWaveClipExtractor: waveClipExtractor,
             processLogService: processLogService,
-            whisperModelManager: whisperModelManager)
+            whisperModelManager: whisperModelManager,
+            pyannoteCommunityModelManager: pyannoteCommunityModelManager)
         {
             DataContext = _mainViewModel,
         };
@@ -260,6 +274,8 @@ public partial class App : System.Windows.Application
         }
 
         base.OnExit(e);
+        _assetProvisioningService?.Dispose();
+        _assetProvisioningService = null;
         _processLogService?.Log("App", "Application exit completed.");
         _processLogService?.Dispose();
     }

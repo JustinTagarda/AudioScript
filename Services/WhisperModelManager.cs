@@ -8,6 +8,7 @@ public sealed class WhisperModelManager
 {
     private const int InstallRetryCount = 5;
     private const int CopyBufferSize = 128 * 1024;
+    private const string WhisperSmallAssetId = "whisper-small";
 
     private static readonly IReadOnlyList<WhisperEngineModelDefinition> ModelDefinitions = new[] {
         new WhisperEngineModelDefinition(
@@ -15,13 +16,13 @@ public sealed class WhisperModelManager
             DisplayName: "Whisper small",
             FileName: "ggml-small.bin",
             SizeText: "about 466 MB",
-            Description: "Bundled default offline model with stronger minimum accuracy.",
+            Description: "Required default offline model downloaded into local app storage on first use.",
             Benefits: "Good minimum quality for local transcription while staying smaller than medium.",
-            Notes: "Installed with AudioScript and cannot be removed.",
+            Notes: "Install from Settings before using Whisper transcription on a new device.",
             GgmlType: GgmlType.Small,
             ExpectedBytes: 487_601_967,
-            IsBundled: true,
-            IsFixedInstalled: true),
+            IsBundled: false,
+            IsFixedInstalled: false),
         new WhisperEngineModelDefinition(
             Id: TranscriptionModelCatalog.WhisperMedium,
             DisplayName: "Whisper medium",
@@ -62,20 +63,19 @@ public sealed class WhisperModelManager
 
     private readonly ProcessLogService _processLogService;
     private readonly string _optionalModelsDirectoryPath;
-    private readonly string _bundledModelsDirectoryPath;
+    private readonly IAssetProvisioningService? _assetProvisioningService;
 
     public WhisperModelManager(
         ProcessLogService processLogService,
         string? optionalModelsDirectoryPath = null,
-        string? bundledModelsDirectoryPath = null)
+        string? bundledModelsDirectoryPath = null,
+        IAssetProvisioningService? assetProvisioningService = null)
     {
         _processLogService = processLogService;
         _optionalModelsDirectoryPath = string.IsNullOrWhiteSpace(optionalModelsDirectoryPath)
             ? AppDataPathProvider.Create().ModelsPath
             : Path.GetFullPath(optionalModelsDirectoryPath);
-        _bundledModelsDirectoryPath = string.IsNullOrWhiteSpace(bundledModelsDirectoryPath)
-            ? Path.Combine(AppContext.BaseDirectory, "assets", "models")
-            : Path.GetFullPath(bundledModelsDirectoryPath);
+        _assetProvisioningService = assetProvisioningService;
     }
 
     public IReadOnlyList<WhisperEngineModelDefinition> Models => ModelDefinitions;
@@ -104,7 +104,7 @@ public sealed class WhisperModelManager
         if (!File.Exists(modelPath))
         {
             throw new FileNotFoundException(
-                $"Whisper model '{definition.DisplayName}' is not installed.",
+                $"Whisper model '{definition.DisplayName}' is not installed. Open Settings to install the model and try again.",
                 modelPath);
         }
 
@@ -117,21 +117,31 @@ public sealed class WhisperModelManager
         CancellationToken cancellationToken)
     {
         WhisperEngineModelDefinition definition = GetDefinition(modelId);
-        if (definition.IsFixedInstalled || definition.IsBundled)
-        {
-            throw new InvalidOperationException($"{definition.DisplayName} is bundled and cannot be installed manually.");
-        }
-
-        if (definition.GgmlType is null)
-        {
-            throw new InvalidOperationException($"{definition.DisplayName} cannot be downloaded.");
-        }
-
         string modelPath = ResolveModelPath(definition);
         if (File.Exists(modelPath))
         {
             Report(progress, "Installed", definition.ExpectedBytes ?? 0, definition.ExpectedBytes, 100);
             return;
+        }
+
+        if (string.Equals(definition.Id, TranscriptionModelCatalog.WhisperSmall, StringComparison.OrdinalIgnoreCase))
+        {
+            if (_assetProvisioningService is null)
+            {
+                throw new InvalidOperationException("Whisper small provisioning is not configured.");
+            }
+
+            var adapter = progress is null
+                ? null
+                : new Progress<AssetProvisioningProgress>(assetProgress =>
+                    Report(progress, assetProgress.Status, assetProgress.BytesReceived, assetProgress.TotalBytes, assetProgress.Percent));
+            await _assetProvisioningService.InstallAssetAsync(WhisperSmallAssetId, adapter, cancellationToken);
+            return;
+        }
+
+        if (definition.GgmlType is null)
+        {
+            throw new InvalidOperationException($"{definition.DisplayName} cannot be downloaded.");
         }
 
         Directory.CreateDirectory(_optionalModelsDirectoryPath);
@@ -186,9 +196,9 @@ public sealed class WhisperModelManager
     public WhisperModelUninstallResult UninstallModel(string modelId)
     {
         WhisperEngineModelDefinition definition = GetDefinition(modelId);
-        if (definition.IsFixedInstalled || definition.IsBundled)
+        if (definition.IsFixedInstalled)
         {
-            throw new InvalidOperationException($"{definition.DisplayName} is bundled and cannot be removed.");
+            throw new InvalidOperationException($"{definition.DisplayName} cannot be removed.");
         }
 
         string modelPath = ResolveModelPath(definition);
@@ -237,10 +247,7 @@ public sealed class WhisperModelManager
 
     private string ResolveModelPath(WhisperEngineModelDefinition definition)
     {
-        string directory = definition.IsBundled
-            ? _bundledModelsDirectoryPath
-            : _optionalModelsDirectoryPath;
-        return Path.Combine(directory, definition.FileName);
+        return Path.Combine(_optionalModelsDirectoryPath, definition.FileName);
     }
 
     private async Task FinalizeModelInstallAsync(
