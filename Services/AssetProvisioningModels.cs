@@ -52,6 +52,9 @@ public sealed record ProvisionedAssetDescriptor
     [JsonPropertyName("downloadUri")]
     public string? DownloadUri { get; init; }
 
+    [JsonPropertyName("downloadSources")]
+    public string[] DownloadSources { get; init; } = Array.Empty<string>();
+
     [JsonPropertyName("developmentSourceRelativePath")]
     public string? DevelopmentSourceRelativePath { get; init; }
 

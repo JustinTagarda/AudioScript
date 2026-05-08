@@ -5,7 +5,12 @@
       "id": "whisper-small",
       "displayName": "Whisper small",
       "version": "2.0.0.0",
-      "downloadUri": "https://assets.audioscript.app/models/2.0.0.0/ggml-small.bin",
+      "downloadUri": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+      "downloadSources": [
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+        "https://huggingface.co/mobilint/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+      ],
       "developmentSourceRelativePath": "assets/models/ggml-small.bin",
       "installKind": "File",
       "installRoot": "Models",
@@ -17,7 +22,12 @@
       "id": "pyannote-community-model",
       "displayName": "Pyannote Community-1 model",
       "version": "2.0.0.0",
-      "downloadUri": "https://assets.audioscript.app/pyannote/2.0.0.0/speaker-diarization-community-1.zip",
+      "downloadUri": "https://huggingface.co/api/models/pyannote-community/speaker-diarization-community-1",
+      "downloadSources": [
+        "https://huggingface.co/api/models/pyannote-community/speaker-diarization-community-1",
+        "https://huggingface.co/api/models/jaman21/pyannote-speaker-diarization-community-1",
+        "https://huggingface.co/api/models/DroolingPanda/speaker-diarization-community-1"
+      ],
       "developmentSourceRelativePath": "assets/pyannote/speaker-diarization-community-1",
       "installKind": "Directory",
       "installRoot": "Pyannote",
@@ -28,24 +38,15 @@
       ]
     },
     {
-      "id": "pyannote-community-runner",
-      "displayName": "Pyannote Community-1 runner",
-      "version": "2.0.0.0",
-      "downloadUri": "https://assets.audioscript.app/pyannote/2.0.0.0/run_community_diarization.py",
-      "developmentSourceRelativePath": "assets/pyannote/run_community_diarization.py",
-      "installKind": "File",
-      "installRoot": "Pyannote",
-      "installRelativePath": "run_community_diarization.py",
-      "required": true,
-      "supportedArchitectures": [
-        "x64"
-      ]
-    },
-    {
       "id": "pyannote-python-x64",
       "displayName": "Pyannote Python runtime (x64)",
       "version": "2.0.0.0",
-      "downloadUri": "https://assets.audioscript.app/python/2.0.0.0/win-x64.zip",
+      "downloadUri": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+      "downloadSources": [
+        "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+        "https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip",
+        "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip"
+      ],
       "developmentSourceRelativePath": "assets/python/win-x64",
       "installKind": "Directory",
       "installRoot": "Python",

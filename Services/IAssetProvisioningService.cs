@@ -2,6 +2,8 @@ namespace AudioScript.Services;
 
 public interface IAssetProvisioningService
 {
+    IReadOnlyList<ProvisionedAssetDescriptor> GetManifestAssets();
+
     AssetProvisioningStatus GetStatus(string assetId);
 
     string ResolveInstallPath(string assetId);

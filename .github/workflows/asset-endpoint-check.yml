@@ -1,0 +1,19 @@
+name: Asset Endpoint Check
+
+on:
+  pull_request:
+    paths:
+      - "assets/bootstrap/asset-manifest.json"
+      - "scripts/Test-AssetManifestEndpoints.ps1"
+  workflow_dispatch:
+
+jobs:
+  verify-asset-endpoints:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required asset URLs
+        shell: pwsh
+        run: ./scripts/Test-AssetManifestEndpoints.ps1

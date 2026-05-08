@@ -304,6 +304,11 @@ public sealed class PyannoteCommunityModelManagerTests
 
     private sealed class StubAssetProvisioningService : IAssetProvisioningService
     {
+        public IReadOnlyList<ProvisionedAssetDescriptor> GetManifestAssets()
+        {
+            return Array.Empty<ProvisionedAssetDescriptor>();
+        }
+
         public AssetProvisioningStatus GetStatus(string assetId)
         {
             return new AssetProvisioningStatus(assetId, assetId, AssetProvisioningState.Ready, string.Empty);

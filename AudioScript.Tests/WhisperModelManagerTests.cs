@@ -147,6 +147,11 @@ public sealed class WhisperModelManagerTests {
 
         public bool WasInstallCalled { get; private set; }
 
+        public IReadOnlyList<ProvisionedAssetDescriptor> GetManifestAssets()
+        {
+            return Array.Empty<ProvisionedAssetDescriptor>();
+        }
+
         public AssetProvisioningStatus GetStatus(string assetId)
         {
             return new AssetProvisioningStatus(assetId, assetId, AssetProvisioningState.Missing, ResolveInstallPath(assetId));

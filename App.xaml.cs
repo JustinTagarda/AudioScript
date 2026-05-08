@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -68,10 +69,21 @@ public partial class App : System.Windows.Application
         processLogService.Log(
             "AppData",
             $"App data root resolved. root='{appDataPathProvider.RootPath}', packaged={appDataPathProvider.IsPackaged}.");
+        processLogService.LogEnvironmentSnapshot("Environment", appDataPathProvider.RootPath, appDataPathProvider.IsPackaged);
 
-        var transcriptionOptions = new TranscriptionOptions();
         var assetProvisioningService = new AssetProvisioningService(processLogService, appDataPathProvider);
         _assetProvisioningService = assetProvisioningService;
+        var startupProvisioningCoordinator = new StartupAssetProvisioningCoordinator(
+            assetProvisioningService,
+            processLogService);
+
+        if (!RunStartupProvisioningIfRequired(startupProvisioningCoordinator, processLogService))
+        {
+            Shutdown();
+            return;
+        }
+
+        var transcriptionOptions = new TranscriptionOptions();
         var whisperModelManager = new WhisperModelManager(
             processLogService,
             appDataPathProvider.ModelsPath,
@@ -188,6 +200,69 @@ public partial class App : System.Windows.Application
         _ = _entitlementService.RefreshAsync();
         _ = _appUpdateService.StartAsync();
         processLogService.Log("App", "Application startup completed.");
+    }
+
+    private bool RunStartupProvisioningIfRequired(
+        StartupAssetProvisioningCoordinator startupProvisioningCoordinator,
+        ProcessLogService processLogService)
+    {
+        IReadOnlyList<ProvisionedAssetDescriptor> requiredAssets = startupProvisioningCoordinator.GetRequiredAssetsNeedingInstall();
+        if (requiredAssets.Count == 0)
+        {
+            processLogService.Log(
+                nameof(StartupAssetProvisioningCoordinator),
+                "startup_provisioning skipped; all required assets are already installed.");
+            return true;
+        }
+
+        var startupWindow = new StartupProvisioningWindow();
+        var viewModel = new StartupProvisioningWindowViewModel(requiredAssets);
+        startupWindow.DataContext = viewModel;
+        processLogService.Log("StartupProvisioning", "Startup provisioning dialog opened modally.");
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        startupWindow.CancellationTokenSource = cancellationTokenSource;
+        startupWindow.ContentRendered += async (_, _) =>
+        {
+            try
+            {
+                var progress = new Progress<AssetProvisioningProgress>(assetProgress =>
+                {
+                    viewModel.UpdateProgress(assetProgress);
+                });
+
+                StartupProvisioningResult result = await startupProvisioningCoordinator
+                    .ProvisionRequiredAssetsAsync(progress, cancellationTokenSource.Token)
+                    .ConfigureAwait(true);
+
+                if (result.Succeeded)
+                {
+                    viewModel.MarkCompleted();
+                }
+                else
+                {
+                    viewModel.MarkFailed("One or more startup assets failed to install.");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                viewModel.MarkCanceled();
+                startupWindow.DialogResult = false;
+                startupWindow.Close();
+            }
+            catch (Exception ex)
+            {
+                processLogService.LogException(
+                    nameof(StartupAssetProvisioningCoordinator),
+                    "Startup asset provisioning failed.",
+                    ex);
+                viewModel.MarkFailed("Startup asset installation failed.");
+            }
+        };
+
+        bool? dialogResult = startupWindow.ShowDialog();
+        cancellationTokenSource.Dispose();
+        return dialogResult == true;
     }
 
     private static IAudioLoopbackCaptureService CreateLiveCaptureService(

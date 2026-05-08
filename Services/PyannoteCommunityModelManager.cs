@@ -6,7 +6,6 @@ namespace AudioScript.Services;
 public sealed class PyannoteCommunityModelManager
 {
     public const string PyannoteModelAssetId = "pyannote-community-model";
-    public const string PyannoteRunnerAssetId = "pyannote-community-runner";
     public const string PyannotePythonX64AssetId = "pyannote-python-x64";
 
     private readonly AppDataPathProvider _paths;
@@ -45,9 +44,7 @@ public sealed class PyannoteCommunityModelManager
 
         if (!File.Exists(RunnerScriptPath))
         {
-            throw new FileNotFoundException(
-                "Pyannote diarization runner is not installed. Download the speaker detection files and try again.",
-                RunnerScriptPath);
+            EnsureRunnerScriptExists();
         }
 
         if (!Directory.Exists(RuntimeDirectoryPath))
@@ -72,7 +69,6 @@ public sealed class PyannoteCommunityModelManager
         }
 
         return _assetProvisioningService.IsInstalled(PyannoteModelAssetId)
-            && _assetProvisioningService.IsInstalled(PyannoteRunnerAssetId)
             && _assetProvisioningService.IsInstalled(PyannotePythonX64AssetId);
     }
 
@@ -82,9 +78,64 @@ public sealed class PyannoteCommunityModelManager
     {
         EnsureSupportedArchitecture();
         await InstallAssetAsync(PyannoteModelAssetId, progress, cancellationToken);
-        await InstallAssetAsync(PyannoteRunnerAssetId, progress, cancellationToken);
         await InstallAssetAsync(PyannotePythonX64AssetId, progress, cancellationToken);
+        EnsureRunnerScriptExists();
     }
+
+    private void EnsureRunnerScriptExists()
+    {
+        if (File.Exists(RunnerScriptPath))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(RunnerScriptPath)!);
+        File.WriteAllText(RunnerScriptPath, RunnerScriptContent);
+    }
+
+    private const string RunnerScriptContent = """
+import json
+import sys
+
+import torch
+import torchaudio
+from pyannote.audio import Pipeline
+
+print("runner_started", file=sys.stderr, flush=True)
+
+if len(sys.argv) != 3:
+    print("[]")
+    sys.exit(2)
+
+model_dir = sys.argv[1]
+audio_path = sys.argv[2]
+
+print("model_loading", file=sys.stderr, flush=True)
+pipeline = Pipeline.from_pretrained(model_dir)
+if torch.cuda.is_available():
+    pipeline = pipeline.to(torch.device("cuda"))
+print("model_loaded", file=sys.stderr, flush=True)
+
+print("waveform_loading", file=sys.stderr, flush=True)
+waveform, sample_rate = torchaudio.load(audio_path)
+print("waveform_loaded", file=sys.stderr, flush=True)
+
+print("inference_started", file=sys.stderr, flush=True)
+diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
+print("inference_finished", file=sys.stderr, flush=True)
+
+print("serializing_turns", file=sys.stderr, flush=True)
+turns = []
+for segment, _, speaker in diarization.itertracks(yield_label=True):
+    turns.append({
+        "speaker": str(speaker),
+        "start": float(segment.start),
+        "end": float(segment.end),
+    })
+
+print(json.dumps(turns))
+print("completed", file=sys.stderr, flush=True)
+""";
 
     private string ResolveRuntimeDirectoryName()
     {
