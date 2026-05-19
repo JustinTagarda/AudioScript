@@ -10,6 +10,8 @@
         Width="784"
         MinWidth="688"
         SizeToContent="Height"
+        WindowStyle="None"
+        AllowsTransparency="False"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="False"
@@ -179,12 +181,6 @@
                     Click="CancelButton_Click"
                     Style="{StaticResource StartupDestructiveButtonStyle}"
                     Visibility="{Binding ShowCancelButton, Converter={StaticResource BoolToVisibilityConverter}}" />
-            <Button x:Name="CloseButton"
-                    Content="Close"
-                    Click="CloseButton_Click"
-                    Margin="8,0,0,0"
-                    Style="{StaticResource StartupPrimaryButtonStyle}"
-                    Visibility="{Binding ShowCloseButton, Converter={StaticResource BoolToVisibilityConverter}}" />
         </StackPanel>
     </Grid>
 </Window>

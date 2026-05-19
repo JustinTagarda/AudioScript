@@ -21,7 +21,10 @@ public sealed class ChunkedAudioTranscriptionService {
         string audioFilePath,
         string model,
         CancellationToken cancellationToken,
-        IProgress<TranscriptionProgressSnapshot>? progress = null) {
+        IProgress<TranscriptionProgressSnapshot>? progress = null,
+        int startChunkIndex = 0,
+        IReadOnlyList<TranscriptionTimedLine>? existingCommittedLines = null,
+        Action<TranscriptionChunkCommit>? chunkCommitted = null) {
         var progressReporter = new TranscriptionProgressReporter(progress);
         AudioSourceInfo sourceInfo = _audioChunkingService.GetSourceInfo(audioFilePath);
         progressReporter.Report(
@@ -32,29 +35,8 @@ public sealed class ChunkedAudioTranscriptionService {
             $"Preparing {sourceInfo.Name}.",
             force: true);
 
-        if (!_audioChunkingService.RequiresChunking(sourceInfo)) {
-            Log(
-                $"Audio transcription will use a single request for '{sourceInfo.Name}' " +
-                $"({FormatDuration(sourceInfo.Duration)}, {sourceInfo.FileSizeBytes:N0} bytes).");
-            TranscriptionResult singleResult = await _requestService.TranscribeAudioFileAsync(
-                sourceInfo.FullPath,
-                model,
-                cancellationToken,
-                progress);
-            progressReporter.Report(
-                TranscriptionProgressPhase.Completed,
-                100,
-                sourceInfo.Duration,
-                sourceInfo.Duration,
-                $"Completed {sourceInfo.Name}.",
-                currentChunk: 1,
-                totalChunks: 1,
-                force: true);
-            return singleResult;
-        }
-
         Log(
-            $"Audio transcription will split '{sourceInfo.Name}' into chunked requests " +
+            $"Audio transcription will use chunked requests for '{sourceInfo.Name}' " +
             $"({FormatDuration(sourceInfo.Duration)}, {sourceInfo.FileSizeBytes:N0} bytes).");
         progressReporter.Report(
             TranscriptionProgressPhase.Chunking,
@@ -77,12 +59,17 @@ public sealed class ChunkedAudioTranscriptionService {
             totalChunks: chunkedAudioFile.Chunks.Count,
             force: true);
 
-        var mergedLines = new List<TranscriptionTimedLine>();
+        startChunkIndex = Math.Clamp(startChunkIndex, 0, chunkedAudioFile.Chunks.Count);
+        var mergedLines = existingCommittedLines?
+            .Where(line => !string.IsNullOrWhiteSpace(line.Text))
+            .OrderBy(line => line.StartOffset)
+            .ToList()
+            ?? new List<TranscriptionTimedLine>();
         var tokenLogprobs = new List<TranscriptionTokenLogprob>();
         var lowConfidenceTokens = new List<LowConfidenceToken>();
         DateTimeOffset createdAt = DateTimeOffset.UtcNow;
 
-        for (int chunkIndex = 0; chunkIndex < chunkedAudioFile.Chunks.Count; chunkIndex++) {
+        for (int chunkIndex = startChunkIndex; chunkIndex < chunkedAudioFile.Chunks.Count; chunkIndex++) {
             cancellationToken.ThrowIfCancellationRequested();
 
             AudioChunkFile chunkFile = chunkedAudioFile.Chunks[chunkIndex];
@@ -155,6 +142,10 @@ public sealed class ChunkedAudioTranscriptionService {
                 isLastChunk: chunkIndex == chunkedAudioFile.Chunks.Count - 1);
 
             mergedLines.AddRange(keepLines);
+            chunkCommitted?.Invoke(new TranscriptionChunkCommit(
+                chunkIndex,
+                chunkedAudioFile.Chunks.Count,
+                keepLines));
             tokenLogprobs.AddRange(chunkResult.TokenLogprobs);
             lowConfidenceTokens.AddRange(chunkResult.LowConfidenceTokens);
 
@@ -250,3 +241,8 @@ public sealed class ChunkedAudioTranscriptionService {
         return 2 + (ResolvePercent(processedAudio, totalAudio) * 0.97);
     }
 }
+
+public sealed record TranscriptionChunkCommit(
+    int ChunkIndex,
+    int TotalChunks,
+    IReadOnlyList<TranscriptionTimedLine> CommittedLines);

@@ -447,96 +447,94 @@
                        Margin="0"
                        MinHeight="28"
                        Padding="6,2">
-                <StatusBarItem DockPanel.Dock="Left"
-                               Padding="0">
-                    <StackPanel Orientation="Horizontal"
-                                VerticalAlignment="Center">
-                        <TextBlock Text="{Binding ApplicationUpdateStatusText}"
+                <StatusBarItem Padding="0"
+                               HorizontalContentAlignment="Stretch">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                            <TextBlock Text="{Binding ApplicationUpdateStatusText}"
+                                       FontSize="12"
+                                       TextTrimming="CharacterEllipsis"
+                                       TextAlignment="Left">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground"
+                                                Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsMandatoryApplicationUpdateAvailable}"
+                                                         Value="True">
+                                                <Setter Property="Foreground"
+                                                        Value="{DynamicResource SystemFillColorCautionBrush}"/>
+                                                <Setter Property="FontWeight"
+                                                        Value="SemiBold"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <ProgressBar Width="96"
+                                         Height="6"
+                                         Margin="10,0,0,0"
+                                         Minimum="0"
+                                         Maximum="100"
+                                         Value="{Binding ApplicationUpdateProgressPercent, Mode=OneWay}">
+                                <ProgressBar.Style>
+                                    <Style TargetType="ProgressBar">
+                                        <Setter Property="Visibility"
+                                                Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsApplicationUpdateProgressVisible}"
+                                                         Value="True">
+                                                <Setter Property="Visibility"
+                                                        Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ProgressBar.Style>
+                            </ProgressBar>
+                            <TextBlock Text="© 2026 JustinTagarda. All rights reserved."
+                                       Margin="0,0,8,0"
+                                       FontSize="12"
+                                       TextTrimming="CharacterEllipsis">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility"
+                                                Value="Visible"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsApplicationFooterDefaultVisible}"
+                                                         Value="False">
+                                                <Setter Property="Visibility"
+                                                        Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding ApplicationAccessTierText}"
+                                   Margin="0,0,8,0"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   TextTrimming="CharacterEllipsis"
+                                   HorizontalAlignment="Right"
+                                   VerticalAlignment="Center"/>
+
+                        <TextBlock Grid.Column="2"
+                                   Text="{Binding ApplicationVersionStatusText}"
                                    FontSize="12"
                                    TextTrimming="CharacterEllipsis"
-                                   TextAlignment="Left">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Foreground"
-                                            Value="{DynamicResource TextFillColorSecondaryBrush}"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsMandatoryApplicationUpdateAvailable}"
-                                                     Value="True">
-                                            <Setter Property="Foreground"
-                                                    Value="{DynamicResource SystemFillColorCautionBrush}"/>
-                                            <Setter Property="FontWeight"
-                                                    Value="SemiBold"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                        <ProgressBar Width="96"
-                                     Height="6"
-                                     Margin="10,0,0,0"
-                                     Minimum="0"
-                                     Maximum="100"
-                                     Value="{Binding ApplicationUpdateProgressPercent, Mode=OneWay}">
-                            <ProgressBar.Style>
-                                <Style TargetType="ProgressBar">
-                                    <Setter Property="Visibility"
-                                            Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsApplicationUpdateProgressVisible}"
-                                                     Value="True">
-                                            <Setter Property="Visibility"
-                                                    Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </ProgressBar.Style>
-                        </ProgressBar>
-                        <Button Content="Restart"
-                                Tag="&#xE777;"
-                                Margin="10,0,0,0"
-                                Command="{Binding RestartApplicationCommand}">
-                            <Button.Style>
-                                <Style TargetType="Button"
-                                       BasedOn="{StaticResource ToolbarButtonStyle}">
-                                    <Setter Property="Visibility"
-                                            Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsApplicationRestartVisible}"
-                                                     Value="True">
-                                            <Setter Property="Visibility"
-                                                    Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Button.Style>
-                        </Button>
-                    </StackPanel>
-                </StatusBarItem>
-
-                <StatusBarItem DockPanel.Dock="Left"
-                               Padding="0">
-                    <StatusBarItem.Style>
-                        <Style TargetType="StatusBarItem">
-                            <Setter Property="Visibility"
-                                    Value="Visible"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsApplicationFooterDefaultVisible}"
-                                             Value="False">
-                                    <Setter Property="Visibility"
-                                            Value="Collapsed"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </StatusBarItem.Style>
-                    <TextBlock Text="© 2026 JustinTagarda. All rights reserved."
-                               FontSize="12"
-                               TextTrimming="CharacterEllipsis"/>
-                </StatusBarItem>
-                <StatusBarItem DockPanel.Dock="Right"
-                               Padding="0">
-                    <TextBlock Text="{Binding ApplicationVersionStatusText}"
-                               FontSize="12"
-                               TextTrimming="CharacterEllipsis"/>
+                                   HorizontalAlignment="Right"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
                 </StatusBarItem>
             </StatusBar>
 
@@ -896,7 +894,21 @@
                                                             <Grid>
                                                                 <TextBlock Text="{Binding Text}"
                                                                            Margin="4,0"
-                                                                           TextWrapping="Wrap"/>
+                                                                           TextWrapping="Wrap">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsTranscriptionPartial}"
+                                                                                             Value="True">
+                                                                                    <Setter Property="FontStyle"
+                                                                                            Value="Italic"/>
+                                                                                    <Setter Property="Opacity"
+                                                                                            Value="0.82"/>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
                                                                 <Border Height="3"
                                                                         VerticalAlignment="Bottom"
                                                                         Margin="4,0">
@@ -1279,7 +1291,7 @@
                             </CheckBox>
                             <Button x:Name="TranscribeAudioBatchStartButton"
                                     DockPanel.Dock="Right"
-                                    Content="Start"
+                                    Content="{Binding TranscriptProcessingStartButtonText, RelativeSource={RelativeSource AncestorType=Window}}"
                                     Tag="&#xE768;"
                                     Margin="0,0,8,0"
                                     IsEnabled="{Binding IsTranscribeAudioBatchStartEnabled, RelativeSource={RelativeSource AncestorType=Window}}"

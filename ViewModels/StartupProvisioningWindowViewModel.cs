@@ -12,8 +12,7 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
     private string _currentAssetText = "Checking required startup assets...";
     private string _currentActivityText = "Downloading and installing required startup assets.";
     private bool _showCancelButton = true;
-    private bool _showCloseButton;
-    private bool _wasSuccessful;
+    private bool _wasCanceled;
 
     public StartupProvisioningWindowViewModel(IEnumerable<ProvisionedAssetDescriptor> assets)
     {
@@ -43,7 +42,7 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
         private set => SetField(ref _currentActivityText, value);
     }
 
-    public bool IsBusy => !WasSuccessful && !ShowCloseButton;
+    public bool IsBusy => !WasCanceled;
 
     public bool ShowCancelButton
     {
@@ -59,36 +58,6 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool ShowCloseButton
-    {
-        get => _showCloseButton;
-        private set
-        {
-            if (!SetField(ref _showCloseButton, value))
-            {
-                return;
-            }
-
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsBusy)));
-        }
-    }
-
-    public bool WasSuccessful
-    {
-        get => _wasSuccessful;
-        private set
-        {
-            if (_wasSuccessful == value)
-            {
-                return;
-            }
-
-            _wasSuccessful = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(WasSuccessful)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsBusy)));
-        }
-    }
-
     public void UpdateProgress(AssetProvisioningProgress progress)
     {
         SetAssetStatus(progress.AssetId, progress.Status, progress.Percent);
@@ -96,8 +65,7 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
         CurrentAssetText = progress.DisplayName;
         CurrentActivityText = $"{progress.DisplayName} is {progress.Status.TrimEnd('.').ToLowerInvariant()}";
         ShowCancelButton = true;
-        ShowCloseButton = false;
-        WasSuccessful = false;
+        WasCanceled = false;
     }
 
     public void SetAssetStatus(string assetId, string statusText, double percent)
@@ -112,10 +80,9 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
     {
         HeaderText = "Initialization complete.";
         CurrentAssetText = "Initialization complete.";
-        CurrentActivityText = "Review the installed asset results, then click Close to continue.";
+        CurrentActivityText = "All required startup assets are ready.";
         ShowCancelButton = false;
-        ShowCloseButton = true;
-        WasSuccessful = true;
+        WasCanceled = false;
 
         foreach (StartupProvisioningAssetViewModel asset in Assets)
         {
@@ -129,8 +96,7 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
         CurrentAssetText = "Startup asset installation failed.";
         CurrentActivityText = message;
         ShowCancelButton = false;
-        ShowCloseButton = true;
-        WasSuccessful = false;
+        WasCanceled = false;
     }
 
     public void MarkCanceled()
@@ -139,8 +105,21 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
         CurrentAssetText = "Startup provisioning canceled.";
         CurrentActivityText = "The application will now exit.";
         ShowCancelButton = false;
-        ShowCloseButton = true;
-        WasSuccessful = false;
+        WasCanceled = true;
+    }
+
+    public bool WasCanceled
+    {
+        get => _wasCanceled;
+        private set
+        {
+            if (!SetField(ref _wasCanceled, value))
+            {
+                return;
+            }
+
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsBusy)));
+        }
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

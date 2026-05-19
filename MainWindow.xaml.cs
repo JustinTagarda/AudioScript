@@ -100,6 +100,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _transcriptProcessingSourceFileSizeText = string.Empty;
     private string _transcriptProcessingEngineText = string.Empty;
     private string _transcriptProcessingTitle = "Generating Transcript";
+    private string _transcriptProcessingStartButtonText = "Start";
     private FinalizedTranscriptLineViewModel? _playbackMatchedLine;
     private FinalizedTranscriptLineViewModel? _editLoopLine;
     private PlaybackEditTranscriptionState? _activePlaybackEditTranscription;
@@ -206,7 +207,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool IsTranscribeAudioBatchStartEnabled => IsTranscribeAudioBatchPendingStart && !IsTranscribeAudioBatchTranscribing;
 
-    public string TranscriptProcessingDismissButtonText => IsTranscribeAudioBatchPendingStart ? "Close" : "Cancel";
+    public string TranscriptProcessingDismissButtonText => IsTranscribeAudioBatchPendingStart
+        ? "Close"
+        : _activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.TranscribeAudio
+            ? "Pause"
+            : "Cancel";
+
+    public string TranscriptProcessingStartButtonText
+    {
+        get => _transcriptProcessingStartButtonText;
+        private set
+        {
+            if (string.Equals(_transcriptProcessingStartButtonText, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _transcriptProcessingStartButtonText = value;
+            OnPropertyChanged();
+        }
+    }
 
     public bool IsTranscriptProcessingMuteAvailable
     {
@@ -342,7 +362,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             title: "Transcribe Audio",
             allowMute: false);
         _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.TranscribeAudio;
-        TranscriptProcessingDetail = "Review the source file, then click Start.";
+        TranscriptProcessingStartButtonText = vm.IsPreparedTranscribeAudioResumeRequested ? "Resume" : "Start";
+        TranscriptProcessingDetail = vm.IsPreparedTranscribeAudioResumeRequested
+            ? "Resume the saved transcription job."
+            : "Review the source file, then click Start.";
         TranscriptProcessingSourceFileText = vm.LoadedAudioFileName;
         TranscriptProcessingSourceFileSizeText = FormatFileSizeText(vm.LoadedAudioFilePath);
         TranscriptProcessingEngineText = ResolveCurrentEngineLabel(vm);
@@ -387,6 +410,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             title: "Detect Speaker",
             allowMute: false);
         _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.DetectSpeakers;
+        TranscriptProcessingStartButtonText = "Start";
         TranscriptProcessingDetail = "Review the session audio, then click Start.";
         TranscriptProcessingSourceFileText = vm.LoadedAudioFileName;
         TranscriptProcessingSourceFileSizeText = FormatFileSizeText(vm.LoadedAudioFilePath);
@@ -427,7 +451,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             bool completed = await vm.RunPreparedTranscribeAudioWorkflowAsync(cancellationToken, transcriptionProgress);
             if (cancellationToken.IsCancellationRequested)
             {
-                vm.CancelPreparedTranscribeAudioWorkflow();
+                vm.PausePreparedTranscribeAudioWorkflow();
+                ShowCopyToast(
+                    "Transcription paused",
+                    "Completed chunks were kept. Click Transcribe Audio to resume.",
+                    ToastNotificationType.Warning);
                 return;
             }
 
@@ -448,7 +476,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _processLogService?.UpdateCrashContext("transcribe_audio.batch.canceled");
-            vm.CancelPreparedTranscribeAudioWorkflow();
+            vm.PausePreparedTranscribeAudioWorkflow();
         }
         catch (Exception ex)
         {
@@ -2704,6 +2732,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void ConfigureTranscriptProcessingUi(string title, bool allowMute)
     {
         TranscriptProcessingTitle = title;
+        TranscriptProcessingStartButtonText = "Start";
         IsTranscriptProcessingMuteAvailable = allowMute;
         TranscriptProcessingSourceFileText = string.Empty;
         TranscriptProcessingSourceFileSizeText = string.Empty;
@@ -2747,10 +2776,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ApplyTranscriptProcessingCancelingState()
     {
+        ApplyTranscriptProcessingStoppingState("Canceling...", "ETA canceled");
+    }
+
+    private void ApplyTranscriptProcessingPausingState()
+    {
+        ApplyTranscriptProcessingStoppingState("Pausing...", "Resume available");
+    }
+
+    private void ApplyTranscriptProcessingStoppingState(string detail, string etaText)
+    {
         IsTranscriptProcessingCanceling = true;
         IsTranscriptProcessingIndeterminate = true;
-        TranscriptProcessingDetail = "Canceling...";
-        TranscriptProcessingEtaText = "ETA canceled";
+        TranscriptProcessingDetail = detail;
+        TranscriptProcessingEtaText = etaText;
     }
 
     private static string FormatProgressChunkText(TranscriptionProgressSnapshot snapshot)
@@ -2931,9 +2970,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (_transcribeAudioBatchTranscriptionCts is not null && !_transcribeAudioBatchTranscriptionCts.IsCancellationRequested)
         {
-            ApplyTranscriptProcessingCancelingState();
+            ApplyTranscriptProcessingPausingState();
             _transcribeAudioBatchTranscriptionCts.Cancel();
-            LogTranscribeAudioBatch("Transcribe Audio cancellation requested.");
+            LogTranscribeAudioBatch("Transcribe Audio pause requested.");
         }
 
         StopActivePlaybackEditTranscription(

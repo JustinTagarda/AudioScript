@@ -14,6 +14,7 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     private double _playbackEditProgressPercent;
     private bool _isPlaybackEditProgressIndeterminate;
     private bool _isManuallyReviewed;
+    private bool _isTranscriptionPartial;
     private string _speakerLabelSource;
     private int? _diarizationRevision;
     private int? _lastDiarizedChunkIndex;
@@ -25,6 +26,7 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         string text,
         string speakerLabel = "",
         bool isManuallyReviewed = false,
+        bool isTranscriptionPartial = false,
         string speakerLabelSource = "",
         int? diarizationRevision = null,
         int? lastDiarizedChunkIndex = null) {
@@ -34,6 +36,7 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         _speakerLabel = speakerLabel?.Trim() ?? string.Empty;
         _text = text ?? string.Empty;
         _isManuallyReviewed = isManuallyReviewed;
+        _isTranscriptionPartial = isTranscriptionPartial;
         _speakerLabelSource = speakerLabelSource?.Trim() ?? string.Empty;
         _diarizationRevision = diarizationRevision;
         _lastDiarizedChunkIndex = lastDiarizedChunkIndex;
@@ -174,6 +177,18 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
             }
 
             _isManuallyReviewed = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsTranscriptionPartial {
+        get => _isTranscriptionPartial;
+        set {
+            if (_isTranscriptionPartial == value) {
+                return;
+            }
+
+            _isTranscriptionPartial = value;
             OnPropertyChanged();
         }
     }

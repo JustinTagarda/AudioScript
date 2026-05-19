@@ -2,11 +2,18 @@ using System.Runtime.InteropServices;
 
 namespace AudioScript.Services;
 
+public sealed record StartupProvisioningAssetFailure(
+    string AssetId,
+    string DisplayName,
+    string Reason,
+    string? LimitationOrBlocker);
+
 public sealed record StartupProvisioningResult(
     int RequiredAssetCount,
     int InstalledAssetCount,
     int FailedAssetCount,
-    bool WasCanceled)
+    bool WasCanceled,
+    IReadOnlyList<StartupProvisioningAssetFailure> Failures)
 {
     public bool Succeeded => !WasCanceled && FailedAssetCount == 0;
 }
@@ -60,6 +67,7 @@ public sealed class StartupAssetProvisioningCoordinator
 
         int installedCount = 0;
         int failedCount = 0;
+        var failures = new List<StartupProvisioningAssetFailure>();
 
         try
         {
@@ -97,6 +105,7 @@ public sealed class StartupAssetProvisioningCoordinator
                 catch (Exception ex)
                 {
                     failedCount++;
+                    failures.Add(CreateFailureDetail(asset, ex));
                     _processLogService.LogException(
                         nameof(StartupAssetProvisioningCoordinator),
                         $"Startup provisioning failed for asset '{asset.DisplayName}'.",
@@ -112,7 +121,32 @@ public sealed class StartupAssetProvisioningCoordinator
                 $"startup_provisioning end utc='{endUtc:O}' durationMs={(long)(endUtc - startUtc).TotalMilliseconds} failureCount={failedCount}.");
         }
 
-        return new StartupProvisioningResult(requiredAssets.Count, installedCount, failedCount, WasCanceled: false);
+        return new StartupProvisioningResult(
+            requiredAssets.Count,
+            installedCount,
+            failedCount,
+            WasCanceled: false,
+            failures);
+    }
+
+    private static StartupProvisioningAssetFailure CreateFailureDetail(
+        ProvisionedAssetDescriptor asset,
+        Exception exception)
+    {
+        string reason = string.IsNullOrWhiteSpace(exception.Message)
+            ? "Installation failed."
+            : exception.Message.Trim();
+        string? limitationOrBlocker = exception.InnerException?.Message;
+        if (!string.IsNullOrWhiteSpace(limitationOrBlocker))
+        {
+            limitationOrBlocker = limitationOrBlocker.Trim();
+        }
+
+        return new StartupProvisioningAssetFailure(
+            asset.Id,
+            asset.DisplayName,
+            reason,
+            limitationOrBlocker);
     }
 
     private static bool IsSupportedOnCurrentArchitecture(ProvisionedAssetDescriptor descriptor)

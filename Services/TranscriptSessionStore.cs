@@ -413,6 +413,7 @@ public sealed class TranscriptSessionStore {
 
             document.Transcript ??= new TranscriptSessionTranscriptDocument();
             document.Transcript.Lines ??= new List<TranscriptSessionLineDocument>();
+            document.Transcript.TranscriptionJob ??= new TranscriptionJobDocument();
             document.Transcript.SpeakerDiarizationJob ??= new SpeakerDiarizationJobDocument();
             document.Audio ??= new TranscriptSessionAudioDocument();
             if (string.IsNullOrWhiteSpace(document.Audio.StorageKind)) {
@@ -692,6 +693,8 @@ public sealed class TranscriptSessionTranscriptDocument {
 
     public List<TranscriptSessionLineDocument> Lines { get; set; } = new();
 
+    public TranscriptionJobDocument TranscriptionJob { get; set; } = new();
+
     public SpeakerDiarizationJobDocument SpeakerDiarizationJob { get; set; } = new();
 }
 
@@ -708,11 +711,43 @@ public sealed class TranscriptSessionLineDocument {
 
     public bool IsManuallyReviewed { get; set; }
 
+    public bool IsTranscriptionPartial { get; set; }
+
     public string SpeakerLabelSource { get; set; } = string.Empty;
 
     public int? DiarizationRevision { get; set; }
 
     public int? LastDiarizedChunkIndex { get; set; }
+}
+
+public sealed class TranscriptionJobDocument {
+    public string Status { get; set; } = TranscriptionJobStatuses.NotStarted;
+
+    public string Engine { get; set; } = string.Empty;
+
+    public int JobVersion { get; set; }
+
+    public string AudioFingerprint { get; set; } = string.Empty;
+
+    public int TotalChunks { get; set; }
+
+    public int LastCompletedChunkIndex { get; set; } = -1;
+
+    public DateTimeOffset? StartedUtc { get; set; }
+
+    public DateTimeOffset? LastUpdatedUtc { get; set; }
+
+    public DateTimeOffset? CompletedUtc { get; set; }
+
+    public string LastError { get; set; } = string.Empty;
+}
+
+public static class TranscriptionJobStatuses {
+    public const string NotStarted = "not_started";
+    public const string Running = "running";
+    public const string Paused = "paused";
+    public const string Failed = "failed";
+    public const string Completed = "completed";
 }
 
 public sealed class SpeakerDiarizationJobDocument {

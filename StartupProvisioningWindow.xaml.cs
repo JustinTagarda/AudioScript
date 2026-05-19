@@ -20,21 +20,6 @@ public partial class StartupProvisioningWindow : Window
         ConfirmCancelAndExit();
     }
 
-    private void CloseButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is StartupProvisioningWindowViewModel viewModel && viewModel.WasSuccessful)
-        {
-            DialogResult = true;
-        }
-        else
-        {
-            DialogResult = false;
-        }
-
-        _allowClose = true;
-        Close();
-    }
-
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         if (_allowClose)
@@ -50,13 +35,14 @@ public partial class StartupProvisioningWindow : Window
             return;
         }
 
-        if (DataContext is StartupProvisioningWindowViewModel completedViewModel)
-        {
-            _allowClose = true;
-            DialogResult = completedViewModel.WasSuccessful;
-        }
-
         base.OnClosing(e);
+    }
+
+    public void CloseWithResult(bool wasSuccessful)
+    {
+        _allowClose = true;
+        DialogResult = wasSuccessful;
+        Close();
     }
 
     private void ConfirmCancelAndExit()

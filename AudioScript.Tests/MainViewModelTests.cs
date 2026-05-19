@@ -63,7 +63,7 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task UpdateFooterMode_Completed_ShowsRestartAndHidesDefaultFooter()
+    public async Task UpdateFooterMode_CheckingAndCompleted_UsesCompactFooterWithoutRestartAction()
     {
         await RunInStaAsync(async () =>
         {
@@ -106,9 +106,24 @@ public sealed class MainViewModelTests
                     Assert.False(viewModel.RestartApplicationCommand.CanExecute(null));
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
+                        AppUpdateState.Checking,
+                        "Checking for updates",
+                        "Looking for Microsoft Store updates.",
+                        IsMandatoryUpdateAvailable: false,
+                        IsProgressVisible: false,
+                        ProgressValue: 0,
+                        InstalledVersion: "1.2.3.4",
+                        AvailableVersion: null));
+                    queuedContext.Drain();
+
+                    Assert.False(viewModel.IsApplicationFooterCompactMode);
+                    Assert.True(viewModel.IsApplicationFooterDefaultVisible);
+                    Assert.False(viewModel.IsApplicationRestartVisible);
+
+                    appUpdateService.Publish(new AppUpdateSnapshot(
                         AppUpdateState.Completed,
-                        "Update installed",
-                        "Restart to run the newly installed version.",
+                        "Update downloaded",
+                        "Update downloaded. It will take effect the next time you restart the app.",
                         IsMandatoryUpdateAvailable: false,
                         IsProgressVisible: false,
                         ProgressValue: 1,
@@ -118,8 +133,8 @@ public sealed class MainViewModelTests
 
                     Assert.True(viewModel.IsApplicationFooterCompactMode);
                     Assert.False(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.True(viewModel.IsApplicationRestartVisible);
-                    Assert.True(viewModel.RestartApplicationCommand.CanExecute(null));
+                    Assert.False(viewModel.IsApplicationRestartVisible);
+                    Assert.False(viewModel.RestartApplicationCommand.CanExecute(null));
                 }
                 finally
                 {

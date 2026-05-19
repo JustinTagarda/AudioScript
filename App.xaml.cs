@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -9,6 +11,7 @@ using System.Windows.Threading;
 using AudioScript.Audio;
 using AudioScript.Services;
 using AudioScript.ViewModels;
+using Windows.Foundation.Metadata;
 
 namespace AudioScript;
 
@@ -122,6 +125,10 @@ public partial class App : System.Windows.Application
             whisperModelManager,
             assetProvisioningService,
             appDataPathProvider);
+        var chunkedAudioTranscriptionService = new ChunkedAudioTranscriptionService(
+            audioChunkingService,
+            whisperTranscriptionService,
+            processLogService);
         var pyannoteCommunityModelManager = new PyannoteCommunityModelManager(
             assetProvisioningService,
             appDataPathProvider);
@@ -160,15 +167,21 @@ public partial class App : System.Windows.Application
                 PremiumProductIds = PremiumProductIds,
                 PremiumKeyword = "premium",
             });
+        IStoreUpdateClient storeUpdateClient = appVersionProvider.IsPackaged && ApiInformation.IsTypePresent("Windows.Services.Store.StoreContext")
+            ? new StoreUpdateClient(processLogService, () => updateOwnerWindowHandle)
+            : new UnsupportedStoreUpdateClient();
+        processLogService.Log(
+            "StoreUpdate",
+            $"store_update_client_selected; packaged={appVersionProvider.IsPackaged}; storeApiSupported={ApiInformation.IsTypePresent("Windows.Services.Store.StoreContext")}; client={storeUpdateClient.GetType().Name}");
         _appUpdateService = new AppUpdateService(
             appVersionProvider,
-            new StoreUpdateClient(processLogService, () => updateOwnerWindowHandle),
+            storeUpdateClient,
             processLogService,
             () => updateBusyWindow is MainWindow window && window.IsBusyForAppUpdate);
 
         _mainViewModel = new MainViewModel(
             whisperModelManager.GetSelectableTranscriptionModels(),
-            whisperTranscriptionService,
+            chunkedAudioTranscriptionService,
             chunkedSpeakerDiarizationService,
             audioPlaybackService,
             processLogService,
@@ -246,6 +259,7 @@ public partial class App : System.Windows.Application
         startupWindow.DataContext = viewModel;
         processLogService.Log("StartupProvisioning", "Startup provisioning dialog opened modally.");
 
+        StartupProvisioningResult? provisioningResult = null;
         var cancellationTokenSource = new CancellationTokenSource();
         startupWindow.CancellationTokenSource = cancellationTokenSource;
         startupWindow.ContentRendered += async (_, _) =>
@@ -260,6 +274,7 @@ public partial class App : System.Windows.Application
                 StartupProvisioningResult result = await startupProvisioningCoordinator
                     .ProvisionRequiredAssetsAsync(progress, cancellationTokenSource.Token)
                     .ConfigureAwait(true);
+                provisioningResult = result;
 
                 if (result.Succeeded)
                 {
@@ -269,12 +284,13 @@ public partial class App : System.Windows.Application
                 {
                     viewModel.MarkFailed("One or more startup assets failed to install.");
                 }
+
+                startupWindow.CloseWithResult(result.Succeeded);
             }
             catch (OperationCanceledException)
             {
                 viewModel.MarkCanceled();
-                startupWindow.DialogResult = false;
-                startupWindow.Close();
+                startupWindow.CloseWithResult(false);
             }
             catch (Exception ex)
             {
@@ -283,12 +299,67 @@ public partial class App : System.Windows.Application
                     "Startup asset provisioning failed.",
                     ex);
                 viewModel.MarkFailed("Startup asset installation failed.");
+                provisioningResult = new StartupProvisioningResult(
+                    RequiredAssetCount: requiredAssetsNeedingInstall.Count,
+                    InstalledAssetCount: 0,
+                    FailedAssetCount: requiredAssetsNeedingInstall.Count,
+                    WasCanceled: false,
+                    Failures: requiredAssetsNeedingInstall.Select(asset => new StartupProvisioningAssetFailure(
+                        asset.Id,
+                        asset.DisplayName,
+                        "Startup asset installation failed.",
+                        ex.Message)).ToArray());
+                startupWindow.CloseWithResult(false);
             }
         };
 
         bool? dialogResult = startupWindow.ShowDialog();
         cancellationTokenSource.Dispose();
+
+        if (provisioningResult is not null && provisioningResult.FailedAssetCount > 0)
+        {
+            ShowStartupProvisioningFailureSummary(provisioningResult.Failures);
+            ShowStartupProvisioningFailureExitReason(provisioningResult.Failures.Count);
+            return false;
+        }
+
         return dialogResult == true;
+    }
+
+    private static void ShowStartupProvisioningFailureSummary(
+        IReadOnlyList<StartupProvisioningAssetFailure> failures)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("One or more required startup dependencies could not be installed:");
+        builder.AppendLine();
+
+        foreach (StartupProvisioningAssetFailure failure in failures)
+        {
+            builder.AppendLine($"- {failure.DisplayName} ({failure.AssetId})");
+            builder.AppendLine($"  Reason: {failure.Reason}");
+            if (!string.IsNullOrWhiteSpace(failure.LimitationOrBlocker))
+            {
+                builder.AppendLine($"  Limitation/Blocker: {failure.LimitationOrBlocker}");
+            }
+
+            builder.AppendLine();
+        }
+
+        var dialog = new ErrorDialogWindow(builder.ToString().TrimEnd());
+        dialog.Title = "Startup dependency installation results";
+        _ = dialog.ShowDialog();
+    }
+
+    private static void ShowStartupProvisioningFailureExitReason(int failedAssetCount)
+    {
+        string message =
+            $"AudioScript cannot continue because {failedAssetCount} required startup dependency " +
+            "failed to install. Resolve the dependency issue and start the app again.";
+        _ = System.Windows.MessageBox.Show(
+            message,
+            "Startup dependencies unavailable",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
     }
 
     private static IAudioLoopbackCaptureService CreateLiveCaptureService(

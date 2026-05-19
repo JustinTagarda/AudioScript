@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
@@ -10,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <StartupObject>AudioScript.App</StartupObject>
     <!-- 4-part version required by MSIX / Microsoft Store -->
-    <Version>2.0.9.0</Version>
+    <Version>2.0.10.0</Version>
     <ApplicationIcon>assets\AudioScript.ico</ApplicationIcon>
     <Company>Justin Tagarda</Company>
     <Product>AudioScript</Product>
@@ -18,20 +17,16 @@
     <Description>Offline audio transcription for local files and live playback capture.</Description>
     <DefaultItemExcludes>$(DefaultItemExcludes);AudioScript.Package\AppPackages\**;artifacts\**;publish\**;AudioScript.Tests\**</DefaultItemExcludes>
   </PropertyGroup>
-
   <PropertyGroup Condition="'$(StoreSelfContained)' == 'true'">
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
-
-
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.2.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="SharpVectors.Wpf" Version="1.8.5" />
   </ItemGroup>
-
   <ItemGroup>
     <Compile Remove="bin\\**\\*.cs" />
     <Compile Remove="obj\\**\\*.cs" />
@@ -54,30 +49,25 @@
     <Page Remove="AudioScript.Tests\\**\\*" />
     <Page Remove="assets\\python\\**\\*" />
   </ItemGroup>
-
   <ItemGroup>
     <ApplicationDefinition Remove="App.xaml" />
     <Page Include="App.xaml" />
   </ItemGroup>
-
   <ItemGroup>
     <Resource Include="assets\AudioScript.ico" />
     <Resource Include="assets\titlebar\*.svg" />
   </ItemGroup>
-
   <ItemGroup>
     <Content Include="assets\bootstrap\asset-manifest.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
-
   <Target Name="PruneHeavyProvisionedAssetsFromOutput" AfterTargets="Build;Publish">
     <PropertyGroup>
       <_ProvisionedAssetsRoot>$(TargetDir)assets</_ProvisionedAssetsRoot>
       <_PublishAssetsRoot Condition="'$(PublishDir)' != ''">$(PublishDir)assets</_PublishAssetsRoot>
     </PropertyGroup>
-
     <ItemGroup>
       <_HeavyAssetFiles Include="$(_ProvisionedAssetsRoot)\models\ggml-small.bin" />
       <_HeavyAssetFiles Include="$(_PublishAssetsRoot)\models\ggml-small.bin" Condition="'$(_PublishAssetsRoot)' != ''" />
@@ -86,12 +76,7 @@
       <_HeavyAssetDirectories Include="$(_PublishAssetsRoot)\pyannote" Condition="'$(_PublishAssetsRoot)' != ''" />
       <_HeavyAssetDirectories Include="$(_PublishAssetsRoot)\python" Condition="'$(_PublishAssetsRoot)' != ''" />
     </ItemGroup>
-
     <Delete Files="@(_HeavyAssetFiles)" TreatErrorsAsWarnings="true" />
     <RemoveDir Directories="@(_HeavyAssetDirectories)" Condition="Exists('%(Identity)')" />
   </Target>
-
 </Project>
-
-
-

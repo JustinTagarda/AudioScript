@@ -265,8 +265,8 @@ public sealed class AppUpdateService : IAppUpdateService
         Log("download_completed", "download");
         Publish(new AppUpdateSnapshot(
             AppUpdateState.Completed,
-            "Update installed",
-            "Update installed. Restart required",
+            "Update downloaded",
+            "Update downloaded. It will take effect the next time you restart the app.",
             mandatory,
             IsProgressVisible: false,
             ProgressValue: 1,
