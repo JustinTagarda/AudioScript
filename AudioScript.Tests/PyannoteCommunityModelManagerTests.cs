@@ -81,7 +81,7 @@ public sealed class PyannoteCommunityModelManagerTests
     }
 
     [Fact]
-    public void EnsureInstalled_ThrowsPlatformNotSupported_OnArm64()
+    public void EnsureInstalled_ThrowsPlatformNotSupported_OnNonX64()
     {
         string assetsPath = CreateTempDirectory();
         AppDataPathProvider paths = new(localAppDataPath: assetsPath);
@@ -91,7 +91,7 @@ public sealed class PyannoteCommunityModelManagerTests
             var manager = new PyannoteCommunityModelManager(
                 new StubAssetProvisioningService(),
                 paths,
-                architectureResolver: () => Architecture.Arm64);
+                architectureResolver: () => Architecture.X86);
 
             Assert.Throws<PlatformNotSupportedException>(manager.EnsureInstalled);
         }
@@ -187,7 +187,7 @@ public sealed class PyannoteCommunityModelManagerTests
     {
         CreateRunnerScript(paths);
         CreateModelDirectory(paths);
-        CreatePythonRuntime(paths, architecture == Architecture.Arm64 ? "win-arm64" : "win-x64");
+        CreatePythonRuntime(paths, "win-x64");
     }
 
     private static void CreateModelDirectory(AppDataPathProvider paths)

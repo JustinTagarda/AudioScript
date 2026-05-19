@@ -1,6 +1,5 @@
 using AudioScript.Services;
 using AudioScript.ViewModels;
-using Whisper.net.Ggml;
 using Xunit;
 
 namespace AudioScript.Tests;
@@ -37,7 +36,7 @@ public sealed class AppFeatureAccessTests
             Description: "Higher accuracy.",
             Benefits: "Premium model.",
             Notes: "Requires Premium.",
-            GgmlType: GgmlType.Medium,
+            GgmlType: WhisperModelVariant.Medium,
             ExpectedBytes: 10,
             IsBundled: false,
             IsFixedInstalled: false);

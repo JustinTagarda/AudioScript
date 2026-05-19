@@ -7,7 +7,10 @@ public sealed record AppEntitlementSnapshot(
     bool HasPremium,
     bool IsPremiumProductAvailable,
     string PremiumProductDisplayName,
-    string StatusMessage)
+    string StatusMessage,
+    PremiumEntitlementState State = PremiumEntitlementState.Checking,
+    DateTimeOffset? LastVerifiedPremiumUtc = null,
+    bool IsUsingGracePremium = false)
 {
     public static AppEntitlementSnapshot Development(string premiumProductDisplayName) =>
         new(
@@ -15,7 +18,17 @@ public sealed record AppEntitlementSnapshot(
             HasPremium: true,
             IsPremiumProductAvailable: false,
             PremiumProductDisplayName: premiumProductDisplayName,
-            StatusMessage: "Development build: Premium features unlocked.");
+            StatusMessage: "Development build: Premium features unlocked.",
+            State: PremiumEntitlementState.VerifiedPremium);
+}
+
+public enum PremiumEntitlementState
+{
+    Checking,
+    VerifiedPremium,
+    VerifiedBasic,
+    VerificationInconclusive,
+    VerificationFailed,
 }
 
 public enum PremiumPurchaseStatus
@@ -39,9 +52,21 @@ public sealed class StoreEntitlementServiceOptions
 
     public string PremiumProductDisplayName { get; init; } = "AudioScript Premium";
 
-    public string PremiumStoreId { get; init; } = string.Empty;
+    public IReadOnlyList<string> PremiumStoreIds { get; init; } = Array.Empty<string>();
+
+    public IReadOnlyList<string> PremiumProductIds { get; init; } = Array.Empty<string>();
 
     public string PremiumKeyword { get; init; } = "premium";
+
+    public int RefreshRetryCount { get; init; } = 3;
+
+    public TimeSpan[] RefreshRetryDelays { get; init; } = [
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(3),
+        TimeSpan.FromSeconds(7),
+    ];
+
+    public TimeSpan PremiumGraceWindow { get; init; } = TimeSpan.FromDays(7);
 }
 
 public interface IEntitlementService : IAsyncDisposable
@@ -102,6 +127,7 @@ public sealed class StoreEntitlementService : IEntitlementService
     private readonly StoreEntitlementServiceOptions _options;
     private readonly object _sync = new();
     private AppEntitlementSnapshot _currentSnapshot;
+    private DateTimeOffset? _lastVerifiedPremiumUtc;
 
     public StoreEntitlementService(
         IAppVersionProvider appVersionProvider,
@@ -113,10 +139,10 @@ public sealed class StoreEntitlementService : IEntitlementService
         _processLogService = processLogService ?? throw new ArgumentNullException(nameof(processLogService));
         _ownerWindowHandleProvider = ownerWindowHandleProvider;
         _options = options ?? new StoreEntitlementServiceOptions();
-        if (_appVersionProvider.IsPackaged && string.IsNullOrWhiteSpace(_options.PremiumStoreId))
+        if (_appVersionProvider.IsPackaged && !_options.PremiumStoreIds.Any(id => !string.IsNullOrWhiteSpace(id)))
         {
             const string message =
-                "Premium Store add-on ID is required for packaged builds. Configure StoreEntitlementServiceOptions.PremiumStoreId.";
+                "At least one Premium Store add-on ID is required for packaged builds. Configure StoreEntitlementServiceOptions.PremiumStoreIds.";
             _processLogService.Log("Premium", $"configuration_error; {message}");
             throw new InvalidOperationException(message);
         }
@@ -127,7 +153,8 @@ public sealed class StoreEntitlementService : IEntitlementService
                 HasPremium: false,
                 IsPremiumProductAvailable: false,
                 PremiumProductDisplayName: _options.PremiumProductDisplayName,
-                StatusMessage: string.Empty)
+                StatusMessage: "Checking Microsoft Store entitlement...",
+                State: PremiumEntitlementState.Checking)
             : AppEntitlementSnapshot.Development(_options.PremiumProductDisplayName);
     }
 
@@ -159,7 +186,7 @@ public sealed class StoreEntitlementService : IEntitlementService
             return Task.CompletedTask;
         }
 
-        return RefreshPackagedAsync(cancellationToken);
+        return RefreshPackagedWithRetryAsync(cancellationToken);
     }
 
     public async Task<PremiumPurchaseResult> RequestPremiumPurchaseAsync(CancellationToken cancellationToken = default)
@@ -180,7 +207,8 @@ public sealed class StoreEntitlementService : IEntitlementService
         }
 
         StoreContext context = CreateStoreContext();
-        StoreProduct? premiumProduct = await ResolvePremiumProductAsync(context, cancellationToken).ConfigureAwait(true);
+        PremiumProductResolution resolution = await ResolvePremiumProductAsync(context, cancellationToken).ConfigureAwait(true);
+        StoreProduct? premiumProduct = resolution.Product;
         if (premiumProduct is null)
         {
             Publish(CurrentSnapshot with
@@ -200,7 +228,7 @@ public sealed class StoreEntitlementService : IEntitlementService
             PremiumPurchaseResult purchaseResult = MapPurchaseResult(result, premiumProduct.Title);
             if (purchaseResult.Status is PremiumPurchaseStatus.Succeeded or PremiumPurchaseStatus.AlreadyOwned)
             {
-                await RefreshPackagedAsync(cancellationToken).ConfigureAwait(true);
+                await RefreshPackagedWithRetryAsync(cancellationToken).ConfigureAwait(true);
             }
 
             Log("premium_purchase_completed", $"status={purchaseResult.Status}; storeId={premiumProduct.StoreId}");
@@ -224,87 +252,328 @@ public sealed class StoreEntitlementService : IEntitlementService
         return ValueTask.CompletedTask;
     }
 
-    private async Task RefreshPackagedAsync(CancellationToken cancellationToken)
+    private async Task RefreshPackagedWithRetryAsync(CancellationToken cancellationToken)
     {
-        try
+        Publish(CurrentSnapshot with
         {
-            StoreContext context = CreateStoreContext();
-            StoreAppLicense license = await context.GetAppLicenseAsync().AsTask(cancellationToken);
-            StoreProduct? premiumProduct = await ResolvePremiumProductAsync(context, cancellationToken).ConfigureAwait(false);
-            bool hasPremium = premiumProduct is not null
-                && license.AddOnLicenses.TryGetValue(premiumProduct.StoreId, out StoreLicense? addOnLicense)
-                && addOnLicense.IsActive;
-            string productName = string.IsNullOrWhiteSpace(premiumProduct?.Title)
-                ? _options.PremiumProductDisplayName
-                : premiumProduct!.Title;
-            string statusMessage = hasPremium
-                ? $"{productName} is unlocked."
-                : premiumProduct is null
-                    ? $"{_options.PremiumProductDisplayName} is not currently available in Microsoft Store."
-                    : $"{productName} is available for purchase in Microsoft Store.";
+            State = PremiumEntitlementState.Checking,
+            StatusMessage = "Checking Microsoft Store entitlement...",
+        });
 
-            Publish(new AppEntitlementSnapshot(
-                IsPackaged: true,
-                HasPremium: hasPremium,
-                IsPremiumProductAvailable: premiumProduct is not null,
-                PremiumProductDisplayName: productName,
-                StatusMessage: statusMessage));
-            Log(
-                "premium_entitlement_refreshed",
-                $"hasPremium={hasPremium}; productAvailable={premiumProduct is not null}; productName='{productName}'.");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        int attempt = 0;
+        int retryCount = Math.Max(1, _options.RefreshRetryCount);
+        while (attempt < retryCount)
         {
-            LogException("premium_entitlement_refresh_failed", ex);
-            Publish(new AppEntitlementSnapshot(
-                IsPackaged: true,
-                HasPremium: false,
-                IsPremiumProductAvailable: false,
-                PremiumProductDisplayName: _options.PremiumProductDisplayName,
-                StatusMessage: $"Unable to verify {_options.PremiumProductDisplayName} entitlement right now."));
+            try
+            {
+                attempt++;
+                StoreContext context = CreateStoreContext();
+                StoreAppLicense license = await context.GetAppLicenseAsync().AsTask(cancellationToken);
+                PremiumLicenseResolution licenseResolution = ResolvePremiumLicense(license);
+                PremiumProductResolution resolution = await ResolvePremiumProductAsync(context, cancellationToken).ConfigureAwait(false);
+                StoreProduct? premiumProduct = resolution.Product;
+                bool hasPremium = licenseResolution.License is not null || resolution.IsInUserCollection;
+                if (hasPremium)
+                {
+                    _lastVerifiedPremiumUtc = DateTimeOffset.UtcNow;
+                }
+
+                string productName = string.IsNullOrWhiteSpace(premiumProduct?.Title)
+                    ? _options.PremiumProductDisplayName
+                    : premiumProduct!.Title;
+                bool hasConfiguredIds = _options.PremiumStoreIds.Any(id => !string.IsNullOrWhiteSpace(id));
+                bool isInconclusive = hasConfiguredIds && premiumProduct is null;
+                PremiumEntitlementState state = hasPremium
+                    ? PremiumEntitlementState.VerifiedPremium
+                    : isInconclusive
+                        ? PremiumEntitlementState.VerificationInconclusive
+                        : PremiumEntitlementState.VerifiedBasic;
+                string statusMessage = hasPremium
+                    ? $"{productName} is unlocked."
+                    : state == PremiumEntitlementState.VerificationInconclusive
+                        ? $"Unable to confidently map {_options.PremiumProductDisplayName} SKU in Microsoft Store right now."
+                        : premiumProduct is null
+                            ? $"{_options.PremiumProductDisplayName} is not currently available in Microsoft Store."
+                            : $"{productName} is available for purchase in Microsoft Store.";
+
+                Publish(new AppEntitlementSnapshot(
+                    IsPackaged: true,
+                    HasPremium: hasPremium,
+                    IsPremiumProductAvailable: premiumProduct is not null,
+                    PremiumProductDisplayName: productName,
+                    StatusMessage: statusMessage,
+                    State: state,
+                    LastVerifiedPremiumUtc: _lastVerifiedPremiumUtc,
+                    IsUsingGracePremium: false));
+                Log(
+                    "premium_entitlement_refreshed",
+                    $"attempt={attempt}; state={state}; hasPremium={hasPremium}; productAvailable={premiumProduct is not null}; " +
+                    $"productName='{productName}'; matchReason='{resolution.MatchReason}'; licenseMatchReason='{licenseResolution.MatchReason}'; " +
+                    $"configuredStoreIds='{string.Join(",", _options.PremiumStoreIds)}'; configuredProductIds='{string.Join(",", _options.PremiumProductIds)}'; " +
+                    $"storeProducts='{string.Join(",", resolution.CandidateStoreIds)}'; userCollection='{string.Join(",", resolution.UserCollectionStoreIds)}'; " +
+                    $"licenseKeys='{string.Join(",", license.AddOnLicenses.Keys)}'; licenseDetails='{FormatLicenseDetails(license)}'.");
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                bool shouldRetry = attempt < retryCount;
+                LogException("premium_entitlement_refresh_failed", ex);
+                if (shouldRetry)
+                {
+                    TimeSpan delay = ResolveRetryDelay(attempt - 1);
+                    if (delay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                    }
+                    continue;
+                }
+
+                bool allowGracePremium =
+                    _lastVerifiedPremiumUtc is DateTimeOffset lastVerified &&
+                    DateTimeOffset.UtcNow - lastVerified <= _options.PremiumGraceWindow;
+                PremiumEntitlementState state = allowGracePremium
+                    ? PremiumEntitlementState.VerificationInconclusive
+                    : PremiumEntitlementState.VerificationFailed;
+                Publish(new AppEntitlementSnapshot(
+                    IsPackaged: true,
+                    HasPremium: allowGracePremium,
+                    IsPremiumProductAvailable: false,
+                    PremiumProductDisplayName: _options.PremiumProductDisplayName,
+                    StatusMessage: allowGracePremium
+                        ? $"Using temporary {_options.PremiumProductDisplayName} access while Microsoft Store entitlement is being re-verified."
+                        : $"Unable to verify {_options.PremiumProductDisplayName} entitlement right now.",
+                    State: state,
+                    LastVerifiedPremiumUtc: _lastVerifiedPremiumUtc,
+                    IsUsingGracePremium: allowGracePremium));
+                return;
+            }
         }
     }
 
-    private async Task<StoreProduct?> ResolvePremiumProductAsync(StoreContext context, CancellationToken cancellationToken)
+    private async Task<PremiumProductResolution> ResolvePremiumProductAsync(StoreContext context, CancellationToken cancellationToken)
     {
-        StoreProductQueryResult result = await context.GetAssociatedStoreProductsAsync(new[] { "Durable" }).AsTask(cancellationToken);
-        IEnumerable<StoreProduct> products = result.Products?.Values ?? Array.Empty<StoreProduct>();
-        string configuredStoreId = _options.PremiumStoreId?.Trim() ?? string.Empty;
+        string[] configuredStoreIds = GetConfiguredPremiumStoreIds();
+        string[] configuredProductIds = GetConfiguredPremiumProductIds();
         string keyword = _options.PremiumKeyword?.Trim() ?? string.Empty;
+        StoreProduct[] associatedDurableProducts = await QueryStoreProductsAsync(
+            "associated_products",
+            () => context.GetAssociatedStoreProductsAsync(new[] { "Durable" }).AsTask(cancellationToken)).ConfigureAwait(false);
+        StoreProduct[] userCollectionProducts = await QueryStoreProductsAsync(
+            "user_collection",
+            () => context.GetUserCollectionAsync(new[] { "Durable" }).AsTask(cancellationToken)).ConfigureAwait(false);
+        List<StoreProduct> candidateProducts = new(associatedDurableProducts);
+        candidateProducts.AddRange(userCollectionProducts);
+        string[] userCollectionStoreIds = userCollectionProducts.Select(product => product.StoreId).ToArray();
 
-        if (!string.IsNullOrWhiteSpace(configuredStoreId))
+        if (configuredStoreIds.Length > 0)
         {
-            StoreProduct? exact = products.FirstOrDefault(product =>
-                string.Equals(product.StoreId, configuredStoreId, StringComparison.OrdinalIgnoreCase));
-            if (exact is not null)
-            {
-                return exact;
-            }
+            StoreProduct[] configuredProducts = await QueryStoreProductsAsync(
+                "configured_products",
+                () => context.GetStoreProductsAsync(
+                    new[] { "Durable" },
+                    configuredStoreIds).AsTask(cancellationToken)).ConfigureAwait(false);
+            candidateProducts.AddRange(configuredProducts);
+            StoreProduct[] distinctProducts = candidateProducts
+                .GroupBy(product => product.StoreId, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToArray();
+            string[] configuredCandidateStoreIds = distinctProducts.Select(product => product.StoreId).ToArray();
 
-            if (_appVersionProvider.IsPackaged)
+            foreach (string configuredStoreId in configuredStoreIds)
             {
-                return null;
+                StoreProduct? exact = distinctProducts.FirstOrDefault(product =>
+                    MatchesProductStoreId(product.StoreId, configuredStoreId));
+                if (exact is not null)
+                {
+                    return new PremiumProductResolution(
+                        exact,
+                        $"configured_store_id:{configuredStoreId}",
+                        configuredCandidateStoreIds,
+                        userCollectionStoreIds,
+                        IsProductInUserCollection(exact, userCollectionStoreIds));
+                }
             }
         }
 
+        if (configuredProductIds.Length > 0)
+        {
+            StoreProduct[] distinctProducts = candidateProducts
+                .GroupBy(product => product.StoreId, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToArray();
+            string[] candidateStoreIdsForProductId = distinctProducts.Select(product => product.StoreId).ToArray();
+
+            foreach (string configuredProductId in configuredProductIds)
+            {
+                StoreProduct? exact = distinctProducts.FirstOrDefault(product =>
+                    string.Equals(product.InAppOfferToken, configuredProductId, StringComparison.OrdinalIgnoreCase));
+                if (exact is not null)
+                {
+                    return new PremiumProductResolution(
+                        exact,
+                        $"configured_product_id:{configuredProductId}",
+                        candidateStoreIdsForProductId,
+                        userCollectionStoreIds,
+                        IsProductInUserCollection(exact, userCollectionStoreIds));
+                }
+            }
+        }
+
+        StoreProduct[] durableProducts = candidateProducts
+            .GroupBy(product => product.StoreId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+        string[] candidateStoreIds = durableProducts.Select(product => product.StoreId).ToArray();
+
         if (!_appVersionProvider.IsPackaged && !string.IsNullOrWhiteSpace(keyword))
         {
-            StoreProduct? keywordMatch = products.FirstOrDefault(product =>
+            StoreProduct? keywordMatch = durableProducts.FirstOrDefault(product =>
                 ContainsKeyword(product.Title, keyword)
-                || ContainsKeyword(product.StoreId, keyword));
+                || ContainsKeyword(product.StoreId, keyword)
+                || ContainsKeyword(product.InAppOfferToken, keyword));
             if (keywordMatch is not null)
             {
-                return keywordMatch;
+                return new PremiumProductResolution(
+                    keywordMatch,
+                    $"keyword_match:{keyword}",
+                    candidateStoreIds,
+                    userCollectionStoreIds,
+                    IsProductInUserCollection(keywordMatch, userCollectionStoreIds));
             }
         }
 
         if (_appVersionProvider.IsPackaged)
         {
-            return null;
+            return new PremiumProductResolution(null, "packaged_no_match", candidateStoreIds, userCollectionStoreIds, false);
         }
 
-        StoreProduct[] durableProducts = products.ToArray();
-        return durableProducts.Length == 1 ? durableProducts[0] : null;
+        if (durableProducts.Length == 1)
+        {
+            StoreProduct product = durableProducts[0];
+            return new PremiumProductResolution(
+                product,
+                "single_durable_fallback",
+                candidateStoreIds,
+                userCollectionStoreIds,
+                IsProductInUserCollection(product, userCollectionStoreIds));
+        }
+
+        return new PremiumProductResolution(null, "unpackaged_no_match", candidateStoreIds, userCollectionStoreIds, false);
+    }
+
+    private PremiumLicenseResolution ResolvePremiumLicense(StoreAppLicense license)
+    {
+        string[] configuredStoreIds = GetConfiguredPremiumStoreIds();
+        string[] configuredProductIds = GetConfiguredPremiumProductIds();
+        if (configuredStoreIds.Length == 0 && configuredProductIds.Length == 0)
+        {
+            return new PremiumLicenseResolution(null, "no_configured_store_or_product_ids");
+        }
+
+        foreach (string configuredStoreId in configuredStoreIds)
+        {
+            foreach (KeyValuePair<string, StoreLicense> item in license.AddOnLicenses)
+            {
+                if (!item.Value.IsActive)
+                {
+                    continue;
+                }
+
+                if (MatchesProductStoreIdOrSku(item.Key, configuredStoreId)
+                    || MatchesProductStoreIdOrSku(item.Value.SkuStoreId, configuredStoreId))
+                {
+                    return new PremiumLicenseResolution(item.Value, $"license_sku_store_id:{configuredStoreId}");
+                }
+            }
+        }
+
+        foreach (KeyValuePair<string, StoreLicense> item in license.AddOnLicenses)
+        {
+            StoreLicense addOnLicense = item.Value;
+            if (!addOnLicense.IsActive)
+            {
+                continue;
+            }
+
+            foreach (string configuredProductId in configuredProductIds)
+            {
+                if (string.Equals(addOnLicense.InAppOfferToken, configuredProductId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new PremiumLicenseResolution(addOnLicense, $"license_offer_token:{configuredProductId}");
+                }
+            }
+        }
+
+        return new PremiumLicenseResolution(null, "configured_license_not_found");
+    }
+
+    private string[] GetConfiguredPremiumStoreIds()
+    {
+        return _options.PremiumStoreIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private string[] GetConfiguredPremiumProductIds()
+    {
+        return _options.PremiumProductIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private async Task<StoreProduct[]> QueryStoreProductsAsync(
+        string queryName,
+        Func<Task<StoreProductQueryResult>> query)
+    {
+        try
+        {
+            StoreProductQueryResult result = await query().ConfigureAwait(false);
+            return (result.Products?.Values ?? Array.Empty<StoreProduct>()).ToArray();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogException($"premium_{queryName}_query_failed", ex);
+            return Array.Empty<StoreProduct>();
+        }
+    }
+
+    private static bool IsProductInUserCollection(StoreProduct product, IReadOnlyList<string> userCollectionStoreIds)
+    {
+        return product.IsInUserCollection
+            || userCollectionStoreIds.Any(storeId => MatchesProductStoreId(storeId, product.StoreId));
+    }
+
+    private static bool MatchesProductStoreIdOrSku(string? storeIdOrSkuStoreId, string productStoreId)
+    {
+        if (string.IsNullOrWhiteSpace(storeIdOrSkuStoreId))
+        {
+            return false;
+        }
+
+        return MatchesProductStoreId(storeIdOrSkuStoreId, productStoreId)
+            || storeIdOrSkuStoreId.StartsWith($"{productStoreId}/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesProductStoreId(string? candidateStoreId, string productStoreId)
+    {
+        return !string.IsNullOrWhiteSpace(candidateStoreId)
+            && string.Equals(candidateStoreId, productStoreId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatLicenseDetails(StoreAppLicense license)
+    {
+        return string.Join(
+            ",",
+            license.AddOnLicenses.Select(item =>
+                $"key={item.Key}|sku={item.Value.SkuStoreId}|offer={item.Value.InAppOfferToken}|active={item.Value.IsActive}"));
     }
 
     private StoreContext CreateStoreContext()
@@ -380,4 +649,26 @@ public sealed class StoreEntitlementService : IEntitlementService
     {
         _processLogService.LogException("Premium", eventName, ex);
     }
+
+    private TimeSpan ResolveRetryDelay(int attemptIndex)
+    {
+        if (_options.RefreshRetryDelays.Length == 0 || attemptIndex < 0)
+        {
+            return TimeSpan.Zero;
+        }
+
+        int index = Math.Min(attemptIndex, _options.RefreshRetryDelays.Length - 1);
+        return _options.RefreshRetryDelays[index];
+    }
+
+    private sealed record PremiumProductResolution(
+        StoreProduct? Product,
+        string MatchReason,
+        IReadOnlyList<string> CandidateStoreIds,
+        IReadOnlyList<string> UserCollectionStoreIds,
+        bool IsInUserCollection);
+
+    private sealed record PremiumLicenseResolution(
+        StoreLicense? License,
+        string MatchReason);
 }

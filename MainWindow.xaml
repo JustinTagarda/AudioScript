@@ -447,14 +447,14 @@
                        Margin="0"
                        MinHeight="28"
                        Padding="6,2">
-                <StatusBarItem DockPanel.Dock="Right"
+                <StatusBarItem DockPanel.Dock="Left"
                                Padding="0">
                     <StackPanel Orientation="Horizontal"
-                                VerticalAlignment="Center"
-                                ToolTip="{Binding ApplicationUpdateStatusText}">
+                                VerticalAlignment="Center">
                         <TextBlock Text="{Binding ApplicationUpdateStatusText}"
                                    FontSize="12"
-                                   TextTrimming="CharacterEllipsis">
+                                   TextTrimming="CharacterEllipsis"
+                                   TextAlignment="Left">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Foreground"
@@ -491,12 +491,50 @@
                                 </Style>
                             </ProgressBar.Style>
                         </ProgressBar>
+                        <Button Content="Restart"
+                                Tag="&#xE777;"
+                                Margin="10,0,0,0"
+                                Command="{Binding RestartApplicationCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button"
+                                       BasedOn="{StaticResource ToolbarButtonStyle}">
+                                    <Setter Property="Visibility"
+                                            Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsApplicationRestartVisible}"
+                                                     Value="True">
+                                            <Setter Property="Visibility"
+                                                    Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
                     </StackPanel>
                 </StatusBarItem>
 
                 <StatusBarItem DockPanel.Dock="Left"
                                Padding="0">
+                    <StatusBarItem.Style>
+                        <Style TargetType="StatusBarItem">
+                            <Setter Property="Visibility"
+                                    Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsApplicationFooterDefaultVisible}"
+                                             Value="False">
+                                    <Setter Property="Visibility"
+                                            Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </StatusBarItem.Style>
                     <TextBlock Text="© 2026 JustinTagarda. All rights reserved."
+                               FontSize="12"
+                               TextTrimming="CharacterEllipsis"/>
+                </StatusBarItem>
+                <StatusBarItem DockPanel.Dock="Right"
+                               Padding="0">
+                    <TextBlock Text="{Binding ApplicationVersionStatusText}"
                                FontSize="12"
                                TextTrimming="CharacterEllipsis"/>
                 </StatusBarItem>

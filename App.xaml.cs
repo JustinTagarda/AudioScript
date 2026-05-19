@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,7 +16,8 @@ public partial class App : System.Windows.Application
 {
     private const string SingleInstanceMutexName = @"Local\AudioScript_SingleInstance";
     private const string ActivateEventName = @"Local\AudioScript_Activate";
-    private const string PremiumStoreId = "9PD5288V5Q49";
+    private static readonly string[] PremiumStoreIds = ["9PD5288V5Q49"];
+    private static readonly string[] PremiumProductIds = ["audioscript_premium_lifetime"];
 
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
@@ -65,6 +67,7 @@ public partial class App : System.Windows.Application
         var processLogService = new ProcessLogService(appDataPathProvider.LogsPath);
         _processLogService = processLogService;
         RegisterGlobalExceptionLogging(processLogService);
+        processLogService.UpdateCrashContext("app.startup.bootstrap");
         processLogService.Log("App", $"Application startup initiated. Log file: {processLogService.LogFilePath}");
         processLogService.Log(
             "AppData",
@@ -77,25 +80,27 @@ public partial class App : System.Windows.Application
             assetProvisioningService,
             processLogService);
 
-        ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        if (!RunStartupProvisioningIfRequired(startupProvisioningCoordinator, processLogService))
-        {
-            Shutdown();
-            return;
-        }
-
-        var transcriptionOptions = new TranscriptionOptions();
+        var appDataMigrationService = new AppDataMigrationService(appDataPathProvider, processLogService);
         var whisperModelManager = new WhisperModelManager(
             processLogService,
             appDataPathProvider.ModelsPath,
             assetProvisioningService: assetProvisioningService);
-        var appDataMigrationService = new AppDataMigrationService(appDataPathProvider, processLogService);
         appDataMigrationService.MigrateLegacyData(whisperModelManager.Models);
         _appPreferencesStore = new AppPreferencesStore(appDataPathProvider.SettingsFilePath);
         _appThemeService = new AppThemeService();
 
         AppPreferencesSnapshot appPreferencesSnapshot = _appPreferencesStore.Load();
         _appThemeService.Apply(appPreferencesSnapshot.ThemePreference);
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        if (!RunStartupProvisioningIfRequired(startupProvisioningCoordinator, processLogService))
+        {
+            processLogService.UpdateCrashContext("app.startup.provisioning.aborted");
+            Shutdown();
+            return;
+        }
+
+        var transcriptionOptions = new TranscriptionOptions();
         var audioStandardizer = new AudioStandardizer();
         var silenceIntervalDetector = new SilenceIntervalDetector();
         var audioChunkingOptions = AudioChunkingOptions.Default;
@@ -114,7 +119,9 @@ public partial class App : System.Windows.Application
             audioStandardizer,
             transcriptionOptions,
             processLogService,
-            whisperModelManager);
+            whisperModelManager,
+            assetProvisioningService,
+            appDataPathProvider);
         var pyannoteCommunityModelManager = new PyannoteCommunityModelManager(
             assetProvisioningService,
             appDataPathProvider);
@@ -149,7 +156,8 @@ public partial class App : System.Windows.Application
             new StoreEntitlementServiceOptions
             {
                 PremiumProductDisplayName = "AudioScript Premium",
-                PremiumStoreId = PremiumStoreId,
+                PremiumStoreIds = PremiumStoreIds,
+                PremiumProductIds = PremiumProductIds,
                 PremiumKeyword = "premium",
             });
         _appUpdateService = new AppUpdateService(
@@ -170,7 +178,8 @@ public partial class App : System.Windows.Application
             appPreferencesSnapshot,
             _appUpdateService,
             _entitlementService,
-            () => whisperModelManager.GetSelectableTranscriptionModels());
+            () => whisperModelManager.GetSelectableTranscriptionModels(),
+            RestartApplicationAsync);
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
@@ -195,13 +204,14 @@ public partial class App : System.Windows.Application
         _windowPlacementService.Apply(mainWindow);
         _windowPlacementService.Attach(mainWindow);
 
+        _ = _entitlementService.RefreshAsync();
         MainWindow = mainWindow;
         mainWindow.Show();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         updateOwnerWindowHandle = new WindowInteropHelper(mainWindow).Handle;
-        _ = _entitlementService.RefreshAsync();
         _ = _appUpdateService.StartAsync();
         processLogService.Log("App", "Application startup completed.");
+        processLogService.UpdateCrashContext("app.idle.ready");
     }
 
     private bool RunStartupProvisioningIfRequired(
@@ -305,9 +315,35 @@ public partial class App : System.Windows.Application
         };
     }
 
+    private Task RestartApplicationAsync()
+    {
+        try
+        {
+            string executablePath = Environment.ProcessPath
+                ?? Process.GetCurrentProcess().MainModule?.FileName
+                ?? throw new InvalidOperationException("Unable to resolve current executable path.");
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = executablePath,
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(executablePath) ?? Environment.CurrentDirectory,
+            };
+
+            Process.Start(startInfo);
+            Dispatcher.BeginInvoke(new Action(Shutdown));
+            return Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            return Task.FromException(ex);
+        }
+    }
+
     protected override void OnExit(System.Windows.ExitEventArgs e)
     {
         _processLogService?.Log("App", "Application exit initiated.");
+        _processLogService?.UpdateCrashContext("app.shutdown.started");
         try
         {
             _appUpdateService?.StopAsync().GetAwaiter().GetResult();
@@ -368,6 +404,7 @@ public partial class App : System.Windows.Application
         _assetProvisioningService?.Dispose();
         _assetProvisioningService = null;
         _processLogService?.Log("App", "Application exit completed.");
+        _processLogService?.UpdateCrashContext("app.shutdown.completed");
         _processLogService?.Dispose();
     }
 
@@ -379,6 +416,7 @@ public partial class App : System.Windows.Application
 
         void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
         {
+            processLogService.UpdateCrashContext("app.crash.dispatcher_unhandled", e.Exception.GetType().FullName);
             processLogService.LogException("App", "Unhandled dispatcher exception.", e.Exception);
         }
 
@@ -386,10 +424,12 @@ public partial class App : System.Windows.Application
         {
             if (e.ExceptionObject is Exception exception)
             {
+                processLogService.UpdateCrashContext("app.crash.appdomain_unhandled", exception.GetType().FullName);
                 processLogService.LogException("App", $"Unhandled AppDomain exception. IsTerminating={e.IsTerminating}.", exception);
                 return;
             }
 
+            processLogService.UpdateCrashContext("app.crash.appdomain_unhandled_non_exception");
             processLogService.Log(
                 "App",
                 $"Unhandled AppDomain exception object of type '{e.ExceptionObject?.GetType().FullName ?? "unknown"}'. IsTerminating={e.IsTerminating}.",
@@ -398,6 +438,7 @@ public partial class App : System.Windows.Application
 
         void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
         {
+            processLogService.UpdateCrashContext("app.crash.unobserved_task", e.Exception.GetType().FullName);
             processLogService.LogException("App", "Unobserved task exception.", e.Exception);
         }
     }

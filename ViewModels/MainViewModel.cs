@@ -44,6 +44,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private readonly AppPreferencesStore _appPreferencesStore;
     private readonly AppThemeService _appThemeService;
     private readonly IAppUpdateService? _appUpdateService;
+    private readonly Func<Task>? _restartApplicationAsync;
     private readonly IEntitlementService? _entitlementService;
     private readonly Func<IReadOnlyList<TranscriptionModelOption>> _availableModelsProvider;
     private readonly SynchronizationContext _uiContext;
@@ -100,7 +101,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppPreferencesSnapshot appPreferencesSnapshot,
         IAppUpdateService? appUpdateService = null,
         IEntitlementService? entitlementService = null,
-        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null)
+        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null,
+        Func<Task>? restartApplicationAsync = null)
     {
         _audioTranscriptionService = audioTranscriptionService;
         _speakerDiarizationService = speakerDiarizationService;
@@ -110,6 +112,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _appPreferencesStore = appPreferencesStore;
         _appThemeService = appThemeService;
         _appUpdateService = appUpdateService;
+        _restartApplicationAsync = restartApplicationAsync;
         _entitlementService = entitlementService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
         _appUpdateSnapshot = appUpdateService?.CurrentSnapshot
@@ -144,6 +147,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DeleteSelectedSessionCommand = new AsyncRelayCommand(DeleteSelectedSessionAsync, CanDeleteSelectedSession);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
+        RestartApplicationCommand = new AsyncRelayCommand(RestartApplicationAsync, CanRestartApplication);
 
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
@@ -209,6 +213,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
+    public AsyncRelayCommand RestartApplicationCommand { get; }
 
     public void RefreshEngines(
         IEnumerable<TranscriptionModelOption> models,
@@ -379,6 +384,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool IsPremiumProductAvailable =>
         _entitlementSnapshot.IsPremiumProductAvailable;
+
+    public PremiumEntitlementState PremiumEntitlementState =>
+        _entitlementSnapshot.State;
+
+    public bool IsPremiumEntitlementChecking =>
+        _entitlementSnapshot.State == PremiumEntitlementState.Checking;
+
+    public bool IsPremiumEntitlementVerificationFailed =>
+        _entitlementSnapshot.State is PremiumEntitlementState.VerificationFailed
+            or PremiumEntitlementState.VerificationInconclusive;
+
+    public bool CanPromptPremiumPurchase =>
+        _entitlementSnapshot.State == PremiumEntitlementState.VerifiedBasic;
+
+    public bool IsPremiumStatusBannerVisible =>
+        _entitlementSnapshot.State != PremiumEntitlementState.VerifiedPremium;
 
     public string PremiumProductDisplayName =>
         _entitlementSnapshot.PremiumProductDisplayName;
@@ -598,22 +619,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public string ApplicationVersionStatusText
     {
-        get => $"Version {_appUpdateSnapshot.InstalledVersion}";
+        get => $"Version: {_appUpdateSnapshot.InstalledVersion}";
     }
 
     public string ApplicationUpdateStatusText
     {
         get
         {
-            if (_appUpdateSnapshot.State == AppUpdateState.Idle
-                || string.IsNullOrWhiteSpace(_appUpdateSnapshot.StageText))
+            return _appUpdateSnapshot.State switch
             {
-                return ApplicationVersionStatusText;
-            }
-
-            return string.IsNullOrWhiteSpace(_appUpdateSnapshot.StatusMessage)
-                ? $"{ApplicationVersionStatusText} - {_appUpdateSnapshot.StageText}"
-                : $"{ApplicationVersionStatusText} - {_appUpdateSnapshot.StageText}: {_appUpdateSnapshot.StatusMessage}";
+                AppUpdateState.Checking => "Checking for updates",
+                AppUpdateState.Downloading => "Downloading update",
+                AppUpdateState.Installing => "Installing update",
+                AppUpdateState.Completed => "Update installed. Restart required",
+                AppUpdateState.Deferred => "Update deferred",
+                AppUpdateState.Failed => "Update check failed",
+                _ => string.Empty,
+            };
         }
     }
 
@@ -632,6 +654,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool IsMandatoryApplicationUpdateAvailable =>
         _appUpdateSnapshot.IsMandatoryUpdateAvailable;
+
+    public bool IsApplicationFooterCompactMode =>
+        IsApplicationUpdateActive;
+
+    public bool IsApplicationFooterDefaultVisible =>
+        !IsApplicationFooterCompactMode;
+
+    public bool IsApplicationRestartVisible =>
+        _appUpdateSnapshot.State == AppUpdateState.Completed;
 
     public string PremiumStatusText =>
         _entitlementSnapshot.StatusMessage;
@@ -1415,6 +1446,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppendLog(
             $"Transcribe Audio starting. engine='{selectedEngineId}', audioPath='{audioFilePath}', " +
             $"pendingImportPath='{_pendingImportedAudioFilePath}'.");
+        _processLogService.UpdateCrashContext(
+            "transcribe_audio.viewmodel.start",
+            $"engine='{selectedEngineId}', audioPath='{audioFilePath}'");
         bool shouldRestoreAudioPreview = ReleaseAudioPreviewForProcessing(audioFilePath);
         string transcriptionAudioFilePath = audioFilePath;
         bool deleteTranscriptionAudioFile = false;
@@ -1432,6 +1466,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             selectedEngineId = ResolveSelectedFileTranscriptionEngineId();
             (transcriptionAudioFilePath, deleteTranscriptionAudioFile) =
                 PrepareAudioFilePathForTranscription(audioFilePath);
+            _processLogService.UpdateCrashContext(
+                "transcribe_audio.viewmodel.invoke_service",
+                $"engine='{selectedEngineId}', transcriptionAudioPath='{transcriptionAudioFilePath}'");
             TranscriptionResult result = await _audioTranscriptionService.TranscribeAudioFileAsync(
                 transcriptionAudioFilePath,
                 selectedEngineId,
@@ -1464,15 +1501,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             }
 
             AppendLog($"Transcribe Audio completed with {FinalizedTranscriptLines.Count:N0} line(s).");
+            _processLogService.UpdateCrashContext("transcribe_audio.viewmodel.completed");
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             AppendLog("Transcribe Audio canceled.");
+            _processLogService.UpdateCrashContext("transcribe_audio.viewmodel.canceled");
             return false;
         }
         catch (Exception ex)
         {
+            _processLogService.UpdateCrashContext("transcribe_audio.viewmodel.failed", ex.GetType().FullName);
             AppendLog(
                 $"Transcribe Audio failed. engine='{selectedEngineId}', audioPath='{audioFilePath}', error='{ex.Message}'.");
             throw;
@@ -2769,6 +2809,30 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DeleteSelectedSessionCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
+        RestartApplicationCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool CanRestartApplication()
+    {
+        return IsApplicationRestartVisible && _restartApplicationAsync is not null;
+    }
+
+    private async Task RestartApplicationAsync()
+    {
+        if (_restartApplicationAsync is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _restartApplicationAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Application restart failed: {ex.Message}");
+            RaiseError($"Unable to restart AudioScript: {ex.Message}");
+        }
     }
 
     private void NotifyInteractionAvailabilityChanged()
@@ -2776,6 +2840,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(IsEngineSelectionEnabled));
         NotifyPropertyChanged(nameof(HasPremium));
         NotifyPropertyChanged(nameof(IsPremiumProductAvailable));
+        NotifyPropertyChanged(nameof(PremiumEntitlementState));
+        NotifyPropertyChanged(nameof(IsPremiumEntitlementChecking));
+        NotifyPropertyChanged(nameof(IsPremiumEntitlementVerificationFailed));
+        NotifyPropertyChanged(nameof(CanPromptPremiumPurchase));
+        NotifyPropertyChanged(nameof(IsPremiumStatusBannerVisible));
         NotifyPropertyChanged(nameof(PremiumProductDisplayName));
         NotifyPropertyChanged(nameof(CanUseLiveTranscription));
         NotifyPropertyChanged(nameof(CanUseSpeakerDiarization));
@@ -4358,6 +4427,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(ApplicationUpdateProgressPercent));
             NotifyPropertyChanged(nameof(IsApplicationUpdateActive));
             NotifyPropertyChanged(nameof(IsMandatoryApplicationUpdateAvailable));
+            NotifyPropertyChanged(nameof(IsApplicationFooterCompactMode));
+            NotifyPropertyChanged(nameof(IsApplicationFooterDefaultVisible));
+            NotifyPropertyChanged(nameof(IsApplicationRestartVisible));
+            RestartApplicationCommand.RaiseCanExecuteChanged();
         }, null);
     }
 
@@ -4435,6 +4508,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         return result;
+    }
+
+    public async Task RefreshPremiumEntitlementAsync(CancellationToken cancellationToken = default)
+    {
+        if (_entitlementService is null)
+        {
+            return;
+        }
+
+        await _entitlementService.RefreshAsync(cancellationToken);
     }
 
     private IEnumerable<TranscriptionModelOption> FilterAccessibleEngines(IEnumerable<TranscriptionModelOption> models)

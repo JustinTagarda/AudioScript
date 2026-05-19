@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 
 namespace AudioScript.Services;
 
@@ -22,6 +23,7 @@ public sealed class ProcessLogService : IDisposable
     private readonly object _sync = new();
     private readonly string _logsDirectoryPath;
     private readonly string _logFilePath;
+    private readonly string _runStateFilePath;
     private readonly int _processId;
     private readonly string _processName;
     private readonly string _machineName;
@@ -30,6 +32,9 @@ public sealed class ProcessLogService : IDisposable
     private readonly string _osDescription;
     private readonly Architecture _processArchitecture;
     private bool _disposed;
+    private string _lastCrashContext = "startup";
+    private DateTimeOffset _runStartedAtUtc;
+    private DateTimeOffset _lastHeartbeatUtc;
 
     public ProcessLogService(string? logsDirectoryPath = null)
     {
@@ -50,6 +55,12 @@ public sealed class ProcessLogService : IDisposable
         _logFilePath = Path.Combine(
             _logsDirectoryPath,
             $"audioscript-{DateTime.Now:yyyyMMdd}.log");
+        _runStateFilePath = Path.Combine(_logsDirectoryPath, "audioscript-runstate.json");
+
+        TryLogPreviousUncleanRun();
+        _runStartedAtUtc = DateTimeOffset.UtcNow;
+        _lastHeartbeatUtc = _runStartedAtUtc;
+        PersistRunState(cleanExit: false, currentContext: _lastCrashContext, extra: null);
     }
 
     public event EventHandler<string>? LogEmitted;
@@ -77,7 +88,15 @@ public sealed class ProcessLogService : IDisposable
         string filePayload = BuildLogPrefix(level);
 
         WriteToFile(filePayload, payloadPrefix);
+        TouchHeartbeat();
         LogEmitted?.Invoke(this, payloadPrefix);
+    }
+
+    public void UpdateCrashContext(string context, string? extra = null)
+    {
+        string normalized = string.IsNullOrWhiteSpace(context) ? "unknown" : context.Trim();
+        _lastCrashContext = normalized;
+        PersistRunState(cleanExit: false, currentContext: normalized, extra: extra);
     }
 
     public void LogException(string source, string message, Exception exception)
@@ -112,6 +131,7 @@ public sealed class ProcessLogService : IDisposable
 
     public void Dispose()
     {
+        PersistRunState(cleanExit: true, currentContext: _lastCrashContext, extra: "dispose");
         _disposed = true;
     }
 
@@ -196,4 +216,81 @@ public sealed class ProcessLogService : IDisposable
         Version? version = assemblyName?.Version;
         return version?.ToString() ?? "unknown";
     }
+
+    private void TouchHeartbeat()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if ((now - _lastHeartbeatUtc) < TimeSpan.FromSeconds(2))
+        {
+            return;
+        }
+
+        _lastHeartbeatUtc = now;
+        PersistRunState(cleanExit: false, currentContext: _lastCrashContext, extra: null);
+    }
+
+    private void TryLogPreviousUncleanRun()
+    {
+        try
+        {
+            if (!File.Exists(_runStateFilePath))
+            {
+                return;
+            }
+
+            string json = File.ReadAllText(_runStateFilePath);
+            RunStateSnapshot? snapshot = JsonSerializer.Deserialize<RunStateSnapshot>(json);
+            if (snapshot is null || snapshot.CleanExit)
+            {
+                return;
+            }
+
+            string message =
+                $"Previous run ended unexpectedly. previousPid={snapshot.Pid}, " +
+                $"startedUtc='{snapshot.StartedUtc:O}', lastHeartbeatUtc='{snapshot.LastHeartbeatUtc:O}', " +
+                $"lastContext='{snapshot.CurrentContext ?? "unknown"}', extra='{snapshot.Extra ?? "none"}'.";
+            Log("CrashDiagnostics", message, ProcessLogLevel.Warning);
+        }
+        catch
+        {
+            // Crash-state parsing is diagnostic only.
+        }
+    }
+
+    private void PersistRunState(bool cleanExit, string currentContext, string? extra)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            try
+            {
+                Directory.CreateDirectory(_logsDirectoryPath);
+                var snapshot = new RunStateSnapshot(
+                    Pid: _processId,
+                    StartedUtc: _runStartedAtUtc == default ? DateTimeOffset.UtcNow : _runStartedAtUtc,
+                    LastHeartbeatUtc: DateTimeOffset.UtcNow,
+                    CurrentContext: currentContext,
+                    Extra: extra,
+                    CleanExit: cleanExit);
+                string json = JsonSerializer.Serialize(snapshot);
+                File.WriteAllText(_runStateFilePath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            }
+            catch
+            {
+                // Never let diagnostics failures affect app behavior.
+            }
+        }
+    }
+
+    private sealed record RunStateSnapshot(
+        int Pid,
+        DateTimeOffset StartedUtc,
+        DateTimeOffset LastHeartbeatUtc,
+        string? CurrentContext,
+        string? Extra,
+        bool CleanExit);
 }

@@ -10,7 +10,7 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
 {
     private string _headerText = "Initializing... please wait";
     private string _currentAssetText = "Checking required startup assets...";
-    private string _currentActivityText = "Preparing startup asset installation.";
+    private string _currentActivityText = "Downloading and installing required startup assets.";
     private bool _showCancelButton = true;
     private bool _showCloseButton;
     private bool _wasSuccessful;

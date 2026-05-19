@@ -6,6 +6,10 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
 {
     private readonly ProcessLogService _processLogService;
     private readonly Func<IntPtr>? _ownerWindowHandleProvider;
+    private string _lastInstalledVersion = "unknown";
+    private string _lastAvailableVersion = "unknown";
+    private int _lastUpdateCount;
+    private bool _lastMandatory;
 
     public StoreUpdateClient(ProcessLogService processLogService, Func<IntPtr>? ownerWindowHandleProvider = null)
     {
@@ -24,10 +28,20 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
                 Version: FormatPackageVersion(update.Package.Id.Version),
                 IsMandatory: update.Mandatory))
             .ToArray();
+        _lastUpdateCount = updateInfos.Length;
+        _lastAvailableVersion = updateInfos
+            .Select(update => update.Version)
+            .Where(version => !string.IsNullOrWhiteSpace(version))
+            .OrderByDescending(version => version, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault() ?? "unknown";
+        _lastMandatory = updateInfos.Any(update => update.IsMandatory);
 
         Log(
             "store_update_query_completed",
-            $"count={updateInfos.Length}; canSilent={context.CanSilentlyDownloadStorePackageUpdates}");
+            operation: "check",
+            state: "Completed",
+            failedPackageCount: 0,
+            extra: $"canSilent={context.CanSilentlyDownloadStorePackageUpdates}");
 
         return new StoreUpdateQueryResult(
             new StorePackageUpdateSet(updateInfos, updates),
@@ -86,7 +100,10 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
 
         Log(
             $"store_update_{operationName}_completed",
-            $"state={state}; failedPackageCount={failedPackageFamilyNames.Length}; failedPackages={string.Join(",", failedPackageFamilyNames)}");
+            operation: operationName,
+            state: state.ToString(),
+            failedPackageCount: failedPackageFamilyNames.Length,
+            extra: $"failedPackages={string.Join(",", failedPackageFamilyNames)}");
         return new StoreUpdateOperationResult(state, failedPackageFamilyNames.Length, FailedPackageFamilyNames: failedPackageFamilyNames);
     }
 
@@ -138,15 +155,24 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
         {
             _processLogService.Log(
                 "StoreUpdate",
-                $"store_context_window_initialize_failed; type={ex.GetType().Name}; message={ex.Message}",
+                $"store_context_window_initialize_failed; {UpdateLogMetadata.Build("check", "Error", _lastInstalledVersion, _lastAvailableVersion, _lastUpdateCount, _lastMandatory, 0, ex)}",
                 ProcessLogLevel.Warning);
         }
 
         return context;
     }
 
-    private void Log(string eventName, string metadata)
+    private void Log(string eventName, string operation, string state, int failedPackageCount, string? extra = null)
     {
+        string metadata = UpdateLogMetadata.Build(
+            operation,
+            state,
+            _lastInstalledVersion,
+            _lastAvailableVersion,
+            _lastUpdateCount,
+            _lastMandatory,
+            failedPackageCount,
+            extra: extra);
         _processLogService.Log("StoreUpdate", $"{eventName}; {metadata}");
     }
 }

@@ -374,7 +374,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             ShowBlockingMessage(
                 "Speaker detection unavailable",
-                "Speaker diarization is not supported on ARM64 devices in this version.");
+                "Speaker diarization requires an x64 AudioScript build.");
             return;
         }
 
@@ -418,6 +418,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
+            _processLogService?.UpdateCrashContext(
+                "transcribe_audio.batch.run_started",
+                $"engine='{vm.SelectedEngineId}', source='{vm.LoadedAudioFilePath}'");
             LogTranscribeAudioBatch("Transcribe Audio requested.");
             var transcriptionProgress = new Progress<TranscriptionProgressSnapshot>(ApplyTranscriptionProgress);
 
@@ -436,6 +439,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             vm.CompletePreparedTranscribeAudioWorkflow();
+            _processLogService?.UpdateCrashContext("transcribe_audio.batch.completed");
             ShowCopyToast(
                 "Transcribe Audio completed",
                 "Transcript rows are ready.",
@@ -443,10 +447,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            _processLogService?.UpdateCrashContext("transcribe_audio.batch.canceled");
             vm.CancelPreparedTranscribeAudioWorkflow();
         }
         catch (Exception ex)
         {
+            _processLogService?.UpdateCrashContext("transcribe_audio.batch.failed", ex.GetType().FullName);
             vm.LogHandledException("Transcribe Audio", ex);
             LogTranscribeAudioBatch($"Transcribe Audio failed: {ex.Message}");
             ShowTranscribeAudioErrorDialog(BuildTranscribeAudioFailureMessage(vm, ex));
@@ -1599,6 +1605,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return false;
         }
 
+        if (vm.IsPremiumEntitlementChecking || vm.IsPremiumEntitlementVerificationFailed)
+        {
+            await vm.RefreshPremiumEntitlementAsync();
+            if (vm.HasPremium)
+            {
+                return true;
+            }
+        }
+
+        if (vm.IsPremiumEntitlementChecking)
+        {
+            ShowCopyToast(
+                "Checking license",
+                "AudioScript is still verifying your Microsoft Store entitlement. Try again in a moment.",
+                ToastNotificationType.Info);
+            return false;
+        }
+
+        if (vm.IsPremiumEntitlementVerificationFailed)
+        {
+            ShowErrorDialog(
+                "AudioScript could not verify your Microsoft Store entitlement right now. Please ensure Microsoft Store is signed in and try Re-check Premium.",
+                title: $"{featureName} unavailable");
+            return false;
+        }
+
+        if (!vm.CanPromptPremiumPurchase)
+        {
+            ShowCopyToast(
+                "Premium status updating",
+                "AudioScript is updating premium status. Please try again.",
+                ToastNotificationType.Info);
+            return false;
+        }
+
         var dialog = new ConfirmationDialogWindow(
             "Premium feature",
             message,
@@ -2022,10 +2063,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 .Select(candidate => candidate.Message)
                 .Where(message => !string.IsNullOrWhiteSpace(message)));
 
-        if (combinedMessages.Contains("ARM64", StringComparison.OrdinalIgnoreCase)
+        if (combinedMessages.Contains("x64", StringComparison.OrdinalIgnoreCase)
             || ex is PlatformNotSupportedException)
         {
-            return "Speaker diarization is not supported on ARM64 devices in this version.";
+            return "Speaker diarization requires an x64 AudioScript build.";
         }
 
         if (combinedMessages.Contains("pyannote", StringComparison.OrdinalIgnoreCase)
@@ -2083,7 +2124,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (!_pyannoteCommunityModelManager.IsSupportedOnCurrentArchitecture)
         {
-            ShowTranscribeAudioErrorDialog("Speaker diarization is not supported on ARM64 devices in this version.");
+            ShowTranscribeAudioErrorDialog("Speaker diarization requires an x64 AudioScript build.");
             return false;
         }
 

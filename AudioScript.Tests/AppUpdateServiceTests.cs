@@ -50,7 +50,7 @@ public sealed class AppUpdateServiceTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_DownloadsThenWaitsForIdleBeforeInstall()
+    public async Task RunOnceAsync_DownloadsAndPublishesRestartRequiredWithoutInstall()
     {
         bool isBusy = true;
         var client = new FakeStoreUpdateClient();
@@ -58,16 +58,12 @@ public sealed class AppUpdateServiceTests
         List<AppUpdateState> states = new();
         service.SnapshotChanged += (_, snapshot) => states.Add(snapshot.State);
 
-        Task runTask = service.RunOnceAsync();
-        await WaitUntilAsync(() => states.Contains(AppUpdateState.Deferred));
+        await service.RunOnceAsync();
+
+        Assert.Contains(AppUpdateState.Downloading, states);
         Assert.Equal(1, client.DownloadCount);
         Assert.Equal(0, client.InstallCount);
-
-        isBusy = false;
-        await runTask;
-
         Assert.Equal(AppUpdateState.Completed, service.CurrentSnapshot.State);
-        Assert.Equal(1, client.InstallCount);
     }
 
     [Fact]
@@ -111,24 +107,15 @@ public sealed class AppUpdateServiceTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_InstallFailure_RetriesInstallLater()
+    public async Task RunOnceAsync_DoesNotCallInstallDuringForegroundFlow()
     {
         var client = new FakeStoreUpdateClient();
-        client.InstallHandler = (_, _, _) =>
-        {
-            StoreUpdateOperationState state = client.InstallCount == 1
-                ? StoreUpdateOperationState.OtherError
-                : StoreUpdateOperationState.Completed;
-            return Task.FromResult(new StoreUpdateOperationResult(state));
-        };
         await using var service = CreateService(isPackaged: true, client);
 
         await service.RunOnceAsync();
 
-        Assert.Equal(AppUpdateState.Deferred, service.CurrentSnapshot.State);
-        await WaitUntilAsync(() => service.CurrentSnapshot.State == AppUpdateState.Completed);
         Assert.Equal(AppUpdateState.Completed, service.CurrentSnapshot.State);
-        Assert.Equal(2, client.InstallCount);
+        Assert.Equal(0, client.InstallCount);
     }
 
     [Fact]
@@ -137,7 +124,6 @@ public sealed class AppUpdateServiceTests
         var client = new FakeStoreUpdateClient
         {
             DownloadProgressValues = new[] { double.NaN, 1.5 },
-            InstallProgressValues = new[] { -1.0, 0.75 },
         };
         await using var service = CreateService(isPackaged: true, client);
         List<double> progressValues = new();
@@ -153,7 +139,6 @@ public sealed class AppUpdateServiceTests
 
         Assert.All(progressValues, value => Assert.InRange(value, 0, 1));
         Assert.Contains(1, progressValues);
-        Assert.Contains(0.75, progressValues);
     }
 
     [Fact]
@@ -162,6 +147,55 @@ public sealed class AppUpdateServiceTests
         Assert.Equal("1.2.3.4", AppVersionProvider.FormatVersion(new Version(1, 2, 3, 4)));
         Assert.Equal("1.2.3", AppVersionProvider.FormatVersion(new Version(1, 2, 3, 0)));
         Assert.Equal("1.2", AppVersionProvider.FormatVersion(new Version(1, 2)));
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_LogsCoreMetadataSchema()
+    {
+        string logPath = Path.Combine(Path.GetTempPath(), $"AudioScript-update-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(logPath);
+        try
+        {
+            var client = new FakeStoreUpdateClient
+            {
+                QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: true, canSilentlyDownload: false)),
+            };
+            await using var service = new AppUpdateService(
+                new FakeVersionProvider(isPackaged: true),
+                client,
+                new ProcessLogService(logPath),
+                () => false,
+                new AppUpdateServiceOptions
+                {
+                    StartupDelay = TimeSpan.Zero,
+                    DiscoveryRetryDelay = TimeSpan.FromMinutes(10),
+                    InstallRetryDelay = TimeSpan.FromMilliseconds(20),
+                    InstallQuietPeriod = TimeSpan.FromMilliseconds(1),
+                    MaxDiscoveryRetryCount = 0,
+                    MaxInstallRetryCount = 0,
+                });
+
+            await service.RunOnceAsync();
+
+            string logFile = Directory.GetFiles(logPath, "audioscript-*.log").Single();
+            string logText = await File.ReadAllTextAsync(logFile);
+            Assert.Contains("operation=", logText, StringComparison.Ordinal);
+            Assert.Contains("state=", logText, StringComparison.Ordinal);
+            Assert.Contains("installedVersion=", logText, StringComparison.Ordinal);
+            Assert.Contains("availableVersion=", logText, StringComparison.Ordinal);
+            Assert.Contains("updateCount=", logText, StringComparison.Ordinal);
+            Assert.Contains("mandatory=", logText, StringComparison.Ordinal);
+            Assert.Contains("failedPackageCount=", logText, StringComparison.Ordinal);
+            Assert.Contains("exceptionType=", logText, StringComparison.Ordinal);
+            Assert.Contains("exceptionMessage=", logText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(logPath))
+            {
+                Directory.Delete(logPath, recursive: true);
+            }
+        }
     }
 
     private static AppUpdateService CreateService(

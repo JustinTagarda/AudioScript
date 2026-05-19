@@ -63,7 +63,7 @@ public partial class StartupProvisioningWindow : Window
     {
         MessageBoxResult result = System.Windows.MessageBox.Show(
             this,
-            "If you continue, the startup asset installation will be canceled and AudioScript will exit.",
+            "If you continue, startup asset installation will be canceled and AudioScript will exit.",
             "Cancel startup initialization",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,

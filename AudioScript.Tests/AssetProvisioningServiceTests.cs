@@ -169,6 +169,58 @@ public sealed class AssetProvisioningServiceTests
     }
 
     [Fact]
+    public async Task InstallAssetAsync_DoesNotFailOnExpectedBytesMismatch_WhenSha256IsNotConfigured()
+    {
+        string rootPath = CreateTempDirectory();
+
+        try
+        {
+            string repoRoot = Path.Combine(rootPath, "repo");
+            string localAppData = Path.Combine(rootPath, "local");
+            byte[] payload = [1, 2, 3, 4];
+            string manifestPath = WriteManifest(rootPath, new
+            {
+                schemaVersion = 1,
+                assets = new[]
+                {
+                    new
+                    {
+                        id = "whisper-small",
+                        displayName = "Whisper small",
+                        version = "2.0.0.0",
+                        downloadUri = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+                        downloadSources = new[]
+                        {
+                            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+                            "https://huggingface.co/mobilint/whisper.cpp/resolve/main/ggml-small.bin?download=true",
+                            "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+                        },
+                        installKind = "File",
+                        installRoot = "Models",
+                        installRelativePath = "ggml-small.bin",
+                        expectedBytes = 999999999,
+                        required = true
+                    }
+                }
+            });
+
+            using var logs = new ProcessLogService(Path.Combine(rootPath, "logs"));
+            AppDataPathProvider paths = new(localAppDataPath: localAppData);
+            using var httpClient = CreateHttpClient((_, _) => CreateBinaryResponse(payload));
+            using var service = new AssetProvisioningService(logs, paths, manifestPath, httpClient, repoRootPath: repoRoot);
+
+            await service.InstallAssetAsync("whisper-small", progress: null, CancellationToken.None);
+
+            Assert.True(File.Exists(Path.Combine(paths.ModelsPath, "ggml-small.bin")));
+            Assert.True(service.IsInstalled("whisper-small"));
+        }
+        finally
+        {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
     public async Task InstallAssetAsync_FallsBackToNextDownloadSource_WhenFirstSourceFails()
     {
         string rootPath = CreateTempDirectory();
@@ -203,6 +255,8 @@ public sealed class AssetProvisioningServiceTests
                 }
             });
 
+            int firstSourceCalls = 0;
+            int secondSourceCalls = 0;
             using var logs = new ProcessLogService(Path.Combine(rootPath, "logs"));
             AppDataPathProvider paths = new(localAppDataPath: localAppData);
             using var httpClient = CreateHttpClient((request, _) =>
@@ -212,8 +266,17 @@ public sealed class AssetProvisioningServiceTests
                     return new HttpResponseMessage(HttpStatusCode.BadRequest);
                 }
 
-                if (request.RequestUri.Host.Equals("huggingface.co", StringComparison.OrdinalIgnoreCase))
+                if (request.RequestUri.Host.Equals("huggingface.co", StringComparison.OrdinalIgnoreCase)
+                    && request.RequestUri.AbsolutePath.Contains("/ggerganov/", StringComparison.OrdinalIgnoreCase))
                 {
+                    firstSourceCalls++;
+                    return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+                }
+
+                if (request.RequestUri.Host.Equals("huggingface.co", StringComparison.OrdinalIgnoreCase)
+                    && request.RequestUri.AbsolutePath.Contains("/mobilint/", StringComparison.OrdinalIgnoreCase))
+                {
+                    secondSourceCalls++;
                     return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
                 }
 
@@ -225,6 +288,8 @@ public sealed class AssetProvisioningServiceTests
 
             Assert.True(File.Exists(Path.Combine(paths.ModelsPath, "ggml-small.bin")));
             Assert.True(service.IsInstalled("whisper-small"));
+            Assert.Equal(1, firstSourceCalls);
+            Assert.Equal(1, secondSourceCalls);
         }
         finally
         {

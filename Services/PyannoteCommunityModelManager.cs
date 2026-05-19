@@ -142,9 +142,9 @@ print("completed", file=sys.stderr, flush=True)
         return _architectureResolver() switch
         {
             Architecture.X64 => "win-x64",
-            Architecture.Arm64 => throw new PlatformNotSupportedException("Speaker diarization is not supported on ARM64 devices in this version."),
-            Architecture.X86 => throw new PlatformNotSupportedException("Pyannote Community-1 requires a 64-bit AudioScript build."),
-            Architecture.Arm => throw new PlatformNotSupportedException("Pyannote Community-1 requires a 64-bit AudioScript build."),
+            Architecture.X86 => throw new PlatformNotSupportedException("Speaker diarization requires an x64 AudioScript build."),
+            Architecture.Arm => throw new PlatformNotSupportedException("Speaker diarization requires an x64 AudioScript build."),
+            Architecture.Arm64 => throw new PlatformNotSupportedException("Speaker diarization requires an x64 AudioScript build."),
             Architecture.Wasm => throw new PlatformNotSupportedException("Pyannote Community-1 is not supported on WebAssembly."),
             Architecture.S390x => throw new PlatformNotSupportedException("Pyannote Community-1 is not supported on s390x."),
             Architecture.Ppc64le => throw new PlatformNotSupportedException("Pyannote Community-1 is not supported on ppc64le."),
@@ -156,7 +156,7 @@ print("completed", file=sys.stderr, flush=True)
     {
         if (!IsSupportedOnCurrentArchitecture)
         {
-            throw new PlatformNotSupportedException("Speaker diarization is not supported on ARM64 devices in this version.");
+            throw new PlatformNotSupportedException("Speaker diarization requires an x64 AudioScript build.");
         }
     }
 

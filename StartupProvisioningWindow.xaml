@@ -13,7 +13,7 @@
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="False"
-        Background="#2A1B2E"
+        Background="{DynamicResource ControlFillColorDefaultBrush}"
         Foreground="{DynamicResource TextFillColorPrimaryBrush}"
         FontFamily="Segoe UI">
     <Window.Resources>
@@ -99,6 +99,14 @@
                        FontSize="20"
                        FontWeight="SemiBold"
                        Margin="0,0,0,6" />
+            <TextBlock Text="Required startup assets are downloaded and installed before the app opens. This screen stays visible while that work runs."
+                       FontSize="12.5"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,10" />
+            <ProgressBar Height="4"
+                         IsIndeterminate="{Binding IsBusy}"
+                         Style="{StaticResource AssetProgressBarStyle}" />
         </StackPanel>
 
         <Border Grid.Row="1"
@@ -167,7 +175,7 @@
                     HorizontalAlignment="Right"
                     Margin="0,14,0,0">
             <Button x:Name="CancelButton"
-                    Content="Cancel"
+                    Content="Cancel and Exit"
                     Click="CancelButton_Click"
                     Style="{StaticResource StartupDestructiveButtonStyle}"
                     Visibility="{Binding ShowCancelButton, Converter={StaticResource BoolToVisibilityConverter}}" />

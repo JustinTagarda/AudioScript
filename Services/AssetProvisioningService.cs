@@ -16,7 +16,8 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
     private const int MinimumRequiredSourceCount = 3;
     private const int StateSchemaVersion = 1;
     private const int CopyBufferSize = 128 * 1024;
-    private const int MaxDownloadAttempts = 3;
+    private const int MaxDownloadAttemptsPerSource = 1;
+    private const int MaxDownloadConnectionsPerServer = 3;
     private static readonly TimeSpan HttpClientTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan HttpConnectTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HttpPooledConnectionLifetime = TimeSpan.FromMinutes(10);
@@ -121,6 +122,7 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
             ProvisioningInstallRoot.Models => _paths.ModelsPath,
             ProvisioningInstallRoot.Pyannote => _paths.PyannoteAssetsPath,
             ProvisioningInstallRoot.Python => _paths.PythonRuntimesPath,
+            ProvisioningInstallRoot.Tools => _paths.ToolsPath,
             _ => throw new InvalidOperationException($"Unsupported install root '{descriptor.InstallRoot}'."),
         };
 
@@ -418,7 +420,6 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
         string current = RuntimeInformation.ProcessArchitecture switch
         {
             System.Runtime.InteropServices.Architecture.X64 => "x64",
-            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
             System.Runtime.InteropServices.Architecture.X86 => "x86",
             System.Runtime.InteropServices.Architecture.Arm => "arm",
             _ => RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(),
@@ -474,7 +475,7 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
             AllowAutoRedirect = true,
             AutomaticDecompression = DecompressionMethods.All,
             ConnectTimeout = HttpConnectTimeout,
-            MaxConnectionsPerServer = MaxDownloadAttempts,
+            MaxConnectionsPerServer = MaxDownloadConnectionsPerServer,
             PooledConnectionIdleTimeout = HttpPooledConnectionIdleTimeout,
             PooledConnectionLifetime = HttpPooledConnectionLifetime,
             SslOptions = new SslClientAuthenticationOptions
@@ -501,14 +502,14 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
 
         _processLogService.Log(
             nameof(AssetProvisioningService),
-            $"http_client_config timeout='{HttpClientTimeout}' connectTimeout='{HttpConnectTimeout}' pooledConnectionLifetime='{HttpPooledConnectionLifetime}' pooledConnectionIdleTimeout='{HttpPooledConnectionIdleTimeout}' tls='Tls12,Tls13' maxConnectionsPerServer={MaxDownloadAttempts} downloadBaseUriOverride='{overrideDescription}' mirrorBaseUriOverride='{mirrorDescription}'.");
+            $"http_client_config timeout='{HttpClientTimeout}' connectTimeout='{HttpConnectTimeout}' pooledConnectionLifetime='{HttpPooledConnectionLifetime}' pooledConnectionIdleTimeout='{HttpPooledConnectionIdleTimeout}' tls='Tls12,Tls13' maxConnectionsPerServer={MaxDownloadConnectionsPerServer} downloadBaseUriOverride='{overrideDescription}' mirrorBaseUriOverride='{mirrorDescription}'.");
     }
 
     private static HashSet<string> BuildAllowedDownloadHosts()
     {
         string? raw = Environment.GetEnvironmentVariable("AUDIOSCRIPT_ASSET_ALLOWED_HOSTS");
         string[] configuredHosts = string.IsNullOrWhiteSpace(raw)
-            ? ["huggingface.co", "hf-mirror.com", "www.python.org", "python.org"]
+            ? ["huggingface.co", "hf-mirror.com", "www.python.org", "python.org", "github.com", "objects.githubusercontent.com"]
             : raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
         return new HashSet<string>(configuredHosts, StringComparer.OrdinalIgnoreCase);
@@ -583,17 +584,17 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
 
     private static IEnumerable<string> EnumerateRemoteSources(ProvisionedAssetDescriptor descriptor)
     {
+        if (!string.IsNullOrWhiteSpace(descriptor.DownloadUri))
+        {
+            yield return descriptor.DownloadUri.Trim();
+        }
+
         foreach (string source in descriptor.DownloadSources ?? Array.Empty<string>())
         {
             if (!string.IsNullOrWhiteSpace(source))
             {
                 yield return source.Trim();
             }
-        }
-
-        if (!string.IsNullOrWhiteSpace(descriptor.DownloadUri))
-        {
-            yield return descriptor.DownloadUri.Trim();
         }
     }
 
@@ -671,10 +672,17 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
         }
         else
         {
-            await DownloadFileWithRetryAsync(descriptor, source, tempFilePath, progress, cancellationToken);
+            await DownloadFileAsync(descriptor, source, tempFilePath, progress, cancellationToken);
         }
 
-        VerifyExpectedBytesIfConfigured(descriptor, tempFilePath);
+        if (TryGetExpectedBytesMismatch(descriptor, tempFilePath, out long expectedBytes, out long actualBytes))
+        {
+            _processLogService.Log(
+                nameof(AssetProvisioningService),
+                $"size_mismatch_nonblocking asset='{descriptor.Id}' display='{descriptor.DisplayName}' expectedBytes={expectedBytes} actualBytes={actualBytes}.",
+                ProcessLogLevel.Warning);
+        }
+
         VerifyFileHashIfConfigured(descriptor, tempFilePath);
     }
 
@@ -706,7 +714,7 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
 
         if (CanStreamExtractDirectoryArchive(descriptor, source))
         {
-            await DownloadDirectoryWithRetryAsync(descriptor, source, tempDirectoryPath, progress, cancellationToken);
+            await DownloadDirectoryAsync(descriptor, source, tempDirectoryPath, progress, cancellationToken);
             return;
         }
 
@@ -762,7 +770,7 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
             Uri fileUri = BuildHuggingFaceResolveUri(modelApiUri, modelRepositoryId, file);
             string destinationPath = Path.Combine(tempDirectoryPath, file.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
-            await DownloadRepositoryFileWithRetryAsync(fileUri, destinationPath, cancellationToken);
+            await DownloadRepositoryFileAsync(fileUri, destinationPath, cancellationToken);
 
             completed++;
             double percent = completed * 100d / files.Length;
@@ -772,42 +780,27 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
         Report(progress, descriptor, "Finalizing install...", files.Length, files.Length, 99);
     }
 
-    private async Task DownloadRepositoryFileWithRetryAsync(
+    private async Task DownloadRepositoryFileAsync(
         Uri fileUri,
         string destinationPath,
         CancellationToken cancellationToken)
     {
-        Exception? lastException = null;
         string endpointDescription = DescribeEndpoint(fileUri.ToString());
-        for (int attempt = 1; attempt <= MaxDownloadAttempts; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                using HttpResponseMessage response = await _httpClient.GetAsync(fileUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                response.EnsureSuccessStatusCode();
-                await using Stream source = await response.Content.ReadAsStreamAsync(cancellationToken);
-                await using FileStream destination = File.Open(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                await source.CopyToAsync(destination, cancellationToken);
-                return;
-            }
-            catch (Exception ex) when (IsRetryableDownloadFailure(ex, cancellationToken) && attempt < MaxDownloadAttempts)
-            {
-                lastException = ex;
-                TryDeleteFile(destinationPath);
-                await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                lastException = ex;
-                break;
-            }
-        }
+        cancellationToken.ThrowIfCancellationRequested();
 
-        TryDeleteFile(destinationPath);
-        throw new InvalidOperationException(
-            $"Failed to download repository file from '{endpointDescription}' after {MaxDownloadAttempts} attempts.",
-            lastException);
+        try
+        {
+            using HttpResponseMessage response = await _httpClient.GetAsync(fileUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            await using Stream source = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using FileStream destination = File.Open(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            await source.CopyToAsync(destination, cancellationToken);
+        }
+        catch
+        {
+            TryDeleteFile(destinationPath);
+            throw;
+        }
     }
 
     private static bool TryParseHuggingFaceModelApiSource(string source, out Uri modelApiUri, out string modelRepositoryId)
@@ -928,145 +921,103 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
         await destination.FlushAsync(cancellationToken);
     }
 
-    private async Task DownloadFileWithRetryAsync(
+    private async Task DownloadFileAsync(
         ProvisionedAssetDescriptor descriptor,
         string source,
         string tempFilePath,
         IProgress<AssetProvisioningProgress>? progress,
         CancellationToken cancellationToken)
     {
-        Exception? lastException = null;
         string endpointDescription = DescribeEndpoint(source);
         _processLogService.Log(
             nameof(AssetProvisioningService),
-            $"download_begin asset='{descriptor.Id}' display='{descriptor.DisplayName}' endpoint='{endpointDescription}' attempts={MaxDownloadAttempts}.");
+            $"download_begin asset='{descriptor.Id}' display='{descriptor.DisplayName}' endpoint='{endpointDescription}' attempts={MaxDownloadAttemptsPerSource}.");
 
-        for (int attempt = 1; attempt <= MaxDownloadAttempts; attempt++)
+        cancellationToken.ThrowIfCancellationRequested();
+        _processLogService.Log(
+            nameof(AssetProvisioningService),
+            $"download_attempt asset='{descriptor.Id}' display='{descriptor.DisplayName}' attempt=1/{MaxDownloadAttemptsPerSource} endpoint='{endpointDescription}'.");
+
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            using HttpResponseMessage response = await _httpClient.GetAsync(source, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            ValidateAssetDownloadResponse(descriptor, endpointDescription, response);
+            long? totalBytes = response.Content.Headers.ContentLength ?? descriptor.ExpectedBytes;
+            string? contentType = response.Content.Headers.ContentType?.MediaType;
+            Uri? responseUri = response.RequestMessage?.RequestUri;
             _processLogService.Log(
                 nameof(AssetProvisioningService),
-                $"download_attempt asset='{descriptor.Id}' display='{descriptor.DisplayName}' attempt={attempt}/{MaxDownloadAttempts} endpoint='{endpointDescription}'.");
-
-            try
-            {
-                using HttpResponseMessage response = await _httpClient.GetAsync(source, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                response.EnsureSuccessStatusCode();
-                ValidateAssetDownloadResponse(descriptor, endpointDescription, response);
-                long? totalBytes = response.Content.Headers.ContentLength ?? descriptor.ExpectedBytes;
-                string? contentType = response.Content.Headers.ContentType?.MediaType;
-                Uri? responseUri = response.RequestMessage?.RequestUri;
-                _processLogService.Log(
-                    nameof(AssetProvisioningService),
-                    $"download_response asset='{descriptor.Id}' display='{descriptor.DisplayName}' attempt={attempt} statusCode={(int)response.StatusCode} contentType='{contentType ?? "(none)"}' contentLength={response.Content.Headers.ContentLength?.ToString() ?? "(unknown)"} responseUri='{responseUri?.ToString() ?? endpointDescription}'.");
-                await using Stream networkStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                await using FileStream destinationStream = File.Open(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
-                await CopyWithProgressAsync(descriptor, networkStream, destinationStream, totalBytes, progress, cancellationToken);
-                _processLogService.Log(
-                    nameof(AssetProvisioningService),
-                    $"download_complete asset='{descriptor.Id}' display='{descriptor.DisplayName}' endpoint='{endpointDescription}' attempt={attempt}.");
-                return;
-            }
-            catch (Exception ex) when (IsRetryableDownloadFailure(ex, cancellationToken) && attempt < MaxDownloadAttempts)
-            {
-                lastException = ex;
-                TryDeleteFile(tempFilePath);
-                _processLogService.Log(
-                    nameof(AssetProvisioningService),
-                    $"Retrying download for '{descriptor.DisplayName}' from '{endpointDescription}' after attempt {attempt} failed: {ex.GetType().Name}: {ex.Message}",
-                    ProcessLogLevel.Warning);
-                Report(progress, descriptor, $"Retrying download ({attempt + 1}/{MaxDownloadAttempts})...", 0, descriptor.ExpectedBytes, 0);
-                await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                lastException = ex;
-                break;
-            }
+                $"download_response asset='{descriptor.Id}' display='{descriptor.DisplayName}' attempt=1 statusCode={(int)response.StatusCode} contentType='{contentType ?? "(none)"}' contentLength={response.Content.Headers.ContentLength?.ToString() ?? "(unknown)"} responseUri='{responseUri?.ToString() ?? endpointDescription}'.");
+            await using Stream networkStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using FileStream destinationStream = File.Open(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
+            await CopyWithProgressAsync(descriptor, networkStream, destinationStream, totalBytes, progress, cancellationToken);
+            _processLogService.Log(
+                nameof(AssetProvisioningService),
+                $"download_complete asset='{descriptor.Id}' display='{descriptor.DisplayName}' endpoint='{endpointDescription}' attempt=1.");
         }
-
-        TryDeleteFile(tempFilePath);
-        throw new InvalidOperationException(
-            $"Failed to download '{descriptor.DisplayName}' from '{endpointDescription}' after {MaxDownloadAttempts} attempts.",
-            lastException);
+        catch
+        {
+            TryDeleteFile(tempFilePath);
+            throw;
+        }
     }
 
-    private async Task DownloadDirectoryWithRetryAsync(
+    private async Task DownloadDirectoryAsync(
         ProvisionedAssetDescriptor descriptor,
         string source,
         string tempDirectoryPath,
         IProgress<AssetProvisioningProgress>? progress,
         CancellationToken cancellationToken)
     {
-        Exception? lastException = null;
         string endpointDescription = DescribeEndpoint(source);
         _processLogService.Log(
             nameof(AssetProvisioningService),
-            $"download_begin asset='{descriptor.Id}' display='{descriptor.DisplayName}' endpoint='{endpointDescription}' attempts={MaxDownloadAttempts} extraction='stream'.");
+            $"download_begin asset='{descriptor.Id}' display='{descriptor.DisplayName}' endpoint='{endpointDescription}' attempts={MaxDownloadAttemptsPerSource} extraction='stream'.");
 
-        for (int attempt = 1; attempt <= MaxDownloadAttempts; attempt++)
+        cancellationToken.ThrowIfCancellationRequested();
+        _processLogService.Log(
+            nameof(AssetProvisioningService),
+            $"download_attempt asset='{descriptor.Id}' display='{descriptor.DisplayName}' attempt=1/{MaxDownloadAttemptsPerSource} endpoint='{endpointDescription}' extraction='stream'.");
+
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            DeleteDirectoryBestEffort(tempDirectoryPath);
+
+            using HttpResponseMessage response = await _httpClient.GetAsync(source, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            ValidateAssetDownloadResponse(descriptor, endpointDescription, response);
+
+            long? totalBytes = response.Content.Headers.ContentLength ?? descriptor.ExpectedBytes;
+            string? contentType = response.Content.Headers.ContentType?.MediaType;
+            Uri? responseUri = response.RequestMessage?.RequestUri;
             _processLogService.Log(
                 nameof(AssetProvisioningService),
-                $"download_attempt asset='{descriptor.Id}' display='{descriptor.DisplayName}' attempt={attempt}/{MaxDownloadAttempts} endpoint='{endpointDescription}' extraction='stream'.");
+                $"download_response asset='{descriptor.Id}' display='{descriptor.DisplayName}' attempt=1 statusCode={(int)response.StatusCode} contentType='{contentType ?? "(none)"}' contentLength={response.Content.Headers.ContentLength?.ToString() ?? "(unknown)"} responseUri='{responseUri?.ToString() ?? endpointDescription}' extraction='stream'.");
 
-            try
-            {
-                DeleteDirectoryBestEffort(tempDirectoryPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(tempDirectoryPath)!);
+            await using Stream networkStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var progressStream = new ProgressReadStream(
+                networkStream,
+                bytesReceived =>
+                {
+                    double percent = totalBytes is > 0
+                        ? Math.Min(99, bytesReceived * 100d / totalBytes.Value)
+                        : 0;
+                    Report(progress, descriptor, "Downloading...", bytesReceived, totalBytes, percent);
+                });
+            ZipFile.ExtractToDirectory(progressStream, tempDirectoryPath);
 
-                using HttpResponseMessage response = await _httpClient.GetAsync(source, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                response.EnsureSuccessStatusCode();
-                ValidateAssetDownloadResponse(descriptor, endpointDescription, response);
-
-                long? totalBytes = response.Content.Headers.ContentLength ?? descriptor.ExpectedBytes;
-                string? contentType = response.Content.Headers.ContentType?.MediaType;
-                Uri? responseUri = response.RequestMessage?.RequestUri;
-                _processLogService.Log(
-                    nameof(AssetProvisioningService),
-                    $"download_response asset='{descriptor.Id}' display='{descriptor.DisplayName}' attempt={attempt} statusCode={(int)response.StatusCode} contentType='{contentType ?? "(none)"}' contentLength={response.Content.Headers.ContentLength?.ToString() ?? "(unknown)"} responseUri='{responseUri?.ToString() ?? endpointDescription}' extraction='stream'.");
-
-                Directory.CreateDirectory(Path.GetDirectoryName(tempDirectoryPath)!);
-                await using Stream networkStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                await using var progressStream = new ProgressReadStream(
-                    networkStream,
-                    bytesReceived =>
-                    {
-                        double percent = totalBytes is > 0
-                            ? Math.Min(99, bytesReceived * 100d / totalBytes.Value)
-                            : 0;
-                        Report(progress, descriptor, "Downloading...", bytesReceived, totalBytes, percent);
-                    });
-                ZipFile.ExtractToDirectory(progressStream, tempDirectoryPath);
-
-                _processLogService.Log(
-                    nameof(AssetProvisioningService),
-                    $"download_complete asset='{descriptor.Id}' display='{descriptor.DisplayName}' endpoint='{endpointDescription}' attempt={attempt} extraction='stream'.");
-                Report(progress, descriptor, "Finalizing install...", totalBytes ?? 0, totalBytes, 99);
-                return;
-            }
-            catch (Exception ex) when (IsRetryableDownloadFailure(ex, cancellationToken) && attempt < MaxDownloadAttempts)
-            {
-                lastException = ex;
-                DeleteDirectoryBestEffort(tempDirectoryPath);
-                _processLogService.Log(
-                    nameof(AssetProvisioningService),
-                    $"Retrying streamed archive install for '{descriptor.DisplayName}' from '{endpointDescription}' after attempt {attempt} failed: {ex.GetType().Name}: {ex.Message}",
-                    ProcessLogLevel.Warning);
-                Report(progress, descriptor, $"Retrying download ({attempt + 1}/{MaxDownloadAttempts})...", 0, descriptor.ExpectedBytes, 0);
-                await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                lastException = ex;
-                break;
-            }
+            _processLogService.Log(
+                nameof(AssetProvisioningService),
+                $"download_complete asset='{descriptor.Id}' display='{descriptor.DisplayName}' endpoint='{endpointDescription}' attempt=1 extraction='stream'.");
+            Report(progress, descriptor, "Finalizing install...", totalBytes ?? 0, totalBytes, 99);
         }
-
-        DeleteDirectoryBestEffort(tempDirectoryPath);
-        throw new InvalidOperationException(
-            $"Failed to download and extract '{descriptor.DisplayName}' from '{endpointDescription}' after {MaxDownloadAttempts} attempts.",
-            lastException);
+        catch
+        {
+            DeleteDirectoryBestEffort(tempDirectoryPath);
+            throw;
+        }
     }
 
     private static bool CanStreamExtractDirectoryArchive(ProvisionedAssetDescriptor descriptor, string source)
@@ -1132,19 +1083,27 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
         }
     }
 
-    private static void VerifyExpectedBytesIfConfigured(ProvisionedAssetDescriptor descriptor, string filePath)
+    private static bool TryGetExpectedBytesMismatch(
+        ProvisionedAssetDescriptor descriptor,
+        string filePath,
+        out long expectedBytes,
+        out long actualBytes)
     {
+        expectedBytes = 0;
+        actualBytes = 0;
         if (!descriptor.ExpectedBytes.HasValue)
         {
-            return;
+            return false;
         }
 
-        long actualBytes = new FileInfo(filePath).Length;
-        if (actualBytes != descriptor.ExpectedBytes.Value)
+        expectedBytes = descriptor.ExpectedBytes.Value;
+        actualBytes = new FileInfo(filePath).Length;
+        if (actualBytes != expectedBytes)
         {
-            throw new InvalidOperationException(
-                $"Downloaded size mismatch for '{descriptor.DisplayName}'. Expected {descriptor.ExpectedBytes.Value} bytes but received {actualBytes} bytes.");
+            return true;
         }
+
+        return false;
     }
 
     private ProvisionedAssetStateDocument LoadStateDocument()

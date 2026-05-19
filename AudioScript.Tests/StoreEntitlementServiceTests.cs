@@ -6,7 +6,7 @@ namespace AudioScript.Tests;
 public sealed class StoreEntitlementServiceTests
 {
     [Fact]
-    public void Constructor_PackagedBuildWithoutPremiumStoreId_ThrowsInvalidOperationException()
+    public void Constructor_PackagedBuildWithoutPremiumStoreIds_ThrowsInvalidOperationException()
     {
         var ex = Assert.Throws<InvalidOperationException>(() =>
             new StoreEntitlementService(
@@ -14,21 +14,21 @@ public sealed class StoreEntitlementServiceTests
                 new ProcessLogService(),
                 options: new StoreEntitlementServiceOptions
                 {
-                    PremiumStoreId = string.Empty,
+                    PremiumStoreIds = Array.Empty<string>(),
                 }));
 
         Assert.Contains("Premium Store add-on ID is required", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void Constructor_UnpackagedBuildWithoutPremiumStoreId_DoesNotThrow()
+    public void Constructor_UnpackagedBuildWithoutPremiumStoreIds_DoesNotThrow()
     {
         var service = new StoreEntitlementService(
             new FakeVersionProvider(isPackaged: false),
             new ProcessLogService(),
             options: new StoreEntitlementServiceOptions
             {
-                PremiumStoreId = string.Empty,
+                PremiumStoreIds = Array.Empty<string>(),
             });
 
         Assert.NotNull(service);
@@ -48,4 +48,3 @@ public sealed class StoreEntitlementServiceTests
         public string DisplayVersionText => "1.0.0";
     }
 }
-

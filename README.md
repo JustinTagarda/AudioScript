@@ -1,75 +1,152 @@
 # AudioScript
 
-AudioScript is a Windows desktop app (WPF, .NET 10) for offline transcription, speaker diarization, and transcript editing from local files and live capture.
+AudioScript is a Windows desktop app built with WPF on .NET 10 for offline transcription, speaker diarization, transcript editing, and local session management.
 
-## What It Does
+## Overview
 
-- Imports supported audio files and previews playback in-app
-- Supports offline transcript generation with installed Whisper models
-- Supports offline speaker diarization using bundled pyannote Community-1 assets
-- Splits long audio into silence-aware chunks before local transcription
-- Enables transcript editing directly in the grid:
-  - Timeline edits
-  - Text edits
-  - Insert/duplicate/delete row actions
-  - Per-row playback edit transcription workflows
-- Provides transcript export workflows (`.docx`, subtitle/text formats)
-- Persists sessions so work can be reopened and recovered
+- Imports local audio files for playback and transcription
+- Captures live audio from the default playback device, a microphone, or both
+- Runs transcription locally with installed Whisper models
+- Runs speaker diarization locally with bundled `pyannote-community-1` assets
+- Supports editing transcript rows in the grid, including timeline and text edits
+- Supports row operations such as insert, duplicate, delete, split, and speaker renaming
+- Autosaves sessions and restores them from local app data
+- Exports transcripts to Word documents
+- Uses a single-instance startup model so only one app window runs at a time
+
+## Features
+
+### Transcription
+
+- Offline transcription with local Whisper models
+- Available model options:
+  - `whisper-small`
+  - `whisper-medium`
+  - `whisper-large-v3`
+  - `whisper-large-v3-turbo`
+  - `manual-transcription` for manual-only editing
+- Supported file inputs:
+  - `.wav`
+  - `.mp3`
+  - `.flac`
+  - `.aac`
+  - `.m4a`
+  - `.ogg`
+  - `.wma`
+  - `.mp4`
+- Playback-based transcription workflows for editing against local audio
+- Live transcription workflows for microphone and playback capture
+
+### Speaker Diarization
+
+- Offline diarization using bundled `pyannote-community-1` runtime/assets
+- Supports resuming incomplete diarization jobs from saved checkpoints
+- Can relabel speakers in existing sessions
+
+### Session Management
+
+- Imports audio into persistent sessions
+- Reopens recent sessions from local storage
+- Saves transcript state, editing state, and audio metadata
+- Restores missing session audio when the original file is available again
+- Deletes sessions and their stored files from the session store
+
+### Export
+
+- Exports transcript documents to `.docx`
+- Export layouts:
+  - tab-delimited table layout
+  - interview-style layout
+- Opens the exported document after a successful save when a local app is available
 
 ## Technology Stack
 
-- .NET: `net10.0-windows10.0.17763.0`
 - UI: WPF
-- Audio: NAudio (`NAudio`)
-- SVG rendering: SharpVectors (`SharpVectors.Wpf`)
-- Transcription: local Whisper via `Whisper.net.AllRuntimes`
-- Speaker diarization: bundled pyannote Community-1 runtime/assets
-- Document export: Open XML SDK (`DocumentFormat.OpenXml`)
-- Tests: xUnit (`AudioScript.Tests`)
+- Runtime: `net10.0-windows10.0.17763.0`
+- Audio capture/playback: NAudio
+- SVG rendering: SharpVectors.Wpf
+- Transcription: Whisper.net runtime packages
+- Export: Open XML SDK
+- Tests: xUnit
 
-## Runtime Behavior
+## Premium And Access Rules
 
-- Single-instance app behavior is enforced at startup.
-- Dependency wiring is performed in `App.OnStartup`.
-- `MainWindow` and `MainViewModel` orchestrate UI state and workflows.
-- Long transcription and speaker-diarization operations use cancellation tokens.
-- Store-packaged builds use in-app Store update checks/download/install with busy-state gating.
-
-## Data Storage
-
-AudioScript stores local data under Windows app data. Store/MSIX builds use the package data container:
-
-- `%LocalAppData%\Packages\<PackageFamilyName>\LocalState\Models`
-- `%LocalAppData%\Packages\<PackageFamilyName>\LocalState\Sessions`
-- `%LocalAppData%\Packages\<PackageFamilyName>\LocalState\Settings`
-- `%LocalAppData%\Packages\<PackageFamilyName>\LocalState\Logs`
-
-Unpackaged development builds use:
-
-- `%LocalAppData%\AudioScript\Models`
-- `%LocalAppData%\AudioScript\Sessions`
-- `%LocalAppData%\AudioScript\Settings`
-- `%LocalAppData%\AudioScript\Logs`
-
-Session identity is based on SHA-256 audio fingerprinting.
-Downloaded optional Whisper models are stored in app data rather than the app package and can be removed individually from the setup window.
+- Basic mode is limited to 10 sessions
+- Premium unlocks:
+  - live transcription
+  - speaker diarization
+  - premium model installation/use
+- Premium product name in the app: `AudioScript Premium`
+- Microsoft Store add-on ID used by the app: `9PD5288V5Q49`
 
 ## Repository Layout
 
-- `App.xaml.cs`: app startup, single-instance activation, dependency composition
-- `MainWindow.xaml` + `MainWindow.xaml.cs`: main UI and interaction orchestration
-- `ViewModels/MainViewModel.cs`: core state, commands, autosave, transcription/diarization workflows
-- `Services/`: offline transcription, speaker diarization, persistence, preferences, diagnostics, updates, export
-- `Audio/`: playback/capture and audio processing/chunk planning helpers
+- `App.xaml.cs`: app startup, single-instance activation, dependency composition, update/entitlement wiring
+- `MainWindow.xaml` and `MainWindow.xaml.cs`: main shell, dialogs, export workflow, and UI orchestration
+- `ViewModels/MainViewModel.cs`: session state, commands, autosave, transcription, diarization, preferences, and logging
+- `Services/`: app data, persistence, preferences, updates, entitlement, export, provisioning, and model management
+- `Audio/`: capture, playback, standardization, chunk planning, and audio utilities
 - `Abstractions/`: shared contracts and models
 - `AudioScript.Tests/`: unit tests
-- `AudioScript.Package/`: Store/MSIX packaging project assets and outputs
+- `AudioScript.Package/`: MSIX / Microsoft Store packaging assets and manifest
+
+## Data And Storage
+
+AudioScript stores user data in app-local folders.
+
+### Packaged builds
+
+Root:
+
+- `%LocalAppData%\Packages\<PackageFamilyName>\LocalState`
+
+Subfolders:
+
+- `Models`
+- `Provisioning`
+- `Assets`
+- `Sessions`
+- `Logs`
+- `Temp`
+- `Settings`
+
+Settings file:
+
+- `%LocalAppData%\Packages\<PackageFamilyName>\LocalState\Settings\app-preferences.json`
+
+### Unpackaged builds
+
+Root:
+
+- `%LocalAppData%\AudioScript`
+
+Subfolders:
+
+- `Models`
+- `Provisioning`
+- `Assets`
+- `Sessions`
+- `Logs`
+- `Temp`
+- `Settings`
+
+Settings file:
+
+- `%LocalAppData%\AudioScript\Settings\app-preferences.json`
+
+### Session Notes
+
+- Session identity is derived from a SHA-256 audio fingerprint
+- Transient live-recording sessions are stored separately from imported audio sessions
+- Missing session audio is reported in the UI and can be restored from a replacement file when the fingerprint matches
 
 ## Requirements
 
-- Windows 10/11
-- .NET SDK `10.0.201` (see `global.json`)
-- Optional for Store packaging: Windows SDK tools including `makeappx.exe`
+- Windows 10 or Windows 11
+- .NET SDK `10.0.201` or compatible SDK from `global.json`
+- For Store packaging:
+  - Visual Studio 2026 MSBuild
+  - Windows SDK tools including `makeappx.exe`
 
 ## Run Locally
 
@@ -77,7 +154,9 @@ Downloaded optional Whisper models are stored in app data rather than the app pa
 dotnet run --project .\AudioScript.csproj
 ```
 
-## Build (Development)
+## Build Development
+
+Use the fast build path for routine development:
 
 ```powershell
 msbuild .\AudioScript.csproj /t:Build /p:Configuration=Debug /p:RunAnalyzers=false /m
@@ -98,7 +177,7 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj --filter "FullyQualifie
 dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj --filter "FullyQualifiedName~AudioScript.Tests.TranscriptionModelCatalogTests"
 ```
 
-## Create Microsoft Store Package
+## Microsoft Store Package
 
 ```powershell
 .\Build-StorePackage.ps1
@@ -106,17 +185,19 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj --filter "FullyQualifie
 
 Default output root:
 
-- `AudioScript.Package\AppPackages\store-selfcontained\...`
+- `AudioScript.Package\AppPackages\store-x64-self-contained`
 
 The packaging script:
 
-- Publishes self-contained `win-x64` and `win-arm64` builds
-- Creates architecture-specific `.msix` packages
-- Bundles into a `.msixbundle`
-- Produces a `.msixupload` artifact
+- Publishes a self-contained `win-x64` build
+- Removes unsupported runtime payload and heavy provisioned assets from the package layout
+- Creates a single x64 `.msix` package
+- Bundles the x64 package into a single-architecture `.msixbundle`
+- Produces the x64 bundle `.msixupload` artifact required by Partner Center
 
 ## Notes
 
-- Transcription is offline-only and does not require an API key.
-- Speaker diarization runs locally through bundled pyannote Community-1 assets/runtime.
-- Microsoft Store packaged builds use the Store update APIs for passive update detection, background download, and idle-gated install; unpackaged builds skip Store update checks safely.
+- Transcription runs locally and does not require an API key
+- Speaker diarization runs locally through bundled `pyannote-community-1` assets
+- Packaged builds use Store update APIs for entitlement checks and update handling
+- Unpackaged builds skip Store update checks safely

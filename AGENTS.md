@@ -6,6 +6,14 @@
 
 ## Build And Run Rules
 
+- `FAST_BUILD_PROJECT`: `AudioScript.csproj`
+- `DEBUG_EXE_PATH`: `bin\Debug\net10.0-windows10.0.17763.0\AudioScript.exe`
+- `APP_INSTANCE_MODE`: `single-instance`
+
+- This app is x64 package only. Do not add, restore, publish, bundle, or submit ARM64, x86, or AnyCPU package architectures for this app.
+- Store/MSIX package output must target x64 only.
+- Partner Center requires a bundle upload for this app. Store package generation may create a bundle only when the bundle contains exactly one architecture package: x64.
+- The Store upload artifact for this app must be the x64-only bundle upload artifact. Do not generate or retain multi-architecture package/upload artifacts.
 - If the project is a Windows desktop application and the task may result in any build, rebuild, publish, or similar compilation step, always close the running app first.
 - If the task includes UI changes, apply the same rule.
 - Do not start the build until the app has fully exited.

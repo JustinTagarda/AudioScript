@@ -1,6 +1,5 @@
 using System.IO;
 using AudioScript.Abstractions;
-using Whisper.net.Ggml;
 
 namespace AudioScript.Services;
 
@@ -20,7 +19,7 @@ public sealed class WhisperModelManager
             Description: "Required default offline model downloaded into local app storage on first use.",
             Benefits: "Good minimum quality for local transcription while staying smaller than medium.",
             Notes: "Install from Settings before using Whisper transcription on a new device.",
-            GgmlType: GgmlType.Small,
+            GgmlType: WhisperModelVariant.Small,
             ExpectedBytes: 487_601_967,
             IsBundled: false,
             IsFixedInstalled: false),
@@ -32,7 +31,7 @@ public sealed class WhisperModelManager
             Description: "Higher accuracy for noisy, accented, or multilingual audio.",
             Benefits: "Stronger quality without the full large-v3 footprint.",
             Notes: "Needs more disk, RAM, and transcription time than small.",
-            GgmlType: GgmlType.Medium,
+            GgmlType: WhisperModelVariant.Medium,
             ExpectedBytes: 1_534_000_000,
             IsBundled: false,
             IsFixedInstalled: false),
@@ -44,7 +43,7 @@ public sealed class WhisperModelManager
             Description: "Highest quality Whisper model in the v1 offline list.",
             Benefits: "Best accuracy for difficult audio when speed and size are secondary.",
             Notes: "Largest install and slowest local transcription option.",
-            GgmlType: GgmlType.LargeV3,
+            GgmlType: WhisperModelVariant.LargeV3,
             ExpectedBytes: 3_100_000_000,
             IsBundled: false,
             IsFixedInstalled: false),
@@ -56,7 +55,7 @@ public sealed class WhisperModelManager
             Description: "Faster large-v3 family model with lower local cost.",
             Benefits: "Good balance when large-v3 is too heavy but quality still matters.",
             Notes: "Usually faster than full large-v3, with some quality tradeoff.",
-            GgmlType: GgmlType.LargeV3Turbo,
+            GgmlType: WhisperModelVariant.LargeV3Turbo,
             ExpectedBytes: 1_620_000_000,
             IsBundled: false,
             IsFixedInstalled: false),

@@ -187,6 +187,20 @@ public partial class SettingsWindow : Window
         await RequestPremiumPurchaseAsync(item.DisplayName);
     }
 
+    private async void RecheckPremiumButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _viewModel.RefreshPremiumEntitlementAsync();
+            RefreshPremiumAccess();
+        }
+        catch (Exception ex)
+        {
+            _processLogService.LogException("Premium", "Manual premium entitlement re-check failed.", ex);
+            ShowError($"Unable to re-check {_viewModel.PremiumProductDisplayName} entitlement: {ex.Message}");
+        }
+    }
+
     private void SetOperationState(SettingsItemViewModel activeItem, bool isBusy)
     {
         activeItem.IsBusy = isBusy;
@@ -226,6 +240,34 @@ public partial class SettingsWindow : Window
     {
         try
         {
+            if (_viewModel.IsPremiumEntitlementChecking || _viewModel.IsPremiumEntitlementVerificationFailed)
+            {
+                await _viewModel.RefreshPremiumEntitlementAsync();
+                RefreshPremiumAccess();
+                if (_viewModel.HasPremium)
+                {
+                    return;
+                }
+            }
+
+            if (_viewModel.IsPremiumEntitlementChecking)
+            {
+                ShowError("AudioScript is still checking Microsoft Store entitlement. Please try again in a moment.");
+                return;
+            }
+
+            if (_viewModel.IsPremiumEntitlementVerificationFailed)
+            {
+                ShowError("AudioScript could not verify Microsoft Store entitlement right now. Please ensure Microsoft Store is signed in, then click Re-check Premium.");
+                return;
+            }
+
+            if (!_viewModel.CanPromptPremiumPurchase)
+            {
+                ShowError("Premium purchase is not available until entitlement verification completes.");
+                return;
+            }
+
             PremiumPurchaseResult result = await _viewModel.RequestPremiumPurchaseAsync();
             RefreshPremiumAccess();
             if (result.Status is PremiumPurchaseStatus.Succeeded or PremiumPurchaseStatus.AlreadyOwned)

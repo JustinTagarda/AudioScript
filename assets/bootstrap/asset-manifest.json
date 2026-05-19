@@ -57,6 +57,22 @@
       ]
     },
     {
+      "id": "whisper-cpp-cli-x64",
+      "displayName": "whisper.cpp CLI runtime (x64)",
+      "version": "1.8.4",
+      "downloadUri": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.4/whisper-bin-x64.zip",
+      "downloadSources": [
+        "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.4/whisper-bin-x64.zip"
+      ],
+      "installKind": "Directory",
+      "installRoot": "Tools",
+      "installRelativePath": "whisper.cpp/win-x64",
+      "supportedArchitectures": [
+        "x64"
+      ],
+      "required": false
+    },
+    {
       "id": "whisper-medium",
       "displayName": "Whisper medium",
       "version": "2.0.0.0",

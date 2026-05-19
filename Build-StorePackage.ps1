@@ -3,7 +3,7 @@ param(
     [string]$Configuration = "Release",
     [string]$VsMsBuildPath = "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe",
     [string]$WindowsSdkBin = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64",
-    [string]$OutputRoot = "AudioScript.Package\AppPackages\store-bundle-self-contained"
+    [string]$OutputRoot = "AudioScript.Package\AppPackages\store-x64-self-contained"
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,17 +37,22 @@ if ([string]::IsNullOrWhiteSpace($version)) {
     throw "Version not found in $projectPath"
 }
 
+[Version]$projectVersion = $null
+if (-not [Version]::TryParse($version, [ref]$projectVersion)) {
+    throw "Invalid semantic version '$version' in $projectPath"
+}
+
+$storeVersion = "{0}.{1}.{2}.0" -f $projectVersion.Major, $projectVersion.Minor, $projectVersion.Build
+
 $resolvedOutputRoot = Join-Path $repoRoot $OutputRoot
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$workingRoot = Join-Path $resolvedOutputRoot ("v{0}-{1}" -f $version, $timestamp)
+$workingRoot = Join-Path $resolvedOutputRoot ("v{0}-{1}" -f $storeVersion, $timestamp)
 $publishX64 = Join-Path $workingRoot "publish-x64"
-$publishArm64 = Join-Path $workingRoot "publish-arm64"
 $layoutX64 = Join-Path $workingRoot "layout-x64"
-$layoutArm64 = Join-Path $workingRoot "layout-arm64"
 $bundleInput = Join-Path $workingRoot "bundle-input"
 $packagesDir = Join-Path $workingRoot "packages"
 
-New-Item -ItemType Directory -Force -Path $publishX64, $publishArm64, $layoutX64, $layoutArm64, $bundleInput, $packagesDir | Out-Null
+New-Item -ItemType Directory -Force -Path $publishX64, $layoutX64, $bundleInput, $packagesDir | Out-Null
 
 function Invoke-StorePublish {
     param(
@@ -143,7 +148,6 @@ function Remove-UnsupportedRuntimePayload {
 
     $disallowedArchNames = switch ($RuntimeIdentifier) {
         "win-x64" { @("win-arm64", "win-x86", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64") }
-        "win-arm64" { @("win-x64", "win-x86", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64") }
         default { @("win-x86", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64") }
     }
 
@@ -193,7 +197,6 @@ function Assert-UnsupportedRuntimePayloadAbsent {
 
     $forbiddenNames = switch ($RuntimeIdentifier) {
         "win-x64" { @("win-arm64", "win-x86", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64") }
-        "win-arm64" { @("win-x64", "win-x86", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64") }
         default { @("win-x86", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64") }
     }
 
@@ -247,52 +250,34 @@ Assert-BootstrapManifestPresent -RootPath $publishX64
 Assert-HeavyAssetsAbsent -RootPath $publishX64
 Assert-UnsupportedRuntimePayloadAbsent -RootPath $publishX64 -RuntimeIdentifier "win-x64"
 
-Write-Host "Publishing self-contained arm64 output..."
-Invoke-StorePublish -RuntimeIdentifier "win-arm64" -OutputPath $publishArm64
-Remove-UnsupportedRuntimePayload -RootPath $publishArm64 -RuntimeIdentifier "win-arm64"
-Assert-BootstrapManifestPresent -RootPath $publishArm64
-Assert-HeavyAssetsAbsent -RootPath $publishArm64
-Assert-UnsupportedRuntimePayloadAbsent -RootPath $publishArm64 -RuntimeIdentifier "win-arm64"
-
 Write-Host "Preparing package layouts..."
 Copy-DirectoryRobust -SourcePath $publishX64 -DestinationPath $layoutX64
-Copy-DirectoryRobust -SourcePath $publishArm64 -DestinationPath $layoutArm64
 
-New-Item -ItemType Directory -Force -Path (Join-Path $layoutX64 "assets"), (Join-Path $layoutArm64 "assets") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $layoutX64 "assets") | Out-Null
 Copy-DirectoryRobust -SourcePath $packageAssetsPath -DestinationPath (Join-Path $layoutX64 "assets")
-Copy-DirectoryRobust -SourcePath $packageAssetsPath -DestinationPath (Join-Path $layoutArm64 "assets")
 
 Remove-NonRuntimeFiles -LayoutRoot $layoutX64
-Remove-NonRuntimeFiles -LayoutRoot $layoutArm64
 Remove-UnsupportedRuntimePayload -RootPath $layoutX64 -RuntimeIdentifier "win-x64"
-Remove-UnsupportedRuntimePayload -RootPath $layoutArm64 -RuntimeIdentifier "win-arm64"
 
 Assert-BootstrapManifestPresent -RootPath $layoutX64
-Assert-BootstrapManifestPresent -RootPath $layoutArm64
 Assert-HeavyAssetsAbsent -RootPath $layoutX64
-Assert-HeavyAssetsAbsent -RootPath $layoutArm64
 Assert-UnsupportedRuntimePayloadAbsent -RootPath $layoutX64 -RuntimeIdentifier "win-x64"
-Assert-UnsupportedRuntimePayloadAbsent -RootPath $layoutArm64 -RuntimeIdentifier "win-arm64"
 
 Set-ManifestArchitecture -SourceManifestPath $manifestPath -DestinationManifestPath (Join-Path $layoutX64 "AppxManifest.xml") -Architecture "x64"
-Set-ManifestArchitecture -SourceManifestPath $manifestPath -DestinationManifestPath (Join-Path $layoutArm64 "AppxManifest.xml") -Architecture "arm64"
 
-$x64Msix = Join-Path $packagesDir ("AudioScript_{0}_x64_sc.msix" -f $version)
-$arm64Msix = Join-Path $packagesDir ("AudioScript_{0}_arm64_sc.msix" -f $version)
-$bundlePath = Join-Path $packagesDir ("AudioScript_{0}_x64_arm64_sc.msixbundle" -f $version)
-$uploadPath = Join-Path $packagesDir ("AudioScript_{0}_x64_arm64_sc.msixupload" -f $version)
+$x64Msix = Join-Path $packagesDir ("AudioScript_{0}_x64_sc.msix" -f $storeVersion)
+$bundlePath = Join-Path $packagesDir ("AudioScript_{0}_x64_bundle.msixbundle" -f $storeVersion)
+$uploadPath = Join-Path $packagesDir ("AudioScript_{0}_x64_bundle.msixupload" -f $storeVersion)
 
-Write-Host "Packing architecture-specific MSIX files..."
+Write-Host "Packing x64 MSIX package..."
 & $makeAppxPath pack /d $layoutX64 /p $x64Msix /o | Out-Null
-& $makeAppxPath pack /d $layoutArm64 /p $arm64Msix /o | Out-Null
 
 Copy-Item -LiteralPath $x64Msix -Destination (Join-Path $bundleInput ([System.IO.Path]::GetFileName($x64Msix))) -Force
-Copy-Item -LiteralPath $arm64Msix -Destination (Join-Path $bundleInput ([System.IO.Path]::GetFileName($arm64Msix))) -Force
 
-Write-Host "Bundling Store package..."
-& $makeAppxPath bundle /d $bundleInput /p $bundlePath /bv $version /o | Out-Null
+Write-Host "Bundling x64 Store package..."
+& $makeAppxPath bundle /d $bundleInput /p $bundlePath /bv $storeVersion /o | Out-Null
 
-Write-Host "Creating bundled MSIXUPLOAD..."
+Write-Host "Creating x64 bundle MSIXUPLOAD..."
 New-MsixUploadFromBundle -BundlePath $bundlePath -UploadPath $uploadPath
 
 Write-Host "Store package created:"

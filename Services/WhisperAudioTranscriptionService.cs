@@ -1,35 +1,46 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using AudioScript.Abstractions;
 using AudioScript.Audio;
 using NAudio.Wave;
-using Whisper.net;
 
 namespace AudioScript.Services;
 
 public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscriptionService, IPlaybackTranscriptionService
 {
+    private const string WhisperCliAssetId = "whisper-cpp-cli-x64";
+    private const string WhisperCliExecutableRelativePath = "Release\\whisper-cli.exe";
+    private static readonly TimeSpan WhisperHeartbeatInterval = TimeSpan.FromSeconds(1);
+    private const double WhisperHeartbeatStartPercent = 50d;
+    private const double WhisperHeartbeatMaxPercent = 95d;
+    private const double WhisperRealtimeDivisor = 1.2d;
     internal static readonly TimeSpan ShortAudioPromptSuppressionDuration = TimeSpan.FromSeconds(10);
+
     private readonly AudioStandardizer _audioStandardizer;
     private readonly TranscriptionOptions _options;
     private readonly ProcessLogService _processLogService;
     private readonly WhisperModelManager _whisperModelManager;
-    private readonly SemaphoreSlim _modelSemaphore = new(1, 1);
+    private readonly IAssetProvisioningService _assetProvisioningService;
+    private readonly AppDataPathProvider _paths;
     private readonly SemaphoreSlim _transcriptionSemaphore = new(1, 1);
-
-    private WhisperFactory? _factory;
-    private string? _loadedModelPath;
 
     public WhisperAudioTranscriptionService(
         AudioStandardizer audioStandardizer,
         TranscriptionOptions options,
         ProcessLogService processLogService,
-        WhisperModelManager whisperModelManager)
+        WhisperModelManager whisperModelManager,
+        IAssetProvisioningService assetProvisioningService,
+        AppDataPathProvider paths)
     {
         _audioStandardizer = audioStandardizer;
         _options = options;
         _processLogService = processLogService;
         _whisperModelManager = whisperModelManager;
+        _assetProvisioningService = assetProvisioningService;
+        _paths = paths;
     }
 
     public async Task<TranscriptionResult> TranscribeAudioFileAsync(
@@ -59,7 +70,10 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         var fileInfo = new FileInfo(fullPath);
         var progressReporter = new TranscriptionProgressReporter(progress);
 
-        Log($"Starting local Whisper transcription for '{fileName}' ({fileInfo.Length:N0} bytes) using '{model}'.");
+        Log($"Starting whisper.cpp transcription for '{fileName}' ({fileInfo.Length:N0} bytes) using '{model}'.");
+        _processLogService.UpdateCrashContext(
+            "whispercpp.file.start",
+            $"model='{model}', file='{fullPath}', bytes={fileInfo.Length}");
         progressReporter.Report(
             TranscriptionProgressPhase.PreparingAudio,
             0,
@@ -75,7 +89,10 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         try
         {
             TimeSpan duration = ResolveAudioDuration(standardizedPath);
-            IReadOnlyList<TranscriptionTimedLine> timedLines = await ProcessWaveFileAsync(
+            _processLogService.UpdateCrashContext(
+                "whispercpp.file.standardized_ready",
+                $"model='{model}', standardizedPath='{standardizedPath}', durationMs={duration.TotalMilliseconds:F0}");
+            IReadOnlyList<TranscriptionTimedLine> timedLines = await TranscribeWaveFileAsync(
                 standardizedPath,
                 model,
                 duration,
@@ -85,8 +102,11 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
             stopwatch.Stop();
 
             Log(
-                $"Local Whisper transcription for '{fileName}' completed in {stopwatch.Elapsed.TotalSeconds:F2}s " +
+                $"whisper.cpp transcription for '{fileName}' completed in {stopwatch.Elapsed.TotalSeconds:F2}s " +
                 $"with {timedLines.Count:N0} timed line(s).");
+            _processLogService.UpdateCrashContext(
+                "whispercpp.file.completed",
+                $"model='{model}', lines={timedLines.Count}, elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F0}");
             progressReporter.Report(
                 TranscriptionProgressPhase.Completed,
                 100,
@@ -108,7 +128,8 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         }
         catch (Exception ex)
         {
-            _processLogService.LogException("WhisperLocal", $"Local Whisper transcription failed for '{fileName}'.", ex);
+            _processLogService.UpdateCrashContext("whispercpp.file.failed", ex.GetType().FullName);
+            _processLogService.LogException("WhisperLocal", $"whisper.cpp transcription failed for '{fileName}'.", ex);
             throw;
         }
         finally
@@ -133,114 +154,75 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         }
 
         byte[] standardizedWaveBytes = _audioStandardizer.ConvertPcmBytesToEngineWav(pcmAudio, sourceFormat);
-        Log($"Starting local Whisper playback transcription chunk ({standardizedWaveBytes.Length:N0} wav bytes) using '{model}'.");
+        Log($"Starting whisper.cpp playback transcription chunk ({standardizedWaveBytes.Length:N0} wav bytes) using '{model}'.");
 
+        string tempWavePath = CreateTemporaryWavePath();
         try
         {
-            IReadOnlyList<TranscriptionTimedLine> timedLines;
-            await using (var waveStream = new MemoryStream(standardizedWaveBytes, writable: false))
-            {
-                timedLines = await ProcessWaveStreamAsync(waveStream, model, cancellationToken);
-            }
+            Directory.CreateDirectory(Path.GetDirectoryName(tempWavePath)!);
+            await File.WriteAllBytesAsync(tempWavePath, standardizedWaveBytes, cancellationToken);
+            TimeSpan duration = ResolveAudioDuration(tempWavePath);
+            IReadOnlyList<TranscriptionTimedLine> timedLines = await TranscribeWaveFileAsync(
+                tempWavePath,
+                model,
+                duration,
+                new AudioTranscriptionRequestOptions(SuppressPrompt: true),
+                cancellationToken,
+                progressReporter: null);
 
             return BuildText(timedLines).Trim();
         }
         catch (Exception ex)
         {
-            _processLogService.LogException("WhisperLocal", "Local Whisper playback transcription failed.", ex);
+            _processLogService.LogException("WhisperLocal", "whisper.cpp playback transcription failed.", ex);
             throw;
+        }
+        finally
+        {
+            DeleteTemporaryFile(tempWavePath);
         }
     }
 
-    private async Task<IReadOnlyList<TranscriptionTimedLine>> ProcessWaveFileAsync(
+    private async Task<IReadOnlyList<TranscriptionTimedLine>> TranscribeWaveFileAsync(
         string waveFilePath,
         string model,
         TimeSpan duration,
         AudioTranscriptionRequestOptions options,
         CancellationToken cancellationToken,
-        TranscriptionProgressReporter? progressReporter = null)
+        TranscriptionProgressReporter? progressReporter)
     {
-        using FileStream stream = File.OpenRead(waveFilePath);
-        return await ProcessWaveStreamAsync(stream, model, cancellationToken, duration, progressReporter, options);
-    }
-
-    private async Task<IReadOnlyList<TranscriptionTimedLine>> ProcessWaveStreamAsync(
-        Stream waveStream,
-        string model,
-        CancellationToken cancellationToken,
-        TimeSpan? duration = null,
-        TranscriptionProgressReporter? progressReporter = null,
-        AudioTranscriptionRequestOptions? options = null)
-    {
-        WhisperFactory factory = await GetFactoryAsync(model, cancellationToken);
+        string modelPath = _whisperModelManager.ResolveInstalledModelPath(model);
+        string cliPath = await EnsureWhisperCliExecutableAsync(cancellationToken);
+        _processLogService.UpdateCrashContext(
+            "whispercpp.runtime.ready",
+            $"model='{model}', cli='{cliPath}', modelPath='{modelPath}'");
 
         await _transcriptionSemaphore.WaitAsync(cancellationToken);
         try
         {
-            var builder = factory
-                .CreateBuilder()
-                .WithLanguageDetection()
-                .WithTemperature(0)
-                .WithPrintProgress()
-                .WithPrintTimestamps(true);
-
-            string prompt = _options.Prompt.Trim();
-            bool suppressPrompt = options?.SuppressPrompt == true;
-            if (!suppressPrompt && ShouldApplyPrompt(duration) && !string.IsNullOrWhiteSpace(prompt))
-            {
-                builder.WithPrompt(prompt);
-            }
-
-            var lines = new List<TranscriptionTimedLine>();
-            await using WhisperProcessor processor = builder.Build();
-            TimeSpan totalAudio = duration ?? TimeSpan.Zero;
             progressReporter?.Report(
                 TranscriptionProgressPhase.TranscribingChunk,
-                0,
+                5,
                 TimeSpan.Zero,
-                totalAudio,
-                "Transcribing audio.",
+                duration,
+                "Starting Whisper transcription.",
                 currentChunk: 1,
                 totalChunks: 1,
                 force: true);
 
-            await foreach (SegmentData segment in processor.ProcessAsync(waveStream, cancellationToken))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (totalAudio > TimeSpan.Zero)
-                {
-                    TimeSpan processedAudio = segment.End > TimeSpan.Zero
-                        ? segment.End
-                        : segment.Start;
-                    if (processedAudio > totalAudio)
-                    {
-                        processedAudio = totalAudio;
-                    }
+            WhisperCliResult cliResult = await RunWhisperCliAsync(
+                cliPath,
+                modelPath,
+                waveFilePath,
+                duration,
+                options,
+                cancellationToken,
+                progressReporter);
 
-                    progressReporter?.Report(
-                        TranscriptionProgressPhase.TranscribingChunk,
-                        (processedAudio.TotalSeconds / totalAudio.TotalSeconds) * 100d,
-                        processedAudio,
-                        totalAudio,
-                        "Transcribing audio.",
-                        currentChunk: 1,
-                        totalChunks: 1);
-                }
-
-                string text = segment.Text.Trim();
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    continue;
-                }
-
-                lines.Add(new TranscriptionTimedLine(
-                    Text: text,
-                    StartOffset: segment.Start,
-                    EndOffset: segment.End,
-                    IsTimestampEstimated: false));
-            }
-
-            return lines;
+            _processLogService.UpdateCrashContext(
+                "whispercpp.process.completed",
+                $"model='{model}', segments={cliResult.TimedLines.Count}, elapsedMs={cliResult.Elapsed.TotalMilliseconds:F0}");
+            return cliResult.TimedLines;
         }
         finally
         {
@@ -248,41 +230,294 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         }
     }
 
-    private async Task<WhisperFactory> GetFactoryAsync(string model, CancellationToken cancellationToken)
+    private async Task<string> EnsureWhisperCliExecutableAsync(CancellationToken cancellationToken)
     {
-        string modelPath = _whisperModelManager.ResolveInstalledModelPath(model);
-
-        if (_factory is not null
-            && string.Equals(_loadedModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
+        AssetProvisioningStatus status = _assetProvisioningService.GetStatus(WhisperCliAssetId);
+        if (status.State == AssetProvisioningState.Unsupported)
         {
-            return _factory;
+            throw new PlatformNotSupportedException(
+                "The local whisper.cpp runtime is not supported on this device architecture.");
         }
 
-        await _modelSemaphore.WaitAsync(cancellationToken);
+        if (!_assetProvisioningService.IsInstalled(WhisperCliAssetId))
+        {
+            Log("whisper.cpp CLI runtime is missing. Installing on demand.");
+            _processLogService.UpdateCrashContext("whispercpp.runtime.installing");
+            await _assetProvisioningService.InstallAssetAsync(WhisperCliAssetId, progress: null, cancellationToken);
+        }
+
+        string installDirectory = _assetProvisioningService.ResolveInstallPath(WhisperCliAssetId);
+        string executablePath = Path.Combine(installDirectory, WhisperCliExecutableRelativePath);
+        if (!File.Exists(executablePath))
+        {
+            throw new FileNotFoundException(
+                "The installed whisper.cpp CLI executable was not found.",
+                executablePath);
+        }
+
+        return executablePath;
+    }
+
+    private async Task<WhisperCliResult> RunWhisperCliAsync(
+        string cliPath,
+        string modelPath,
+        string waveFilePath,
+        TimeSpan duration,
+        AudioTranscriptionRequestOptions options,
+        CancellationToken cancellationToken,
+        TranscriptionProgressReporter? progressReporter)
+    {
+        string outputRoot = Path.Combine(_paths.TempPath, "whispercpp", Guid.NewGuid().ToString("N"));
+        string workingDirectory = Path.GetDirectoryName(cliPath) ?? Environment.CurrentDirectory;
+        Directory.CreateDirectory(Path.GetDirectoryName(outputRoot)!);
+
+        string arguments = BuildCliArguments(modelPath, waveFilePath, outputRoot, duration, options);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = cliPath,
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        Log($"Launching whisper.cpp CLI. exe='{cliPath}', args='{arguments}'.");
+        _processLogService.UpdateCrashContext(
+            "whispercpp.process.start",
+            $"cli='{cliPath}', wave='{waveFilePath}', output='{outputRoot}'");
+
+        using var process = new Process { StartInfo = startInfo };
+        process.Start();
+
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task? heartbeatTask = null;
+
         try
         {
-            if (_factory is not null
-                && string.Equals(_loadedModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
+            progressReporter?.Report(
+                TranscriptionProgressPhase.TranscribingChunk,
+                50,
+                TimeSpan.Zero,
+                duration,
+                "Transcribing audio.",
+                currentChunk: 1,
+                totalChunks: 1,
+                force: true);
+
+            var stopwatch = Stopwatch.StartNew();
+            heartbeatTask = ReportWhisperHeartbeatAsync(
+                progressReporter,
+                stopwatch,
+                duration,
+                heartbeatCts.Token);
+            await process.WaitForExitAsync(cancellationToken);
+            heartbeatCts.Cancel();
+            if (heartbeatTask is not null)
             {
-                return _factory;
+                try
+                {
+                    await heartbeatTask;
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+            stopwatch.Stop();
+
+            string stdout = await stdoutTask;
+            string stderr = await stderrTask;
+            string srtPath = outputRoot + ".srt";
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"whisper.cpp CLI exited with code {process.ExitCode}. {BuildProcessFailureDetails(stdout, stderr)}");
             }
 
-            WhisperFactory factory = WhisperFactory.FromPath(
-                modelPath,
-                new WhisperFactoryOptions
-                {
-                    UseGpu = true,
-                });
-            string runtimeInfo = WhisperFactory.GetRuntimeInfo() ?? "unknown";
-            _factory?.Dispose();
-            _factory = factory;
-            _loadedModelPath = modelPath;
-            Log($"Loaded local Whisper model '{Path.GetFileName(modelPath)}' with runtime: {runtimeInfo}.");
-            return factory;
+            if (!File.Exists(srtPath))
+            {
+                throw new InvalidOperationException(
+                    $"whisper.cpp CLI did not produce the expected SRT output. {BuildProcessFailureDetails(stdout, stderr)}");
+            }
+
+            string srtContent = await File.ReadAllTextAsync(srtPath, cancellationToken);
+            IReadOnlyList<TranscriptionTimedLine> timedLines = ParseSrtTimedLines(srtContent);
+            Log($"whisper.cpp CLI completed in {stopwatch.Elapsed.TotalSeconds:F2}s with exitCode=0.");
+            return new WhisperCliResult(timedLines, stopwatch.Elapsed);
+        }
+        catch (OperationCanceledException)
+        {
+            heartbeatCts.Cancel();
+            TryTerminateProcess(process);
+            throw;
         }
         finally
         {
-            _modelSemaphore.Release();
+            DeleteTemporaryFile(outputRoot + ".json");
+            DeleteTemporaryFile(outputRoot + ".srt");
+            DeleteTemporaryFile(outputRoot + ".txt");
+        }
+    }
+
+    private static async Task ReportWhisperHeartbeatAsync(
+        TranscriptionProgressReporter? progressReporter,
+        Stopwatch stopwatch,
+        TimeSpan totalAudio,
+        CancellationToken cancellationToken)
+    {
+        if (progressReporter is null || totalAudio <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(WhisperHeartbeatInterval, cancellationToken);
+
+            double elapsedSeconds = Math.Max(0, stopwatch.Elapsed.TotalSeconds);
+            double estimatedPercent = WhisperHeartbeatStartPercent +
+                                      ((elapsedSeconds / Math.Max(1, totalAudio.TotalSeconds * WhisperRealtimeDivisor)) * 100d);
+            estimatedPercent = Math.Clamp(estimatedPercent, WhisperHeartbeatStartPercent, WhisperHeartbeatMaxPercent);
+            TimeSpan estimatedProcessedAudio = TimeSpan.FromTicks((long)(totalAudio.Ticks * (estimatedPercent / 100d)));
+
+            progressReporter.Report(
+                TranscriptionProgressPhase.TranscribingChunk,
+                estimatedPercent,
+                estimatedProcessedAudio,
+                totalAudio,
+                "Transcribing audio.",
+                currentChunk: 1,
+                totalChunks: 1);
+        }
+    }
+
+    private string BuildCliArguments(
+        string modelPath,
+        string waveFilePath,
+        string outputRoot,
+        TimeSpan duration,
+        AudioTranscriptionRequestOptions options)
+    {
+        var arguments = new List<string>
+        {
+            "-m", QuoteArgument(modelPath),
+            "-f", QuoteArgument(waveFilePath),
+            "-l", "auto",
+            "-osrt",
+            "-oj",
+            "-of", QuoteArgument(outputRoot),
+            "-t", Math.Max(1, Environment.ProcessorCount).ToString(CultureInfo.InvariantCulture),
+            "-ng",
+            "-np",
+        };
+
+        string prompt = _options.Prompt.Trim();
+        bool suppressPrompt = options.SuppressPrompt;
+        if (!suppressPrompt && ShouldApplyPrompt(duration) && !string.IsNullOrWhiteSpace(prompt))
+        {
+            arguments.Add("--prompt");
+            arguments.Add(QuoteArgument(prompt));
+            arguments.Add("--carry-initial-prompt");
+        }
+
+        return string.Join(" ", arguments);
+    }
+
+    internal static IReadOnlyList<TranscriptionTimedLine> ParseSrtTimedLines(string srtContent)
+    {
+        if (string.IsNullOrWhiteSpace(srtContent))
+        {
+            return Array.Empty<TranscriptionTimedLine>();
+        }
+
+        var lines = new List<TranscriptionTimedLine>();
+        string normalized = srtContent.Replace("\r\n", "\n").Replace('\r', '\n');
+        string[] blocks = normalized.Split("\n\n", StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (string rawBlock in blocks)
+        {
+            string[] blockLines = rawBlock
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (blockLines.Length < 2)
+            {
+                continue;
+            }
+
+            int timestampIndex = blockLines[0].Contains("-->", StringComparison.Ordinal) ? 0 : 1;
+            if (timestampIndex >= blockLines.Length)
+            {
+                continue;
+            }
+
+            string timestampLine = blockLines[timestampIndex];
+            string[] timestamps = timestampLine.Split("-->", StringSplitOptions.TrimEntries);
+            if (timestamps.Length != 2
+                || !TryParseSrtTimestamp(timestamps[0], out TimeSpan start)
+                || !TryParseSrtTimestamp(timestamps[1], out TimeSpan end))
+            {
+                continue;
+            }
+
+            string text = string.Join(" ", blockLines.Skip(timestampIndex + 1)).Trim();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            lines.Add(new TranscriptionTimedLine(text, start, end, IsTimestampEstimated: false));
+        }
+
+        return lines;
+    }
+
+    private static bool TryParseSrtTimestamp(string value, out TimeSpan timestamp)
+    {
+        return TimeSpan.TryParseExact(
+            value.Trim(),
+            "hh\\:mm\\:ss\\,fff",
+            CultureInfo.InvariantCulture,
+            out timestamp);
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + value.Replace("\"", "\\\"") + "\"";
+    }
+
+    private static string BuildProcessFailureDetails(string stdout, string stderr)
+    {
+        string stderrSnippet = BuildSnippet(stderr);
+        string stdoutSnippet = BuildSnippet(stdout);
+        return $"stderr='{stderrSnippet}', stdout='{stdoutSnippet}'.";
+    }
+
+    private static string BuildSnippet(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "(empty)";
+        }
+
+        string normalized = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        return normalized.Length <= 500 ? normalized : normalized[..500];
+    }
+
+    private static void TryTerminateProcess(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+            // Best-effort cancellation cleanup.
         }
     }
 
@@ -333,6 +568,11 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         return duration is null || duration.Value > ShortAudioPromptSuppressionDuration;
     }
 
+    private string CreateTemporaryWavePath()
+    {
+        return Path.Combine(_paths.TempPath, "whispercpp", $"{Guid.NewGuid():N}.wav");
+    }
+
     private static void DeleteTemporaryFile(string filePath)
     {
         try
@@ -344,7 +584,7 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         }
         catch
         {
-            // Best-effort cleanup for generated audio/model download files.
+            // Best-effort cleanup for generated audio/output files.
         }
     }
 
@@ -352,4 +592,8 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
     {
         _processLogService.Log("WhisperLocal", message);
     }
+
+    private sealed record WhisperCliResult(
+        IReadOnlyList<TranscriptionTimedLine> TimedLines,
+        TimeSpan Elapsed);
 }

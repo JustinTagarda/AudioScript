@@ -14,6 +14,127 @@ namespace AudioScript.Tests;
 public sealed class MainViewModelTests
 {
     [Fact]
+    public async Task ApplicationVersionStatusText_UsesColonFormat()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(new SynchronizationContext());
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.StartsWith("Version: ", viewModel.ApplicationVersionStatusText, StringComparison.Ordinal);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task UpdateFooterMode_Completed_ShowsRestartAndHidesDefaultFooter()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var appUpdateService = new StubAppUpdateService(AppUpdateSnapshot.Idle("1.2.3.4"));
+                    var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall),
+                    appUpdateService: appUpdateService,
+                    restartApplicationAsync: () => Task.CompletedTask);
+
+                try
+                {
+                    Assert.False(viewModel.IsApplicationFooterCompactMode);
+                    Assert.True(viewModel.IsApplicationFooterDefaultVisible);
+                    Assert.False(viewModel.IsApplicationRestartVisible);
+                    Assert.False(viewModel.RestartApplicationCommand.CanExecute(null));
+
+                    appUpdateService.Publish(new AppUpdateSnapshot(
+                        AppUpdateState.Completed,
+                        "Update installed",
+                        "Restart to run the newly installed version.",
+                        IsMandatoryUpdateAvailable: false,
+                        IsProgressVisible: false,
+                        ProgressValue: 1,
+                        InstalledVersion: "1.2.3.4",
+                        AvailableVersion: "1.2.3.5"));
+                    queuedContext.Drain();
+
+                    Assert.True(viewModel.IsApplicationFooterCompactMode);
+                    Assert.False(viewModel.IsApplicationFooterDefaultVisible);
+                    Assert.True(viewModel.IsApplicationRestartVisible);
+                    Assert.True(viewModel.RestartApplicationCommand.CanExecute(null));
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
     public async Task TryImportAudioFileFromPath_NewAudio_LoadsPreviewAndKeepsTranscriptGenerationEnabled()
     {
         await RunInStaAsync(async () =>
@@ -2038,6 +2159,39 @@ public sealed class MainViewModelTests
             return Task.FromResult(new PremiumPurchaseResult(
                 PremiumPurchaseStatus.NotAvailable,
                 "Stub entitlement service does not support purchases."));
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class StubAppUpdateService : IAppUpdateService
+    {
+        public StubAppUpdateService(AppUpdateSnapshot snapshot)
+        {
+            CurrentSnapshot = snapshot;
+        }
+
+        public AppUpdateSnapshot CurrentSnapshot { get; private set; }
+
+        public event EventHandler<AppUpdateSnapshot>? SnapshotChanged;
+
+        public Task StartAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync()
+        {
+            return Task.CompletedTask;
+        }
+
+        public void Publish(AppUpdateSnapshot snapshot)
+        {
+            CurrentSnapshot = snapshot;
+            SnapshotChanged?.Invoke(this, snapshot);
         }
 
         public ValueTask DisposeAsync()

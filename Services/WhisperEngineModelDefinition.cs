@@ -1,6 +1,12 @@
-using Whisper.net.Ggml;
-
 namespace AudioScript.Services;
+
+public enum WhisperModelVariant
+{
+    Small,
+    Medium,
+    LargeV3,
+    LargeV3Turbo,
+}
 
 public sealed record WhisperEngineModelDefinition(
     string Id,
@@ -10,8 +16,7 @@ public sealed record WhisperEngineModelDefinition(
     string Description,
     string Benefits,
     string Notes,
-    GgmlType? GgmlType,
+    WhisperModelVariant? GgmlType,
     long? ExpectedBytes,
     bool IsBundled,
     bool IsFixedInstalled);
-

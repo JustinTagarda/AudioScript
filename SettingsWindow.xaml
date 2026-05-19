@@ -17,16 +17,62 @@
         <Style x:Key="FluentComboBoxItemStyle"
                TargetType="{x:Type ComboBoxItem}"
                BasedOn="{StaticResource {x:Type ComboBoxItem}}"/>
+        <Style x:Key="AssetProgressBarStyle"
+               TargetType="ProgressBar">
+            <Setter Property="Height"
+                    Value="6" />
+            <Setter Property="Foreground"
+                    Value="#D79DEB" />
+            <Setter Property="Background"
+                    Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+        </Style>
     </Window.Resources>
 
     <Grid Margin="16">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0"
+                Padding="12"
+                Margin="0,0,0,12"
+                BorderThickness="1"
+                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                CornerRadius="8"
+                Visibility="{Binding IsPremiumStatusBannerVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Text="Premium"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Margin="0,0,12,0"/>
+                <TextBlock Grid.Column="1"
+                           Text="{Binding PremiumStatusText}"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding PremiumStatusText}"/>
+                <Button Grid.Column="2"
+                        Content="Re-check Premium"
+                        Margin="12,0,0,0"
+                        MinWidth="160"
+                        HorizontalAlignment="Right"
+                        Tag="&#xE72C;"
+                        Style="{StaticResource ToolbarButtonStyle}"
+                        Click="RecheckPremiumButton_Click"/>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1"
                 Padding="14"
                 BorderThickness="1"
                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
@@ -60,7 +106,7 @@
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="1"
+        <Grid Grid.Row="2"
               Margin="0,12,0,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -181,9 +227,9 @@
                                                 Grid.ColumnSpan="2"
                                                 Margin="0,10,0,0"
                                                 Visibility="{Binding CanCancel, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                        <ProgressBar Height="8"
-                                                     Minimum="0"
+                                        <ProgressBar Minimum="0"
                                                      Maximum="100"
+                                                     Style="{StaticResource AssetProgressBarStyle}"
                                                      Value="{Binding ProgressPercent, Mode=OneWay}"/>
                                         <TextBlock Text="{Binding ProgressText}"
                                                    Margin="0,5,0,0"
@@ -198,7 +244,7 @@
             </ScrollViewer>
         </Grid>
 
-        <StackPanel Grid.Row="2"
+        <StackPanel Grid.Row="3"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     Margin="0,12,0,0">

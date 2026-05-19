@@ -34,6 +34,10 @@ public sealed class AppUpdateService : IAppUpdateService
     private int _discoveryRetryCount;
     private int _installRetryCount;
     private AppUpdateSnapshot _currentSnapshot;
+    private string _lastInstalledVersion = "unknown";
+    private string _lastAvailableVersion = "unknown";
+    private int _lastUpdateCount;
+    private bool _lastMandatory;
 
     public AppUpdateService(
         IAppVersionProvider versionProvider,
@@ -109,7 +113,7 @@ public sealed class AppUpdateService : IAppUpdateService
             }
             catch (Exception ex)
             {
-                LogException("update_stop_failed", ex);
+                LogException("update_stop_failed", "shutdown", ex);
             }
         }
 
@@ -156,11 +160,11 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            Log("startup_update_check_canceled", "Application update startup check canceled.");
+            Log("startup_update_check_canceled", "startup", extra: "message=Application update startup check canceled.");
         }
         catch (Exception ex)
         {
-            LogException("startup_update_check_failed", ex);
+            LogException("startup_update_check_failed", "startup", ex);
             Publish(Failed("Update check failed", "AudioScript will retry update detection later."));
             ScheduleDiscoveryRetry();
         }
@@ -169,9 +173,10 @@ public sealed class AppUpdateService : IAppUpdateService
     private async Task RunWorkflowCoreAsync(CancellationToken cancellationToken)
     {
         string installedVersion = _versionProvider.InstalledVersion;
+        _lastInstalledVersion = installedVersion;
         if (!_versionProvider.IsPackaged)
         {
-            Log("update_check_skipped_unpacked", $"installedVersion={installedVersion}");
+            Log("update_check_skipped_unpacked", "check");
             Publish(AppUpdateSnapshot.Idle(installedVersion));
             return;
         }
@@ -185,7 +190,7 @@ public sealed class AppUpdateService : IAppUpdateService
             ProgressValue: 0,
             InstalledVersion: installedVersion,
             AvailableVersion: null));
-        Log("update_check_started", $"installedVersion={installedVersion}");
+        Log("update_check_started", "check");
 
         StoreUpdateQueryResult queryResult;
         try
@@ -198,7 +203,7 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            LogException("update_check_failed", ex);
+            LogException("update_check_failed", "check", ex);
             Publish(Failed("Update check failed", "AudioScript will retry update detection later."));
             ScheduleDiscoveryRetry();
             return;
@@ -206,7 +211,10 @@ public sealed class AppUpdateService : IAppUpdateService
 
         if (!queryResult.UpdateSet.HasUpdates)
         {
-            Log("no_updates_available", $"installedVersion={installedVersion}");
+            _lastUpdateCount = 0;
+            _lastAvailableVersion = "unknown";
+            _lastMandatory = false;
+            Log("no_updates_available", "check");
             ResetRetryCounts();
             Publish(AppUpdateSnapshot.Idle(installedVersion));
             return;
@@ -214,14 +222,15 @@ public sealed class AppUpdateService : IAppUpdateService
 
         bool mandatory = queryResult.UpdateSet.Updates.Any(update => update.IsMandatory);
         string? availableVersion = ResolveHighestVersion(queryResult.UpdateSet.Updates);
+        _lastUpdateCount = queryResult.UpdateSet.Updates.Count;
+        _lastAvailableVersion = availableVersion ?? "unknown";
+        _lastMandatory = mandatory;
         Publish(UpdateAvailable(installedVersion, availableVersion, mandatory));
-        Log(
-            "updates_available",
-            $"count={queryResult.UpdateSet.Updates.Count}; mandatory={mandatory}; availableVersion={availableVersion ?? "unknown"}");
+        Log("updates_available", "check");
 
         if (!queryResult.CanSilentlyDownload)
         {
-            Log("silent_download_unavailable", "Microsoft Store silent download is unavailable.");
+            Log("silent_download_unavailable", "check", extra: "canSilent=false");
             Publish(Deferred(
                 "Update deferred",
                 "Microsoft Store automatic updates are unavailable right now. AudioScript will retry later.",
@@ -241,9 +250,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
         if (downloadResult.State != StoreUpdateOperationState.Completed)
         {
-            Log(
-                "download_failed",
-                $"state={downloadResult.State}; failedPackageCount={downloadResult.FailedPackageCount}");
+            Log("download_failed", "download", state: downloadResult.State.ToString(), failedPackageCount: downloadResult.FailedPackageCount);
             Publish(Deferred(
                 "Update deferred",
                 "AudioScript could not download the Store update. It will retry later.",
@@ -254,12 +261,17 @@ public sealed class AppUpdateService : IAppUpdateService
             return;
         }
 
-        await WaitForIdleAndInstallAsync(
-            queryResult.UpdateSet,
-            installedVersion,
-            availableVersion,
+        ResetRetryCounts();
+        Log("download_completed", "download");
+        Publish(new AppUpdateSnapshot(
+            AppUpdateState.Completed,
+            "Update installed",
+            "Update installed. Restart required",
             mandatory,
-            cancellationToken).ConfigureAwait(false);
+            IsProgressVisible: false,
+            ProgressValue: 1,
+            installedVersion,
+            availableVersion));
     }
 
     private async Task<StoreUpdateOperationResult> DownloadAsync(
@@ -293,7 +305,7 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            LogException("download_failed", ex);
+            LogException("download_failed", "download", ex);
             return new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message);
         }
     }
@@ -357,18 +369,18 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            LogException("install_failed", ex);
+            LogException("install_failed", "install", ex);
             installResult = new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message);
         }
 
         if (installResult.State == StoreUpdateOperationState.Completed)
         {
             ResetRetryCounts();
-            Log("install_completed", $"availableVersion={availableVersion ?? "unknown"}");
+            Log("install_completed", "install");
             Publish(new AppUpdateSnapshot(
                 AppUpdateState.Completed,
                 "Update installed",
-                "Latest package installed. Restart AudioScript to run the new version.",
+                "Restart to run the newly installed version.",
                 mandatory,
                 IsProgressVisible: false,
                 ProgressValue: 1,
@@ -377,9 +389,7 @@ public sealed class AppUpdateService : IAppUpdateService
             return;
         }
 
-        Log(
-            "install_failed",
-            $"state={installResult.State}; failedPackageCount={installResult.FailedPackageCount}");
+        Log("install_failed", "install", state: installResult.State.ToString(), failedPackageCount: installResult.FailedPackageCount);
         Publish(Deferred(
             "Update deferred",
             "AudioScript could not install the Store update. It will retry when idle.",
@@ -436,7 +446,7 @@ public sealed class AppUpdateService : IAppUpdateService
             }
             catch (Exception ex)
             {
-                LogException("discovery_retry_failed", ex);
+                LogException("discovery_retry_failed", "retry", ex);
             }
             finally
             {
@@ -483,7 +493,7 @@ public sealed class AppUpdateService : IAppUpdateService
             }
             catch (Exception ex)
             {
-                LogException("install_retry_failed", ex);
+                LogException("install_retry_failed", "retry", ex);
             }
             finally
             {
@@ -513,7 +523,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
                 _installRetryScheduled = true;
                 _installRetryCount++;
-                Log("install_retry_scheduled", $"retryCount={_installRetryCount}");
+                Log("install_retry_scheduled", "retry", extra: $"retryCount={_installRetryCount}");
                 return true;
             }
 
@@ -524,7 +534,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
             _discoveryRetryScheduled = true;
             _discoveryRetryCount++;
-            Log("discovery_retry_scheduled", $"retryCount={_discoveryRetryCount}");
+            Log("discovery_retry_scheduled", "retry", extra: $"retryCount={_discoveryRetryCount}");
             return true;
         }
     }
@@ -553,7 +563,7 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            LogException("busy_check_failed", ex);
+            LogException("busy_check_failed", "check", ex);
             return true;
         }
     }
@@ -581,7 +591,7 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            LogException("snapshot_subscriber_failed", ex);
+            LogException("snapshot_subscriber_failed", "shutdown", ex);
         }
     }
 
@@ -664,13 +674,38 @@ public sealed class AppUpdateService : IAppUpdateService
         }
     }
 
-    private void Log(string eventName, string metadata)
+    private void Log(
+        string eventName,
+        string operation,
+        string? state = null,
+        int failedPackageCount = 0,
+        Exception? exception = null,
+        string? extra = null)
     {
+        string metadata = UpdateLogMetadata.Build(
+            operation,
+            state ?? _currentSnapshot.State.ToString(),
+            _lastInstalledVersion,
+            _lastAvailableVersion,
+            _lastUpdateCount,
+            _lastMandatory,
+            failedPackageCount,
+            exception,
+            extra);
         _processLogService.Log("AppUpdate", $"{eventName}; {metadata}");
     }
 
-    private void LogException(string eventName, Exception ex)
+    private void LogException(string eventName, string operation, Exception ex)
     {
-        _processLogService.LogException("AppUpdate", eventName, ex);
+        string metadata = UpdateLogMetadata.Build(
+            operation,
+            _currentSnapshot.State.ToString(),
+            _lastInstalledVersion,
+            _lastAvailableVersion,
+            _lastUpdateCount,
+            _lastMandatory,
+            failedPackageCount: 0,
+            exception: ex);
+        _processLogService.Log("AppUpdate", $"{eventName}; {metadata}", ProcessLogLevel.Error);
     }
 }

@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   AudioScript.Package.wapproj
-  Windows Application Packaging Project – generates the .msixupload bundle for
+  Windows Application Packaging Project – generates the x64 .msixupload bundle for
   Partner Center / Microsoft Store submission.
 
   Preferred Store submission workflow:
     powershell -ExecutionPolicy Bypass -File ..\Build-StorePackage.ps1
 
-  The checked-in script publishes self-contained x64 and arm64 binaries before
-  bundling, which avoids Store certification failures caused by external .NET
-  runtime dependencies.
+  The checked-in script publishes a self-contained x64 package, which avoids
+  Store certification failures caused by external .NET runtime dependencies.
 
   Build from Visual Studio:
     Right-click AudioScript.Package → Publish → Create App Packages → Store
@@ -17,7 +16,7 @@
   Build from CLI (requires Visual Studio MSBuild, not just dotnet):
     MSBuild AudioScript.Package.wapproj /p:Configuration=Release /p:Platform=x64
          /p:UapAppxPackageBuildMode=StoreUpload /p:AppxBundle=Always
-         /p:AppxPackageSigningEnabled=false /p:AppxBundlePlatforms="x64|arm64"
+         /p:AppxPackageSigningEnabled=false /p:AppxBundlePlatforms="x64"
 -->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
@@ -30,14 +29,6 @@
       <Configuration>Release</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
-    <ProjectConfiguration Include="Debug|ARM64">
-      <Configuration>Debug</Configuration>
-      <Platform>ARM64</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|ARM64">
-      <Configuration>Release</Configuration>
-      <Platform>ARM64</Platform>
-    </ProjectConfiguration>
   </ItemGroup>
 
   <PropertyGroup Label="Globals">
@@ -46,6 +37,7 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <DefaultLanguage>en-US</DefaultLanguage>
     <AppxBundle>Always</AppxBundle>
+    <AppxBundlePlatforms>x64</AppxBundlePlatforms>
     <EntryPointProjectUniqueName>..\AudioScript.csproj</EntryPointProjectUniqueName>
     <UseSdkBuildToolsPackage>true</UseSdkBuildToolsPackage>
     <WindowsSDKBuildToolsVersion>10.0.26100.0</WindowsSDKBuildToolsVersion>
@@ -88,26 +80,6 @@
     <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
     <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
     <PlatformTarget>x64</PlatformTarget>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
-    <OutputPath>bin\Debug\ARM64\</OutputPath>
-    <IntermediateOutputPath>obj\Debug\ARM64\</IntermediateOutputPath>
-    <DebuggerFlavor>AppHostLocalDebugger</DebuggerFlavor>
-    <PackageCertificateKeyFile />
-    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
-    <OutputPath>bin\Release\ARM64\</OutputPath>
-    <IntermediateOutputPath>obj\Release\ARM64\</IntermediateOutputPath>
-    <UapAppxPackageBuildMode>StoreUpload</UapAppxPackageBuildMode>
-    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
-    <AppxPackage>true</AppxPackage>
-    <BuildAppxUploadPackageForUap>true</BuildAppxUploadPackageForUap>
-    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
-    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
-    <PlatformTarget>arm64</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>

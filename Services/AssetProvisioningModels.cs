@@ -12,7 +12,8 @@ public enum ProvisioningInstallRoot
 {
     Models,
     Pyannote,
-    Python
+    Python,
+    Tools
 }
 
 public enum AssetProvisioningState

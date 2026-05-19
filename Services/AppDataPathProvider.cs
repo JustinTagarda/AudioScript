@@ -28,6 +28,7 @@ public sealed class AppDataPathProvider
         ProvisionedAssetsPath = Path.Combine(RootPath, "Assets");
         PyannoteAssetsPath = Path.Combine(ProvisionedAssetsPath, "Pyannote");
         PythonRuntimesPath = Path.Combine(ProvisionedAssetsPath, "Python");
+        ToolsPath = Path.Combine(ProvisionedAssetsPath, "Tools");
         SessionsPath = Path.Combine(RootPath, "Sessions");
         LogsPath = Path.Combine(RootPath, "Logs");
         TempPath = Path.Combine(RootPath, "Temp");
@@ -46,6 +47,8 @@ public sealed class AppDataPathProvider
     public string PyannoteAssetsPath { get; }
 
     public string PythonRuntimesPath { get; }
+
+    public string ToolsPath { get; }
 
     public string SessionsPath { get; }
 
