@@ -10,6 +10,7 @@ public enum AppUpdateState
     Completed,
     Deferred,
     Failed,
+    Skipped,
 }
 
 public enum StoreUpdateOperationState
@@ -73,30 +74,56 @@ public sealed record StoreUpdateOperationResult(
     StoreUpdateOperationState State,
     int FailedPackageCount = 0,
     string? ErrorMessage = null,
-    IReadOnlyList<string>? FailedPackageFamilyNames = null);
+    IReadOnlyList<string>? FailedPackageFamilyNames = null)
+{
+    public bool Succeeded => State == StoreUpdateOperationState.Completed;
+
+    public bool Cancelled => State == StoreUpdateOperationState.Canceled;
+}
+
+public sealed class DeferredUpdateState
+{
+    public DateTimeOffset? LastCheckUtc { get; init; }
+
+    public DateTimeOffset? LastUpdateDetectedUtc { get; init; }
+
+    public DateTimeOffset? LastFailureUtc { get; init; }
+
+    public DateTimeOffset? LastSuccessfulOperationUtc { get; init; }
+
+    public bool InstallDeferred { get; init; }
+
+    public int RetryCount { get; init; }
+
+    public string? LastFailureCategory { get; init; }
+
+    public IReadOnlyList<string> PackageFamilyNames { get; init; } = Array.Empty<string>();
+}
+
+public sealed class StoreUpdateOptions
+{
+    public bool EnableStartupUpdateCheck { get; init; } = true;
+
+    public bool PreferSilentUpdateWhenAvailable { get; init; } = true;
+
+    public bool UseFallbackStoreUiWhenSilentUnavailable { get; init; } = true;
+
+    public bool ShowProgressDuringFallbackUi { get; init; } = true;
+
+    public bool RestartAppAutomatically { get; init; }
+
+    public TimeSpan StartupDelay { get; init; } = TimeSpan.FromSeconds(2);
+
+    public TimeSpan MinimumCheckInterval { get; init; } = TimeSpan.Zero;
+
+    public TimeSpan DeferredStateMaxAge { get; init; } = TimeSpan.FromDays(14);
+}
 
 public interface IAppVersionProvider
 {
     bool IsPackaged { get; }
 
     string InstalledVersion { get; }
-
-    string DisplayVersionText { get; }
-}
-
-public interface IStoreUpdateClient
-{
-    Task<StoreUpdateQueryResult> QueryUpdatesAsync(CancellationToken cancellationToken);
-
-    Task<StoreUpdateOperationResult> DownloadUpdatesAsync(
-        StorePackageUpdateSet updateSet,
-        Action<StoreUpdateOperationProgress>? progress,
-        CancellationToken cancellationToken);
-
-    Task<StoreUpdateOperationResult> InstallUpdatesAsync(
-        StorePackageUpdateSet updateSet,
-        Action<StoreUpdateOperationProgress>? progress,
-        CancellationToken cancellationToken);
 }
 
 public interface IAppUpdateService : IAsyncDisposable
@@ -108,4 +135,42 @@ public interface IAppUpdateService : IAsyncDisposable
     Task StartAsync(CancellationToken cancellationToken = default);
 
     Task StopAsync();
+}
+
+public interface IAppUpdateCoordinator
+{
+    Task RunStartupUpdateFlowAsync(CancellationToken cancellationToken = default);
+}
+
+public interface IMicrosoftStoreUpdateProvider
+{
+    bool IsStoreUpdateSupported();
+
+    Task<StoreUpdateQueryResult> GetAvailableUpdatesAsync(CancellationToken cancellationToken = default);
+
+    bool CanSilentlyDownloadUpdates(StoreUpdateQueryResult queryResult);
+
+    Task<StoreUpdateOperationResult> TrySilentDownloadAsync(
+        StorePackageUpdateSet updateSet,
+        Action<StoreUpdateOperationProgress>? progress,
+        CancellationToken cancellationToken = default);
+
+    Task<StoreUpdateOperationResult> TrySilentDownloadAndInstallAsync(
+        StorePackageUpdateSet updateSet,
+        Action<StoreUpdateOperationProgress>? progress,
+        CancellationToken cancellationToken = default);
+
+    Task<StoreUpdateOperationResult> RequestDownloadAndInstallWithStoreUiAsync(
+        StorePackageUpdateSet updateSet,
+        Action<StoreUpdateOperationProgress>? progress,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IDeferredUpdateStateStore
+{
+    Task<DeferredUpdateState?> LoadAsync(CancellationToken cancellationToken = default);
+
+    Task SaveAsync(DeferredUpdateState state, CancellationToken cancellationToken = default);
+
+    Task ClearAsync(CancellationToken cancellationToken = default);
 }

@@ -191,7 +191,7 @@ public partial class SettingsWindow : Window
     {
         try
         {
-            await _viewModel.RefreshPremiumEntitlementAsync();
+            await _viewModel.RestorePremiumPurchaseAsync();
             RefreshPremiumAccess();
         }
         catch (Exception ex)

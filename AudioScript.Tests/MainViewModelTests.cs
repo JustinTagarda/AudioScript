@@ -14,19 +14,21 @@ namespace AudioScript.Tests;
 public sealed class MainViewModelTests
 {
     [Fact]
-    public async Task ApplicationVersionStatusText_UsesColonFormat()
+    public async Task UpdateFooterMode_CheckingHiddenAndInstallingUsesCompactFooterWithoutRestartAction()
     {
         await RunInStaAsync(async () =>
         {
             string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
             SynchronizationContext? previousContext = SynchronizationContext.Current;
-            SynchronizationContext.SetSynchronizationContext(new SynchronizationContext());
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
 
             try
             {
                 var playbackService = new FakeAudioPlaybackService();
                 var processLogService = new ProcessLogService();
                 var transcriptionService = new StubAudioTranscriptionService([]);
+                var appUpdateService = new StubAppUpdateService(AppUpdateSnapshot.Idle("1.2.3.4"));
                 var viewModel = new MainViewModel(
                     TranscriptionModelCatalog.Models,
                     transcriptionService,
@@ -43,60 +45,8 @@ public sealed class MainViewModelTests
                         AutoPlayTimelineSelection: true,
                         LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                         LiveAudioDeviceNumber: -1,
-                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
-
-                try
-                {
-                    Assert.StartsWith("Version: ", viewModel.ApplicationVersionStatusText, StringComparison.Ordinal);
-                }
-                finally
-                {
-                    await viewModel.DisposeAsync();
-                }
-            }
-            finally
-            {
-                SynchronizationContext.SetSynchronizationContext(previousContext);
-                DeleteDirectory(rootPath);
-            }
-        });
-    }
-
-    [Fact]
-    public async Task UpdateFooterMode_CheckingAndCompleted_UsesCompactFooterWithoutRestartAction()
-    {
-        await RunInStaAsync(async () =>
-        {
-            string rootPath = CreateTempDirectory();
-            var queuedContext = new QueuedSynchronizationContext();
-            SynchronizationContext? previousContext = SynchronizationContext.Current;
-            SynchronizationContext.SetSynchronizationContext(queuedContext);
-
-            try
-            {
-                var playbackService = new FakeAudioPlaybackService();
-                var processLogService = new ProcessLogService();
-                var transcriptionService = new StubAudioTranscriptionService([]);
-                var appUpdateService = new StubAppUpdateService(AppUpdateSnapshot.Idle("1.2.3.4"));
-                    var viewModel = new MainViewModel(
-                    TranscriptionModelCatalog.Models,
-                    transcriptionService,
-                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
-                    playbackService,
-                    processLogService,
-                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
-                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
-                    new AppThemeService(),
-                    new AppPreferencesSnapshot(
-                        CopyFinalizedWithTimeline: false,
-                        AutoTranscribeWithAi: false,
-                        ThemePreference: AppThemePreference.System,
-                        AutoPlayTimelineSelection: true,
-                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
-                        LiveAudioDeviceNumber: -1,
                         SelectedEngineId: TranscriptionModelCatalog.WhisperSmall),
-                    appUpdateService: appUpdateService,
-                    restartApplicationAsync: () => Task.CompletedTask);
+                    appUpdateService: appUpdateService);
 
                 try
                 {
@@ -104,6 +54,7 @@ public sealed class MainViewModelTests
                     Assert.True(viewModel.IsApplicationFooterDefaultVisible);
                     Assert.False(viewModel.IsApplicationRestartVisible);
                     Assert.False(viewModel.RestartApplicationCommand.CanExecute(null));
+                    Assert.Equal(string.Empty, viewModel.ApplicationUpdateStatusText);
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
                         AppUpdateState.Checking,
@@ -119,14 +70,15 @@ public sealed class MainViewModelTests
                     Assert.False(viewModel.IsApplicationFooterCompactMode);
                     Assert.True(viewModel.IsApplicationFooterDefaultVisible);
                     Assert.False(viewModel.IsApplicationRestartVisible);
+                    Assert.Equal(string.Empty, viewModel.ApplicationUpdateStatusText);
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
-                        AppUpdateState.Completed,
-                        "Update downloaded",
-                        "Update downloaded. It will take effect the next time you restart the app.",
+                        AppUpdateState.Installing,
+                        "Installing update",
+                        "Installing update",
                         IsMandatoryUpdateAvailable: false,
-                        IsProgressVisible: false,
-                        ProgressValue: 1,
+                        IsProgressVisible: true,
+                        ProgressValue: 0.5,
                         InstalledVersion: "1.2.3.4",
                         AvailableVersion: "1.2.3.5"));
                     queuedContext.Drain();
@@ -135,6 +87,7 @@ public sealed class MainViewModelTests
                     Assert.False(viewModel.IsApplicationFooterDefaultVisible);
                     Assert.False(viewModel.IsApplicationRestartVisible);
                     Assert.False(viewModel.RestartApplicationCommand.CanExecute(null));
+                    Assert.Equal("Installing update", viewModel.ApplicationUpdateStatusText);
                 }
                 finally
                 {

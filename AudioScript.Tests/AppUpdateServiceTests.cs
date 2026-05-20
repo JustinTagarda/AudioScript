@@ -8,124 +8,123 @@ public sealed class AppUpdateServiceTests
     [Fact]
     public async Task RunOnceAsync_Unpackaged_SkipsStoreOperations()
     {
-        var client = new FakeStoreUpdateClient();
-        await using var service = CreateService(isPackaged: false, client);
+        var provider = new FakeMicrosoftStoreUpdateProvider(isSupported: false);
+        await using var service = CreateService(isPackaged: false, provider);
 
         await service.RunOnceAsync();
 
         Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
-        Assert.Equal(0, client.QueryCount);
+        Assert.Equal(0, provider.QueryCount);
     }
 
     [Fact]
     public async Task RunOnceAsync_NoUpdates_ReturnsIdle()
     {
-        var client = new FakeStoreUpdateClient
+        var provider = new FakeMicrosoftStoreUpdateProvider
         {
             QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: false, canSilentlyDownload: true)),
         };
-        await using var service = CreateService(isPackaged: true, client);
+        await using var service = CreateService(isPackaged: true, provider);
 
         await service.RunOnceAsync();
 
         Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
         Assert.Equal("1.2.3.4", service.CurrentSnapshot.InstalledVersion);
-        Assert.Equal(1, client.QueryCount);
+        Assert.Equal(1, provider.QueryCount);
     }
 
     [Fact]
-    public async Task RunOnceAsync_UpdateAvailableWithoutSilentDownload_DefersAndRetriesDiscovery()
+    public async Task RunOnceAsync_UpdateAvailableWithoutSilentDownload_UsesFallbackStoreUi()
     {
-        var client = new FakeStoreUpdateClient
+        var provider = new FakeMicrosoftStoreUpdateProvider
         {
             QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: true, canSilentlyDownload: false)),
         };
-        await using var service = CreateService(isPackaged: true, client);
+        await using var service = CreateService(isPackaged: true, provider);
 
         await service.RunOnceAsync();
 
-        Assert.Equal(AppUpdateState.Deferred, service.CurrentSnapshot.State);
-        Assert.Equal(0, client.DownloadCount);
-        await WaitUntilAsync(() => client.QueryCount >= 2);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
+        Assert.Equal(0, provider.DownloadCount);
+        Assert.Equal(1, provider.StoreUiCount);
     }
 
     [Fact]
-    public async Task RunOnceAsync_DownloadsAndPublishesRestartRequiredWithoutInstall()
+    public async Task RunOnceAsync_DownloadsAndInstallsSilentlyWhenIdle()
     {
-        bool isBusy = true;
-        var client = new FakeStoreUpdateClient();
-        await using var service = CreateService(isPackaged: true, client, () => isBusy);
+        var provider = new FakeMicrosoftStoreUpdateProvider();
+        await using var service = CreateService(isPackaged: true, provider);
         List<AppUpdateState> states = new();
         service.SnapshotChanged += (_, snapshot) => states.Add(snapshot.State);
 
         await service.RunOnceAsync();
 
         Assert.Contains(AppUpdateState.Downloading, states);
-        Assert.Equal(1, client.DownloadCount);
-        Assert.Equal(0, client.InstallCount);
-        Assert.Equal(AppUpdateState.Completed, service.CurrentSnapshot.State);
+        Assert.Equal(1, provider.DownloadCount);
+        Assert.Equal(1, provider.InstallCount);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
     }
 
     [Fact]
     public async Task RunOnceAsync_CheckFailure_PublishesFailedAndRetries()
     {
-        var client = new FakeStoreUpdateClient();
-        client.QueryHandler = _ =>
+        var provider = new FakeMicrosoftStoreUpdateProvider();
+        provider.QueryHandler = _ =>
         {
-            if (client.QueryCount == 1)
+            if (provider.QueryCount == 1)
             {
                 throw new InvalidOperationException("query failed");
             }
 
             return Task.FromResult(QueryResult(hasUpdates: false, canSilentlyDownload: true));
         };
-        await using var service = CreateService(isPackaged: true, client);
+        await using var service = CreateService(isPackaged: true, provider);
         List<AppUpdateState> states = new();
         service.SnapshotChanged += (_, snapshot) => states.Add(snapshot.State);
 
         await service.RunOnceAsync();
 
         Assert.Contains(AppUpdateState.Failed, states);
-        await WaitUntilAsync(() => client.QueryCount >= 2);
-        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
+        Assert.Equal(AppUpdateState.Failed, service.CurrentSnapshot.State);
     }
 
     [Fact]
-    public async Task RunOnceAsync_DownloadFailure_DefersAndRetriesDiscovery()
+    public async Task RunOnceAsync_DownloadFailure_UsesFallbackStoreUi()
     {
-        var client = new FakeStoreUpdateClient
+        var provider = new FakeMicrosoftStoreUpdateProvider
         {
             DownloadResult = new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, FailedPackageCount: 1),
         };
-        await using var service = CreateService(isPackaged: true, client);
+        await using var service = CreateService(isPackaged: true, provider);
 
         await service.RunOnceAsync();
 
-        Assert.Equal(AppUpdateState.Deferred, service.CurrentSnapshot.State);
-        Assert.Equal(1, client.DownloadCount);
-        await WaitUntilAsync(() => client.QueryCount >= 2);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
+        Assert.Equal(1, provider.DownloadCount);
+        Assert.Equal(1, provider.StoreUiCount);
     }
 
     [Fact]
-    public async Task RunOnceAsync_DoesNotCallInstallDuringForegroundFlow()
+    public async Task RunOnceAsync_DefersSilentInstallWhenAppIsBusy()
     {
-        var client = new FakeStoreUpdateClient();
-        await using var service = CreateService(isPackaged: true, client);
+        var provider = new FakeMicrosoftStoreUpdateProvider();
+        await using var service = CreateService(isPackaged: true, provider, () => true);
 
         await service.RunOnceAsync();
 
-        Assert.Equal(AppUpdateState.Completed, service.CurrentSnapshot.State);
-        Assert.Equal(0, client.InstallCount);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
+        Assert.Equal(0, provider.InstallCount);
+        Assert.Equal(0, provider.StoreUiCount);
     }
 
     [Fact]
     public async Task RunOnceAsync_ProgressCallbacksClampProgress()
     {
-        var client = new FakeStoreUpdateClient
+        var provider = new FakeMicrosoftStoreUpdateProvider
         {
             DownloadProgressValues = new[] { double.NaN, 1.5 },
         };
-        await using var service = CreateService(isPackaged: true, client);
+        await using var service = CreateService(isPackaged: true, provider);
         List<double> progressValues = new();
         service.SnapshotChanged += (_, snapshot) =>
         {
@@ -156,23 +155,19 @@ public sealed class AppUpdateServiceTests
         Directory.CreateDirectory(logPath);
         try
         {
-            var client = new FakeStoreUpdateClient
+            var provider = new FakeMicrosoftStoreUpdateProvider
             {
                 QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: true, canSilentlyDownload: false)),
             };
             await using var service = new AppUpdateService(
                 new FakeVersionProvider(isPackaged: true),
-                client,
+                provider,
+                new InMemoryDeferredUpdateStateStore(),
                 new ProcessLogService(logPath),
                 () => false,
-                new AppUpdateServiceOptions
+                new StoreUpdateOptions
                 {
                     StartupDelay = TimeSpan.Zero,
-                    DiscoveryRetryDelay = TimeSpan.FromMinutes(10),
-                    InstallRetryDelay = TimeSpan.FromMilliseconds(20),
-                    InstallQuietPeriod = TimeSpan.FromMilliseconds(1),
-                    MaxDiscoveryRetryCount = 0,
-                    MaxInstallRetryCount = 0,
                 });
 
             await service.RunOnceAsync();
@@ -200,21 +195,17 @@ public sealed class AppUpdateServiceTests
 
     private static AppUpdateService CreateService(
         bool isPackaged,
-        FakeStoreUpdateClient client,
+        FakeMicrosoftStoreUpdateProvider provider,
         Func<bool>? isBusy = null) =>
         new(
             new FakeVersionProvider(isPackaged),
-            client,
+            provider,
+            new InMemoryDeferredUpdateStateStore(),
             new ProcessLogService(Path.Combine(Path.GetTempPath(), $"AudioScript-update-tests-{Guid.NewGuid():N}")),
             isBusy ?? (() => false),
-            new AppUpdateServiceOptions
+            new StoreUpdateOptions
             {
                 StartupDelay = TimeSpan.Zero,
-                DiscoveryRetryDelay = TimeSpan.FromMilliseconds(20),
-                InstallRetryDelay = TimeSpan.FromMilliseconds(20),
-                InstallQuietPeriod = TimeSpan.FromMilliseconds(1),
-                MaxDiscoveryRetryCount = 1,
-                MaxInstallRetryCount = 1,
             });
 
     private static StoreUpdateQueryResult QueryResult(bool hasUpdates, bool canSilentlyDownload)
@@ -223,15 +214,6 @@ public sealed class AppUpdateServiceTests
             ? new[] { new StorePackageUpdateInfo("AudioScript_test", "2.0.0.0", IsMandatory: false) }
             : Array.Empty<StorePackageUpdateInfo>();
         return new StoreUpdateQueryResult(new StorePackageUpdateSet(updates), canSilentlyDownload);
-    }
-
-    private static async Task WaitUntilAsync(Func<bool> predicate)
-    {
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        while (!predicate())
-        {
-            await Task.Delay(10, timeoutCts.Token);
-        }
     }
 
     private sealed class FakeVersionProvider : IAppVersionProvider
@@ -244,17 +226,24 @@ public sealed class AppUpdateServiceTests
         public bool IsPackaged { get; }
 
         public string InstalledVersion => "1.2.3.4";
-
-        public string DisplayVersionText => "Version 1.2.3.4";
     }
 
-    private sealed class FakeStoreUpdateClient : IStoreUpdateClient
+    private sealed class FakeMicrosoftStoreUpdateProvider : IMicrosoftStoreUpdateProvider
     {
+        private readonly bool _isSupported;
+
+        public FakeMicrosoftStoreUpdateProvider(bool isSupported = true)
+        {
+            _isSupported = isSupported;
+        }
+
         public int QueryCount { get; private set; }
 
         public int DownloadCount { get; private set; }
 
         public int InstallCount { get; private set; }
+
+        public int StoreUiCount { get; private set; }
 
         public Func<CancellationToken, Task<StoreUpdateQueryResult>> QueryHandler { get; set; } =
             _ => Task.FromResult(QueryResult(hasUpdates: true, canSilentlyDownload: true));
@@ -263,26 +252,36 @@ public sealed class AppUpdateServiceTests
 
         public Func<StorePackageUpdateSet, Action<StoreUpdateOperationProgress>?, CancellationToken, Task<StoreUpdateOperationResult>>? InstallHandler { get; set; }
 
+        public Func<StorePackageUpdateSet, Action<StoreUpdateOperationProgress>?, CancellationToken, Task<StoreUpdateOperationResult>>? StoreUiHandler { get; set; }
+
         public StoreUpdateOperationResult DownloadResult { get; set; } =
             new(StoreUpdateOperationState.Completed);
 
         public StoreUpdateOperationResult InstallResult { get; set; } =
             new(StoreUpdateOperationState.Completed);
 
+        public StoreUpdateOperationResult StoreUiResult { get; set; } =
+            new(StoreUpdateOperationState.Completed);
+
         public IReadOnlyList<double> DownloadProgressValues { get; set; } = new[] { 1.0 };
 
         public IReadOnlyList<double> InstallProgressValues { get; set; } = new[] { 1.0 };
 
-        public Task<StoreUpdateQueryResult> QueryUpdatesAsync(CancellationToken cancellationToken)
+        public bool IsStoreUpdateSupported() => _isSupported;
+
+        public Task<StoreUpdateQueryResult> GetAvailableUpdatesAsync(CancellationToken cancellationToken = default)
         {
             QueryCount++;
             return QueryHandler(cancellationToken);
         }
 
-        public Task<StoreUpdateOperationResult> DownloadUpdatesAsync(
+        public bool CanSilentlyDownloadUpdates(StoreUpdateQueryResult queryResult) =>
+            queryResult.CanSilentlyDownload;
+
+        public Task<StoreUpdateOperationResult> TrySilentDownloadAsync(
             StorePackageUpdateSet updateSet,
             Action<StoreUpdateOperationProgress>? progress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken = default)
         {
             DownloadCount++;
             foreach (double value in DownloadProgressValues)
@@ -294,10 +293,10 @@ public sealed class AppUpdateServiceTests
                 ?? Task.FromResult(DownloadResult);
         }
 
-        public Task<StoreUpdateOperationResult> InstallUpdatesAsync(
+        public Task<StoreUpdateOperationResult> TrySilentDownloadAndInstallAsync(
             StorePackageUpdateSet updateSet,
             Action<StoreUpdateOperationProgress>? progress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken = default)
         {
             InstallCount++;
             foreach (double value in InstallProgressValues)
@@ -307,6 +306,41 @@ public sealed class AppUpdateServiceTests
 
             return InstallHandler?.Invoke(updateSet, progress, cancellationToken)
                 ?? Task.FromResult(InstallResult);
+        }
+
+        public Task<StoreUpdateOperationResult> RequestDownloadAndInstallWithStoreUiAsync(
+            StorePackageUpdateSet updateSet,
+            Action<StoreUpdateOperationProgress>? progress,
+            CancellationToken cancellationToken = default)
+        {
+            StoreUiCount++;
+            foreach (double value in InstallProgressValues)
+            {
+                progress?.Invoke(new StoreUpdateOperationProgress(value));
+            }
+
+            return StoreUiHandler?.Invoke(updateSet, progress, cancellationToken)
+                ?? Task.FromResult(StoreUiResult);
+        }
+    }
+
+    private sealed class InMemoryDeferredUpdateStateStore : IDeferredUpdateStateStore
+    {
+        private DeferredUpdateState? _state;
+
+        public Task<DeferredUpdateState?> LoadAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(_state);
+
+        public Task SaveAsync(DeferredUpdateState state, CancellationToken cancellationToken = default)
+        {
+            _state = state;
+            return Task.CompletedTask;
+        }
+
+        public Task ClearAsync(CancellationToken cancellationToken = default)
+        {
+            _state = null;
+            return Task.CompletedTask;
         }
     }
 }

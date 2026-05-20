@@ -16,8 +16,6 @@ public sealed class AppVersionProvider : IAppVersionProvider
 
     public string InstalledVersion => _versionInfo.Value.VersionText;
 
-    public string DisplayVersionText => $"Version {InstalledVersion}";
-
     public static string FormatVersion(Version version)
     {
         ArgumentNullException.ThrowIfNull(version);
@@ -54,4 +52,3 @@ public sealed class AppVersionProvider : IAppVersionProvider
 
     private sealed record AppVersionInfo(bool IsPackaged, string VersionText);
 }
-

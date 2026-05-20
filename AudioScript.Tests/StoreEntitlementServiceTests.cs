@@ -44,7 +44,5 @@ public sealed class StoreEntitlementServiceTests
         public bool IsPackaged { get; }
 
         public string InstalledVersion => "1.0.0.0";
-
-        public string DisplayVersionText => "1.0.0";
     }
 }

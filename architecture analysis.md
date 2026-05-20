@@ -12,7 +12,7 @@ AudioScript is a single-instance WPF desktop application on .NET 10 for offline 
 - `Services/ChunkedSpeakerDiarizationService.cs` and `Services/OfflineSpeakerDiarizationService.cs` run chunked speaker diarization and speaker-label application.
 - `Services/PyannoteCommunity*.cs` provides the bundled pyannote Community-1 runtime/model integration.
 - `Services/TranscriptDocumentExporter.cs` provides `.docx` export.
-- `Services/AppUpdateService.cs` and `Services/StoreUpdateClient.cs` coordinate in-app Store update flows for packaged builds.
+- `Services/AppUpdateService.cs` and `Services/MicrosoftStoreUpdateProvider.cs` coordinate the single in-app Store update flow for packaged builds.
 - `Audio/` contains playback, capture, audio standardization, silence detection, and chunk planning helpers.
 - `Services/TranscriptSessionStore.cs`, `AppPreferencesStore.cs`, and `WindowPlacementService.cs` persist local app state.
 

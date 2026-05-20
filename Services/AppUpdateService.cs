@@ -1,38 +1,18 @@
 namespace AudioScript.Services;
 
-public sealed class AppUpdateServiceOptions
-{
-    public TimeSpan StartupDelay { get; init; } = TimeSpan.FromSeconds(2);
-
-    public TimeSpan DiscoveryRetryDelay { get; init; } = TimeSpan.FromMinutes(15);
-
-    public TimeSpan InstallRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
-
-    public TimeSpan InstallQuietPeriod { get; init; } = TimeSpan.FromSeconds(5);
-
-    public int? MaxDiscoveryRetryCount { get; init; }
-
-    public int? MaxInstallRetryCount { get; init; }
-}
-
-public sealed class AppUpdateService : IAppUpdateService
+public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 {
     private readonly IAppVersionProvider _versionProvider;
-    private readonly IStoreUpdateClient _storeUpdateClient;
+    private readonly IMicrosoftStoreUpdateProvider _storeUpdateProvider;
+    private readonly IDeferredUpdateStateStore _deferredStateStore;
     private readonly ProcessLogService _processLogService;
     private readonly Func<bool> _isAppBusy;
-    private readonly AppUpdateServiceOptions _options;
+    private readonly StoreUpdateOptions _options;
     private readonly SemaphoreSlim _workflowSemaphore = new(1, 1);
     private readonly object _sync = new();
     private CancellationTokenSource? _lifetimeCts;
     private Task? _startupTask;
-    private Task? _discoveryRetryTask;
-    private Task? _installRetryTask;
     private bool _started;
-    private bool _discoveryRetryScheduled;
-    private bool _installRetryScheduled;
-    private int _discoveryRetryCount;
-    private int _installRetryCount;
     private AppUpdateSnapshot _currentSnapshot;
     private string _lastInstalledVersion = "unknown";
     private string _lastAvailableVersion = "unknown";
@@ -41,16 +21,18 @@ public sealed class AppUpdateService : IAppUpdateService
 
     public AppUpdateService(
         IAppVersionProvider versionProvider,
-        IStoreUpdateClient storeUpdateClient,
+        IMicrosoftStoreUpdateProvider storeUpdateProvider,
+        IDeferredUpdateStateStore deferredStateStore,
         ProcessLogService processLogService,
         Func<bool> isAppBusy,
-        AppUpdateServiceOptions? options = null)
+        StoreUpdateOptions? options = null)
     {
         _versionProvider = versionProvider ?? throw new ArgumentNullException(nameof(versionProvider));
-        _storeUpdateClient = storeUpdateClient ?? throw new ArgumentNullException(nameof(storeUpdateClient));
+        _storeUpdateProvider = storeUpdateProvider ?? throw new ArgumentNullException(nameof(storeUpdateProvider));
+        _deferredStateStore = deferredStateStore ?? throw new ArgumentNullException(nameof(deferredStateStore));
         _processLogService = processLogService ?? throw new ArgumentNullException(nameof(processLogService));
         _isAppBusy = isAppBusy ?? throw new ArgumentNullException(nameof(isAppBusy));
-        _options = options ?? new AppUpdateServiceOptions();
+        _options = options ?? new StoreUpdateOptions();
         _currentSnapshot = AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion);
     }
 
@@ -78,7 +60,9 @@ public sealed class AppUpdateService : IAppUpdateService
 
             _started = true;
             _lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _startupTask = RunStartupWorkflowAsync(_lifetimeCts.Token);
+            _startupTask = Task.Run(
+                () => RunStartupUpdateFlowAsync(_lifetimeCts.Token),
+                _lifetimeCts.Token);
         }
 
         return Task.CompletedTask;
@@ -87,29 +71,20 @@ public sealed class AppUpdateService : IAppUpdateService
     public async Task StopAsync()
     {
         Task? startupTask;
-        Task? discoveryRetryTask;
-        Task? installRetryTask;
         lock (_sync)
         {
             _lifetimeCts?.Cancel();
             startupTask = _startupTask;
-            discoveryRetryTask = _discoveryRetryTask;
-            installRetryTask = _installRetryTask;
         }
 
-        Task[] tasks = new[] { startupTask, discoveryRetryTask, installRetryTask }
-            .Where(task => task is not null)
-            .Cast<Task>()
-            .ToArray();
-        if (tasks.Length > 0)
+        if (startupTask is not null)
         {
             try
             {
-                await Task.WhenAll(tasks).ConfigureAwait(false);
+                await startupTask.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                // Normal application shutdown.
             }
             catch (Exception ex)
             {
@@ -120,15 +95,9 @@ public sealed class AppUpdateService : IAppUpdateService
         lock (_sync)
         {
             _startupTask = null;
-            _discoveryRetryTask = null;
-            _installRetryTask = null;
             _lifetimeCts?.Dispose();
             _lifetimeCts = null;
             _started = false;
-            _discoveryRetryScheduled = false;
-            _installRetryScheduled = false;
-            _discoveryRetryCount = 0;
-            _installRetryCount = 0;
         }
     }
 
@@ -138,24 +107,15 @@ public sealed class AppUpdateService : IAppUpdateService
         _workflowSemaphore.Dispose();
     }
 
-    public async Task RunOnceAsync(CancellationToken cancellationToken = default)
+    public async Task RunStartupUpdateFlowAsync(CancellationToken cancellationToken = default)
     {
-        await _workflowSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await RunWorkflowCoreAsync(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _workflowSemaphore.Release();
-        }
-    }
+            if (_options.StartupDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(_options.StartupDelay, cancellationToken).ConfigureAwait(false);
+            }
 
-    private async Task RunStartupWorkflowAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            await Task.Delay(_options.StartupDelay, cancellationToken).ConfigureAwait(false);
             await RunOnceAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -164,9 +124,26 @@ public sealed class AppUpdateService : IAppUpdateService
         }
         catch (Exception ex)
         {
-            LogException("startup_update_check_failed", "startup", ex);
-            Publish(Failed("Update check failed", "AudioScript will retry update detection later."));
-            ScheduleDiscoveryRetry();
+            LogException("startup_update_flow_failed", "startup", ex);
+            Publish(Failed("Update check failed", "Application will continue normally."));
+        }
+    }
+
+    public async Task RunOnceAsync(CancellationToken cancellationToken = default)
+    {
+        await _workflowSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RunWorkflowCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogException("update_workflow_failed", "startup", ex);
+            Publish(Failed("Update check failed", "Application will continue normally."));
+        }
+        finally
+        {
+            _workflowSemaphore.Release();
         }
     }
 
@@ -174,17 +151,38 @@ public sealed class AppUpdateService : IAppUpdateService
     {
         string installedVersion = _versionProvider.InstalledVersion;
         _lastInstalledVersion = installedVersion;
-        if (!_versionProvider.IsPackaged)
+
+        if (!_options.EnableStartupUpdateCheck)
         {
-            Log("update_check_skipped_unpacked", "check");
+            Log("startup_update_check_disabled", "check");
             Publish(AppUpdateSnapshot.Idle(installedVersion));
             return;
+        }
+
+        if (!_storeUpdateProvider.IsStoreUpdateSupported())
+        {
+            Log("update_check_skipped_not_supported", "check", extra: $"packaged={_versionProvider.IsPackaged}");
+            Publish(AppUpdateSnapshot.Idle(installedVersion));
+            return;
+        }
+
+        DeferredUpdateState? existingState = await _deferredStateStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (IsDeferredStateStale(existingState))
+        {
+            await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
+            Log("deferred_state_cleared_stale", "check");
+            existingState = null;
+        }
+
+        if (existingState?.InstallDeferred == true)
+        {
+            Log("deferred_state_loaded", "check", extra: $"retryCount={existingState.RetryCount}");
         }
 
         Publish(new AppUpdateSnapshot(
             AppUpdateState.Checking,
             "Checking for updates",
-            "Looking for Microsoft Store updates.",
+            string.Empty,
             IsMandatoryUpdateAvailable: false,
             IsProgressVisible: false,
             ProgressValue: 0,
@@ -192,30 +190,17 @@ public sealed class AppUpdateService : IAppUpdateService
             AvailableVersion: null));
         Log("update_check_started", "check");
 
-        StoreUpdateQueryResult queryResult;
-        try
-        {
-            queryResult = await _storeUpdateClient.QueryUpdatesAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogException("update_check_failed", "check", ex);
-            Publish(Failed("Update check failed", "AudioScript will retry update detection later."));
-            ScheduleDiscoveryRetry();
-            return;
-        }
+        StoreUpdateQueryResult queryResult = await _storeUpdateProvider
+            .GetAvailableUpdatesAsync(cancellationToken)
+            .ConfigureAwait(false);
 
         if (!queryResult.UpdateSet.HasUpdates)
         {
             _lastUpdateCount = 0;
             _lastAvailableVersion = "unknown";
             _lastMandatory = false;
+            await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
             Log("no_updates_available", "check");
-            ResetRetryCounts();
             Publish(AppUpdateSnapshot.Idle(installedVersion));
             return;
         }
@@ -225,178 +210,151 @@ public sealed class AppUpdateService : IAppUpdateService
         _lastUpdateCount = queryResult.UpdateSet.Updates.Count;
         _lastAvailableVersion = availableVersion ?? "unknown";
         _lastMandatory = mandatory;
-        Publish(UpdateAvailable(installedVersion, availableVersion, mandatory));
+        await SaveDetectedStateAsync(queryResult.UpdateSet, existingState, cancellationToken).ConfigureAwait(false);
         Log("updates_available", "check");
 
-        if (!queryResult.CanSilentlyDownload)
+        if (_options.PreferSilentUpdateWhenAvailable
+            && _storeUpdateProvider.CanSilentlyDownloadUpdates(queryResult))
         {
-            Log("silent_download_unavailable", "check", extra: "canSilent=false");
-            Publish(Deferred(
-                "Update deferred",
-                "Microsoft Store automatic updates are unavailable right now. AudioScript will retry later.",
-                installedVersion,
-                availableVersion,
-                mandatory));
-            ScheduleDiscoveryRetry();
-            return;
+            Log("silent_download_starting", "download", extra: "canSilent=true");
+            StoreUpdateOperationResult silentDownloadResult = await _storeUpdateProvider
+                .TrySilentDownloadAsync(
+                    queryResult.UpdateSet,
+                    progress => PublishProgress(AppUpdateState.Downloading, "Downloading update", installedVersion, availableVersion, mandatory, progress),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (silentDownloadResult.Succeeded)
+            {
+                Log("silent_download_completed", "download");
+                if (IsSafeToInstallNow())
+                {
+                    Log("silent_install_starting", "install");
+                    StoreUpdateOperationResult silentInstallResult = await _storeUpdateProvider
+                        .TrySilentDownloadAndInstallAsync(
+                            queryResult.UpdateSet,
+                            progress => PublishProgress(AppUpdateState.Installing, "Installing update", installedVersion, availableVersion, mandatory, progress),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (silentInstallResult.Succeeded)
+                    {
+                        await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
+                        Log("silent_install_completed", "install");
+                        Publish(AppUpdateSnapshot.Idle(installedVersion));
+                        return;
+                    }
+
+                    Log(
+                        "silent_install_failed",
+                        "install",
+                        state: silentInstallResult.State.ToString(),
+                        failedPackageCount: silentInstallResult.FailedPackageCount);
+                    await SaveRetryStateAsync(queryResult.UpdateSet, silentInstallResult, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    Log("silent_install_deferred_busy", "install");
+                    await SaveDeferredInstallStateAsync(queryResult.UpdateSet, silentDownloadResult, cancellationToken).ConfigureAwait(false);
+                    Publish(AppUpdateSnapshot.Idle(installedVersion));
+                    return;
+                }
+            }
+            else
+            {
+                Log(
+                    "silent_download_failed",
+                    "download",
+                    state: silentDownloadResult.State.ToString(),
+                    failedPackageCount: silentDownloadResult.FailedPackageCount);
+                await SaveRetryStateAsync(queryResult.UpdateSet, silentDownloadResult, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            Log("silent_update_unavailable", "check", extra: $"canSilent={queryResult.CanSilentlyDownload}");
         }
 
-        StoreUpdateOperationResult downloadResult = await DownloadAsync(
-            queryResult.UpdateSet,
-            installedVersion,
-            availableVersion,
-            mandatory,
-            cancellationToken).ConfigureAwait(false);
-
-        if (downloadResult.State != StoreUpdateOperationState.Completed)
+        if (_options.UseFallbackStoreUiWhenSilentUnavailable)
         {
-            Log("download_failed", "download", state: downloadResult.State.ToString(), failedPackageCount: downloadResult.FailedPackageCount);
-            Publish(Deferred(
-                "Update deferred",
-                "AudioScript could not download the Store update. It will retry later.",
-                installedVersion,
-                availableVersion,
-                mandatory));
-            ScheduleDiscoveryRetry();
-            return;
+            await RunFallbackStoreUiAsync(queryResult.UpdateSet, installedVersion, availableVersion, mandatory, cancellationToken)
+                .ConfigureAwait(false);
         }
-
-        ResetRetryCounts();
-        Log("download_completed", "download");
-        Publish(new AppUpdateSnapshot(
-            AppUpdateState.Completed,
-            "Update downloaded",
-            "Update downloaded. It will take effect the next time you restart the app.",
-            mandatory,
-            IsProgressVisible: false,
-            ProgressValue: 1,
-            installedVersion,
-            availableVersion));
+        else
+        {
+            await SaveDeferredInstallStateAsync(
+                queryResult.UpdateSet,
+                new StoreUpdateOperationResult(StoreUpdateOperationState.Unknown),
+                cancellationToken).ConfigureAwait(false);
+            Publish(AppUpdateSnapshot.Idle(installedVersion));
+        }
     }
 
-    private async Task<StoreUpdateOperationResult> DownloadAsync(
+    private async Task RunFallbackStoreUiAsync(
         StorePackageUpdateSet updateSet,
         string installedVersion,
         string? availableVersion,
         bool mandatory,
         CancellationToken cancellationToken)
     {
-        Publish(new AppUpdateSnapshot(
-            AppUpdateState.Downloading,
-            "Downloading update",
-            "AudioScript is downloading the latest Store package in the background.",
-            mandatory,
-            IsProgressVisible: true,
-            ProgressValue: 0,
-            installedVersion,
-            availableVersion));
-
         try
         {
-            StoreUpdateOperationResult result = await _storeUpdateClient.DownloadUpdatesAsync(
-                updateSet,
-                progress => PublishProgress(AppUpdateState.Downloading, "Downloading update", installedVersion, availableVersion, mandatory, progress),
-                cancellationToken).ConfigureAwait(false);
-            return result;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogException("download_failed", "download", ex);
-            return new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message);
-        }
-    }
+            Log("fallback_ui_starting", "fallback_ui");
+            StoreUpdateOperationResult result = await _storeUpdateProvider
+                .RequestDownloadAndInstallWithStoreUiAsync(
+                    updateSet,
+                    _options.ShowProgressDuringFallbackUi
+                        ? progress => PublishProgress(AppUpdateState.Installing, "Installing update", installedVersion, availableVersion, mandatory, progress)
+                        : null,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
-    private async Task WaitForIdleAndInstallAsync(
-        StorePackageUpdateSet updateSet,
-        string installedVersion,
-        string? availableVersion,
-        bool mandatory,
-        CancellationToken cancellationToken)
-    {
-        while (IsAppBusy())
-        {
-            Publish(Deferred(
-                "Update ready",
-                "AudioScript will install the update when current audio work is idle.",
-                installedVersion,
-                availableVersion,
-                mandatory));
-            await Task.Delay(_options.InstallRetryDelay, cancellationToken).ConfigureAwait(false);
-        }
-
-        while (true)
-        {
-            await Task.Delay(_options.InstallQuietPeriod, cancellationToken).ConfigureAwait(false);
-            if (!IsAppBusy())
+            if (result.Succeeded)
             {
-                break;
+                await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
+                Log("fallback_ui_completed", "fallback_ui");
+                Publish(AppUpdateSnapshot.Idle(installedVersion));
+                return;
             }
 
-            Publish(Deferred(
-                "Update ready",
-                "AudioScript will install the update when current audio work is idle.",
-                installedVersion,
-                availableVersion,
-                mandatory));
-            await Task.Delay(_options.InstallRetryDelay, cancellationToken).ConfigureAwait(false);
+            if (result.Cancelled)
+            {
+                Log("fallback_ui_cancelled", "fallback_ui", state: result.State.ToString());
+                await SaveRetryStateAsync(updateSet, result, cancellationToken).ConfigureAwait(false);
+                Publish(AppUpdateSnapshot.Idle(installedVersion));
+                return;
+            }
+
+            Log(
+                "fallback_ui_failed",
+                "fallback_ui",
+                state: result.State.ToString(),
+                failedPackageCount: result.FailedPackageCount);
+            await SaveRetryStateAsync(updateSet, result, cancellationToken).ConfigureAwait(false);
+            Publish(AppUpdateSnapshot.Idle(installedVersion));
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogException("fallback_ui_failed", "fallback_ui", ex);
+            await SaveRetryStateAsync(
+                updateSet,
+                new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message),
+                cancellationToken).ConfigureAwait(false);
+            Publish(AppUpdateSnapshot.Idle(installedVersion));
+        }
+    }
 
-        Publish(new AppUpdateSnapshot(
-            AppUpdateState.Installing,
-            "Installing update",
-            "AudioScript is installing the latest Store package.",
-            mandatory,
-            IsProgressVisible: true,
-            ProgressValue: 0,
-            installedVersion,
-            availableVersion));
-
-        StoreUpdateOperationResult installResult;
+    private bool IsSafeToInstallNow()
+    {
         try
         {
-            installResult = await _storeUpdateClient.InstallUpdatesAsync(
-                updateSet,
-                progress => PublishProgress(AppUpdateState.Installing, "Installing update", installedVersion, availableVersion, mandatory, progress),
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
+            return !_isAppBusy();
         }
         catch (Exception ex)
         {
-            LogException("install_failed", "install", ex);
-            installResult = new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message);
+            LogException("busy_check_failed", "check", ex);
+            return false;
         }
-
-        if (installResult.State == StoreUpdateOperationState.Completed)
-        {
-            ResetRetryCounts();
-            Log("install_completed", "install");
-            Publish(new AppUpdateSnapshot(
-                AppUpdateState.Completed,
-                "Update installed",
-                "Restart to run the newly installed version.",
-                mandatory,
-                IsProgressVisible: false,
-                ProgressValue: 1,
-                installedVersion,
-                availableVersion));
-            return;
-        }
-
-        Log("install_failed", "install", state: installResult.State.ToString(), failedPackageCount: installResult.FailedPackageCount);
-        Publish(Deferred(
-            "Update deferred",
-            "AudioScript could not install the Store update. It will retry when idle.",
-            installedVersion,
-            availableVersion,
-            mandatory));
-        ScheduleInstallRetry(updateSet, installedVersion, availableVersion, mandatory);
     }
 
     private void PublishProgress(
@@ -407,13 +365,10 @@ public sealed class AppUpdateService : IAppUpdateService
         bool mandatory,
         StoreUpdateOperationProgress progress)
     {
-        string status = state == AppUpdateState.Installing
-            ? "AudioScript is installing the latest Store package."
-            : "AudioScript is downloading the latest Store package in the background.";
         Publish(new AppUpdateSnapshot(
             state,
             stageText,
-            status,
+            stageText,
             mandatory,
             IsProgressVisible: true,
             ProgressValue: ClampProgress(progress.ProgressValue),
@@ -421,151 +376,69 @@ public sealed class AppUpdateService : IAppUpdateService
             availableVersion));
     }
 
-    private void ScheduleDiscoveryRetry()
-    {
-        if (!TryScheduleRetry(isInstallRetry: false))
-        {
-            return;
-        }
-
-        CancellationToken token = LifetimeToken;
-        Task retryTask = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(_options.DiscoveryRetryDelay, token).ConfigureAwait(false);
-                lock (_sync)
-                {
-                    _discoveryRetryScheduled = false;
-                }
-
-                await RunOnceAsync(token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-            }
-            catch (Exception ex)
-            {
-                LogException("discovery_retry_failed", "retry", ex);
-            }
-            finally
-            {
-                lock (_sync)
-                {
-                    _discoveryRetryScheduled = false;
-                }
-            }
-        }, token);
-
-        lock (_sync)
-        {
-            _discoveryRetryTask = retryTask;
-        }
-    }
-
-    private void ScheduleInstallRetry(
+    private async Task SaveDetectedStateAsync(
         StorePackageUpdateSet updateSet,
-        string installedVersion,
-        string? availableVersion,
-        bool mandatory)
+        DeferredUpdateState? existingState,
+        CancellationToken cancellationToken)
     {
-        if (!TryScheduleRetry(isInstallRetry: true))
+        await _deferredStateStore.SaveAsync(new DeferredUpdateState
         {
-            return;
-        }
-
-        CancellationToken token = LifetimeToken;
-        Task retryTask = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(_options.InstallRetryDelay, token).ConfigureAwait(false);
-                lock (_sync)
-                {
-                    _installRetryScheduled = false;
-                }
-
-                await WaitForIdleAndInstallAsync(updateSet, installedVersion, availableVersion, mandatory, token)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-            }
-            catch (Exception ex)
-            {
-                LogException("install_retry_failed", "retry", ex);
-            }
-            finally
-            {
-                lock (_sync)
-                {
-                    _installRetryScheduled = false;
-                }
-            }
-        }, token);
-
-        lock (_sync)
-        {
-            _installRetryTask = retryTask;
-        }
+            LastCheckUtc = DateTimeOffset.UtcNow,
+            LastUpdateDetectedUtc = DateTimeOffset.UtcNow,
+            LastFailureUtc = existingState?.LastFailureUtc,
+            LastSuccessfulOperationUtc = existingState?.LastSuccessfulOperationUtc,
+            InstallDeferred = existingState?.InstallDeferred ?? false,
+            RetryCount = existingState?.RetryCount ?? 0,
+            LastFailureCategory = existingState?.LastFailureCategory,
+            PackageFamilyNames = updateSet.Updates
+                .Select(update => update.PackageFamilyName)
+                .Where(packageFamilyName => !string.IsNullOrWhiteSpace(packageFamilyName))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+        }, cancellationToken).ConfigureAwait(false);
+        Log("deferred_state_update_detected_saved", "check");
     }
 
-    private bool TryScheduleRetry(bool isInstallRetry)
+    private Task SaveDeferredInstallStateAsync(
+        StorePackageUpdateSet updateSet,
+        StoreUpdateOperationResult result,
+        CancellationToken cancellationToken)
     {
-        lock (_sync)
-        {
-            if (isInstallRetry)
-            {
-                if (_installRetryScheduled || HasReachedLimit(_installRetryCount, _options.MaxInstallRetryCount))
-                {
-                    return false;
-                }
-
-                _installRetryScheduled = true;
-                _installRetryCount++;
-                Log("install_retry_scheduled", "retry", extra: $"retryCount={_installRetryCount}");
-                return true;
-            }
-
-            if (_discoveryRetryScheduled || HasReachedLimit(_discoveryRetryCount, _options.MaxDiscoveryRetryCount))
-            {
-                return false;
-            }
-
-            _discoveryRetryScheduled = true;
-            _discoveryRetryCount++;
-            Log("discovery_retry_scheduled", "retry", extra: $"retryCount={_discoveryRetryCount}");
-            return true;
-        }
+        Log("deferred_install_state_saved", "install", state: result.State.ToString());
+        return SaveStateAsync(updateSet, result, installDeferred: true, cancellationToken);
     }
 
-    private CancellationToken LifetimeToken
+    private Task SaveRetryStateAsync(
+        StorePackageUpdateSet updateSet,
+        StoreUpdateOperationResult result,
+        CancellationToken cancellationToken)
     {
-        get
-        {
-            lock (_sync)
-            {
-                if (_lifetimeCts is null)
-                {
-                    _lifetimeCts = new CancellationTokenSource();
-                }
-
-                return _lifetimeCts.Token;
-            }
-        }
+        Log("retry_state_saved", "retry", state: result.State.ToString());
+        return SaveStateAsync(updateSet, result, installDeferred: false, cancellationToken);
     }
 
-    private bool IsAppBusy()
+    private async Task SaveStateAsync(
+        StorePackageUpdateSet updateSet,
+        StoreUpdateOperationResult result,
+        bool installDeferred,
+        CancellationToken cancellationToken)
     {
-        try
+        DeferredUpdateState? existingState = await _deferredStateStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+        await _deferredStateStore.SaveAsync(new DeferredUpdateState
         {
-            return _isAppBusy();
-        }
-        catch (Exception ex)
-        {
-            LogException("busy_check_failed", "check", ex);
-            return true;
-        }
+            LastCheckUtc = DateTimeOffset.UtcNow,
+            LastUpdateDetectedUtc = existingState?.LastUpdateDetectedUtc ?? DateTimeOffset.UtcNow,
+            LastFailureUtc = result.Succeeded ? existingState?.LastFailureUtc : DateTimeOffset.UtcNow,
+            LastSuccessfulOperationUtc = result.Succeeded ? DateTimeOffset.UtcNow : existingState?.LastSuccessfulOperationUtc,
+            InstallDeferred = installDeferred,
+            RetryCount = result.Succeeded ? 0 : (existingState?.RetryCount ?? 0) + 1,
+            LastFailureCategory = result.Succeeded ? null : result.State.ToString(),
+            PackageFamilyNames = updateSet.Updates
+                .Select(update => update.PackageFamilyName)
+                .Where(packageFamilyName => !string.IsNullOrWhiteSpace(packageFamilyName))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private void Publish(AppUpdateSnapshot snapshot)
@@ -594,33 +467,6 @@ public sealed class AppUpdateService : IAppUpdateService
             LogException("snapshot_subscriber_failed", "shutdown", ex);
         }
     }
-
-    private AppUpdateSnapshot UpdateAvailable(string installedVersion, string? availableVersion, bool mandatory) =>
-        new(
-            AppUpdateState.UpdateAvailable,
-            mandatory ? "Required update available" : "Update available",
-            "AudioScript found a Microsoft Store update.",
-            mandatory,
-            IsProgressVisible: false,
-            ProgressValue: 0,
-            installedVersion,
-            availableVersion);
-
-    private static AppUpdateSnapshot Deferred(
-        string stageText,
-        string message,
-        string installedVersion,
-        string? availableVersion,
-        bool mandatory) =>
-        new(
-            AppUpdateState.Deferred,
-            stageText,
-            message,
-            mandatory,
-            IsProgressVisible: false,
-            ProgressValue: 0,
-            installedVersion,
-            availableVersion);
 
     private AppUpdateSnapshot Failed(string stageText, string message) =>
         new(
@@ -652,8 +498,19 @@ public sealed class AppUpdateService : IAppUpdateService
         return highest?.ToString(4);
     }
 
-    private static bool HasReachedLimit(int currentCount, int? maxCount) =>
-        maxCount.HasValue && currentCount >= maxCount.Value;
+    private bool IsDeferredStateStale(DeferredUpdateState? state)
+    {
+        if (state is null || _options.DeferredStateMaxAge <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        DateTimeOffset? referenceUtc = state.LastUpdateDetectedUtc
+            ?? state.LastCheckUtc
+            ?? state.LastFailureUtc;
+        return referenceUtc.HasValue
+            && DateTimeOffset.UtcNow - referenceUtc.Value > _options.DeferredStateMaxAge;
+    }
 
     private static double ClampProgress(double value)
     {
@@ -663,15 +520,6 @@ public sealed class AppUpdateService : IAppUpdateService
         }
 
         return Math.Clamp(value, 0, 1);
-    }
-
-    private void ResetRetryCounts()
-    {
-        lock (_sync)
-        {
-            _discoveryRetryCount = 0;
-            _installRetryCount = 0;
-        }
     }
 
     private void Log(
@@ -684,7 +532,7 @@ public sealed class AppUpdateService : IAppUpdateService
     {
         string metadata = UpdateLogMetadata.Build(
             operation,
-            state ?? _currentSnapshot.State.ToString(),
+            state ?? CurrentSnapshot.State.ToString(),
             _lastInstalledVersion,
             _lastAvailableVersion,
             _lastUpdateCount,
@@ -699,7 +547,7 @@ public sealed class AppUpdateService : IAppUpdateService
     {
         string metadata = UpdateLogMetadata.Build(
             operation,
-            _currentSnapshot.State.ToString(),
+            CurrentSnapshot.State.ToString(),
             _lastInstalledVersion,
             _lastAvailableVersion,
             _lastUpdateCount,

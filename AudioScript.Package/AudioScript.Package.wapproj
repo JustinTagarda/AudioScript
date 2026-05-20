@@ -50,13 +50,7 @@
     <AppxPackagePipelineVersion>2.0</AppxPackagePipelineVersion>
       <!-- suppress MSB3030: wapproj has no traditional assembly output -->
       <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
-      <!--
-      BEFORE SUBMITTING TO THE STORE replace the placeholder values in
-      AudioScript.Package\Package.appxmanifest:
-        Name           = value from Partner Center "Product identity"
-        Publisher      = CN=... from Partner Center
-        PublisherDisplayName = display name from Partner Center
-    -->
+      <!-- Store identity values are owned by AudioScript.Package\Package.appxmanifest. -->
   </PropertyGroup>
 
   <Import Project="$(WinSDKBuildToolsPath)\Microsoft.WindowsDesktop.App.Ref.props" Condition="Exists('$(WinSDKBuildToolsPath)\Microsoft.WindowsDesktop.App.Ref.props')" />

@@ -1,4 +1,5 @@
 using Windows.Services.Store;
+using AudioScript.Services.Store;
 
 namespace AudioScript.Services;
 
@@ -48,7 +49,7 @@ public sealed record PremiumPurchaseResult(
 
 public sealed class StoreEntitlementServiceOptions
 {
-    public bool TreatUnpackagedBuildsAsPremium { get; init; } = true;
+    public bool TreatUnpackagedBuildsAsPremium { get; init; }
 
     public string PremiumProductDisplayName { get; init; } = "AudioScript Premium";
 
@@ -66,7 +67,6 @@ public sealed class StoreEntitlementServiceOptions
         TimeSpan.FromSeconds(7),
     ];
 
-    public TimeSpan PremiumGraceWindow { get; init; } = TimeSpan.FromDays(7);
 }
 
 public interface IEntitlementService : IAsyncDisposable
@@ -124,6 +124,8 @@ public sealed class StoreEntitlementService : IEntitlementService
     private readonly IAppVersionProvider _appVersionProvider;
     private readonly ProcessLogService _processLogService;
     private readonly Func<IntPtr>? _ownerWindowHandleProvider;
+    private readonly IStoreContextProvider? _storeContextProvider;
+    private readonly IPremiumEntitlementCache? _premiumEntitlementCache;
     private readonly StoreEntitlementServiceOptions _options;
     private readonly object _sync = new();
     private AppEntitlementSnapshot _currentSnapshot;
@@ -133,12 +135,17 @@ public sealed class StoreEntitlementService : IEntitlementService
         IAppVersionProvider appVersionProvider,
         ProcessLogService processLogService,
         Func<IntPtr>? ownerWindowHandleProvider = null,
+        IStoreContextProvider? storeContextProvider = null,
+        IPremiumEntitlementCache? premiumEntitlementCache = null,
         StoreEntitlementServiceOptions? options = null)
     {
         _appVersionProvider = appVersionProvider ?? throw new ArgumentNullException(nameof(appVersionProvider));
         _processLogService = processLogService ?? throw new ArgumentNullException(nameof(processLogService));
         _ownerWindowHandleProvider = ownerWindowHandleProvider;
+        _storeContextProvider = storeContextProvider;
+        _premiumEntitlementCache = premiumEntitlementCache;
         _options = options ?? new StoreEntitlementServiceOptions();
+        _lastVerifiedPremiumUtc = _premiumEntitlementCache?.ReadLastVerifiedPremiumUtc();
         if (_appVersionProvider.IsPackaged && !_options.PremiumStoreIds.Any(id => !string.IsNullOrWhiteSpace(id)))
         {
             const string message =
@@ -204,6 +211,13 @@ public sealed class StoreEntitlementService : IEntitlementService
             return new PremiumPurchaseResult(
                 PremiumPurchaseStatus.NotAvailable,
                 "Premium purchase is only available in the Microsoft Store package.");
+        }
+
+        if (IsProcessElevated())
+        {
+            return new PremiumPurchaseResult(
+                PremiumPurchaseStatus.NotAvailable,
+                "Premium purchase is unavailable while AudioScript is running as administrator.");
         }
 
         StoreContext context = CreateStoreContext();
@@ -276,6 +290,12 @@ public sealed class StoreEntitlementService : IEntitlementService
                 if (hasPremium)
                 {
                     _lastVerifiedPremiumUtc = DateTimeOffset.UtcNow;
+                    _premiumEntitlementCache?.SaveVerifiedPremium(_lastVerifiedPremiumUtc.Value);
+                }
+                else
+                {
+                    _lastVerifiedPremiumUtc = null;
+                    _premiumEntitlementCache?.Clear();
                 }
 
                 string productName = string.IsNullOrWhiteSpace(premiumProduct?.Title)
@@ -332,9 +352,7 @@ public sealed class StoreEntitlementService : IEntitlementService
                     continue;
                 }
 
-                bool allowGracePremium =
-                    _lastVerifiedPremiumUtc is DateTimeOffset lastVerified &&
-                    DateTimeOffset.UtcNow - lastVerified <= _options.PremiumGraceWindow;
+                bool allowGracePremium = _lastVerifiedPremiumUtc is not null;
                 PremiumEntitlementState state = allowGracePremium
                     ? PremiumEntitlementState.VerificationInconclusive
                     : PremiumEntitlementState.VerificationFailed;
@@ -578,6 +596,11 @@ public sealed class StoreEntitlementService : IEntitlementService
 
     private StoreContext CreateStoreContext()
     {
+        if (_storeContextProvider is not null)
+        {
+            return _storeContextProvider.GetContext();
+        }
+
         StoreContext context = StoreContext.GetDefault();
         IntPtr ownerWindowHandle = _ownerWindowHandleProvider?.Invoke() ?? IntPtr.Zero;
         if (ownerWindowHandle == IntPtr.Zero)
@@ -595,6 +618,20 @@ public sealed class StoreEntitlementService : IEntitlementService
         }
 
         return context;
+    }
+
+    private static bool IsProcessElevated()
+    {
+        try
+        {
+            using System.Security.Principal.WindowsIdentity identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void Publish(AppEntitlementSnapshot snapshot)

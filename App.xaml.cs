@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -10,8 +9,8 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using AudioScript.Audio;
 using AudioScript.Services;
+using AudioScript.Services.Store;
 using AudioScript.ViewModels;
-using Windows.Foundation.Metadata;
 
 namespace AudioScript;
 
@@ -156,10 +155,16 @@ public partial class App : System.Windows.Application
         MainWindow? updateBusyWindow = null;
         IntPtr updateOwnerWindowHandle = IntPtr.Zero;
         var appVersionProvider = new AppVersionProvider();
+        var storeContextProvider = new StoreContextProvider(processLogService, () => updateOwnerWindowHandle);
+        var premiumEntitlementCache = new PremiumEntitlementCache(
+            Path.Combine(appDataPathProvider.SettingsPath, "premium-entitlement.cache"),
+            processLogService);
         _entitlementService = new StoreEntitlementService(
             appVersionProvider,
             processLogService,
             () => updateOwnerWindowHandle,
+            storeContextProvider,
+            premiumEntitlementCache,
             new StoreEntitlementServiceOptions
             {
                 PremiumProductDisplayName = "AudioScript Premium",
@@ -167,17 +172,36 @@ public partial class App : System.Windows.Application
                 PremiumProductIds = PremiumProductIds,
                 PremiumKeyword = "premium",
             });
-        IStoreUpdateClient storeUpdateClient = appVersionProvider.IsPackaged && ApiInformation.IsTypePresent("Windows.Services.Store.StoreContext")
-            ? new StoreUpdateClient(processLogService, () => updateOwnerWindowHandle)
-            : new UnsupportedStoreUpdateClient();
+        var storeUpdateProvider = new MicrosoftStoreUpdateProvider(
+            appVersionProvider,
+            processLogService,
+            storeContextProvider);
         processLogService.Log(
             "StoreUpdate",
-            $"store_update_client_selected; packaged={appVersionProvider.IsPackaged}; storeApiSupported={ApiInformation.IsTypePresent("Windows.Services.Store.StoreContext")}; client={storeUpdateClient.GetType().Name}");
+            $"store_update_provider_selected; packaged={appVersionProvider.IsPackaged}; storeApiSupported={storeContextProvider.IsStoreApiAvailable}; provider={storeUpdateProvider.GetType().Name}");
+        var deferredUpdateStateStore = new DeferredUpdateStateStore(
+            Path.Combine(appDataPathProvider.SettingsPath, "update-state.json"),
+            processLogService);
         _appUpdateService = new AppUpdateService(
             appVersionProvider,
-            storeUpdateClient,
+            storeUpdateProvider,
+            deferredUpdateStateStore,
             processLogService,
-            () => updateBusyWindow is MainWindow window && window.IsBusyForAppUpdate);
+            () => updateBusyWindow is MainWindow window && window.IsBusyForAppUpdate,
+            new StoreUpdateOptions
+            {
+                EnableStartupUpdateCheck = true,
+                PreferSilentUpdateWhenAvailable = true,
+                UseFallbackStoreUiWhenSilentUnavailable = true,
+                ShowProgressDuringFallbackUi = true,
+                RestartAppAutomatically = false,
+                StartupDelay = TimeSpan.FromSeconds(2),
+            });
+        var appStatusViewModel = new AppStatusViewModel(
+            new StoreLicenseService(_entitlementService),
+            new StorePurchaseService(_entitlementService),
+            new StoreNavigationService(processLogService),
+            new AppVersionService(appVersionProvider));
 
         _mainViewModel = new MainViewModel(
             whisperModelManager.GetSelectableTranscriptionModels(),
@@ -191,8 +215,8 @@ public partial class App : System.Windows.Application
             appPreferencesSnapshot,
             _appUpdateService,
             _entitlementService,
-            () => whisperModelManager.GetSelectableTranscriptionModels(),
-            RestartApplicationAsync);
+            appStatusViewModel,
+            () => whisperModelManager.GetSelectableTranscriptionModels());
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
@@ -384,31 +408,6 @@ public partial class App : System.Windows.Application
             _ => new StandardizingAudioCaptureService(
                 new MicrophoneAudioCaptureService(source.DeviceNumber)),
         };
-    }
-
-    private Task RestartApplicationAsync()
-    {
-        try
-        {
-            string executablePath = Environment.ProcessPath
-                ?? Process.GetCurrentProcess().MainModule?.FileName
-                ?? throw new InvalidOperationException("Unable to resolve current executable path.");
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = executablePath,
-                UseShellExecute = true,
-                WorkingDirectory = Path.GetDirectoryName(executablePath) ?? Environment.CurrentDirectory,
-            };
-
-            Process.Start(startInfo);
-            Dispatcher.BeginInvoke(new Action(Shutdown));
-            return Task.CompletedTask;
-        }
-        catch (Exception ex)
-        {
-            return Task.FromException(ex);
-        }
     }
 
     protected override void OnExit(System.Windows.ExitEventArgs e)

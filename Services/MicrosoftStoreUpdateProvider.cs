@@ -1,25 +1,35 @@
+using System.Windows.Threading;
+using AudioScript.Services.Store;
 using Windows.Services.Store;
 
 namespace AudioScript.Services;
 
-public sealed class StoreUpdateClient : IStoreUpdateClient
+public sealed class MicrosoftStoreUpdateProvider : IMicrosoftStoreUpdateProvider
 {
+    private readonly IAppVersionProvider _versionProvider;
+    private readonly IStoreContextProvider _storeContextProvider;
     private readonly ProcessLogService _processLogService;
-    private readonly Func<IntPtr>? _ownerWindowHandleProvider;
     private string _lastInstalledVersion = "unknown";
     private string _lastAvailableVersion = "unknown";
     private int _lastUpdateCount;
     private bool _lastMandatory;
 
-    public StoreUpdateClient(ProcessLogService processLogService, Func<IntPtr>? ownerWindowHandleProvider = null)
+    public MicrosoftStoreUpdateProvider(
+        IAppVersionProvider versionProvider,
+        ProcessLogService processLogService,
+        IStoreContextProvider storeContextProvider)
     {
+        _versionProvider = versionProvider ?? throw new ArgumentNullException(nameof(versionProvider));
         _processLogService = processLogService ?? throw new ArgumentNullException(nameof(processLogService));
-        _ownerWindowHandleProvider = ownerWindowHandleProvider;
+        _storeContextProvider = storeContextProvider ?? throw new ArgumentNullException(nameof(storeContextProvider));
     }
 
-    public async Task<StoreUpdateQueryResult> QueryUpdatesAsync(CancellationToken cancellationToken)
+    public bool IsStoreUpdateSupported() =>
+        _versionProvider.IsPackaged && _storeContextProvider.IsStoreApiAvailable;
+
+    public async Task<StoreUpdateQueryResult> GetAvailableUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        StoreContext context = CreateStoreContext();
+        StoreContext context = _storeContextProvider.GetContext();
         IReadOnlyList<StorePackageUpdate> updates =
             await context.GetAppAndOptionalStorePackageUpdatesAsync().AsTask(cancellationToken);
         StorePackageUpdateInfo[] updateInfos = updates
@@ -28,6 +38,7 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
                 Version: FormatPackageVersion(update.Package.Id.Version),
                 IsMandatory: update.Mandatory))
             .ToArray();
+        _lastInstalledVersion = _versionProvider.InstalledVersion;
         _lastUpdateCount = updateInfos.Length;
         _lastAvailableVersion = updateInfos
             .Select(update => update.Version)
@@ -48,12 +59,15 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
             context.CanSilentlyDownloadStorePackageUpdates);
     }
 
-    public Task<StoreUpdateOperationResult> DownloadUpdatesAsync(
+    public bool CanSilentlyDownloadUpdates(StoreUpdateQueryResult queryResult) =>
+        queryResult.CanSilentlyDownload;
+
+    public Task<StoreUpdateOperationResult> TrySilentDownloadAsync(
         StorePackageUpdateSet updateSet,
         Action<StoreUpdateOperationProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
-        StoreContext context = CreateStoreContext();
+        StoreContext context = _storeContextProvider.GetContext();
         IReadOnlyList<StorePackageUpdate> updates = ResolveNativeUpdates(updateSet);
         return RunOperationAsync(
             operationName: "download",
@@ -62,17 +76,33 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
             cancellationToken);
     }
 
-    public Task<StoreUpdateOperationResult> InstallUpdatesAsync(
+    public Task<StoreUpdateOperationResult> TrySilentDownloadAndInstallAsync(
         StorePackageUpdateSet updateSet,
         Action<StoreUpdateOperationProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
-        StoreContext context = CreateStoreContext();
+        StoreContext context = _storeContextProvider.GetContext();
         IReadOnlyList<StorePackageUpdate> updates = ResolveNativeUpdates(updateSet);
         return RunOperationAsync(
             operationName: "install",
             operationFactory: () => context.TrySilentDownloadAndInstallStorePackageUpdatesAsync(updates),
             progress,
+            cancellationToken);
+    }
+
+    public Task<StoreUpdateOperationResult> RequestDownloadAndInstallWithStoreUiAsync(
+        StorePackageUpdateSet updateSet,
+        Action<StoreUpdateOperationProgress>? progress,
+        CancellationToken cancellationToken = default)
+    {
+        StoreContext context = _storeContextProvider.GetContext();
+        IReadOnlyList<StorePackageUpdate> updates = ResolveNativeUpdates(updateSet);
+        return RunStoreUiOperationAsync(
+            () => RunOperationAsync(
+                operationName: "fallback_ui",
+                operationFactory: () => context.RequestDownloadAndInstallStorePackageUpdatesAsync(updates),
+                progress,
+                cancellationToken),
             cancellationToken);
     }
 
@@ -107,6 +137,24 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
         return new StoreUpdateOperationResult(state, failedPackageFamilyNames.Length, FailedPackageFamilyNames: failedPackageFamilyNames);
     }
 
+    private static async Task<StoreUpdateOperationResult> RunStoreUiOperationAsync(
+        Func<Task<StoreUpdateOperationResult>> operation,
+        CancellationToken cancellationToken)
+    {
+        Dispatcher? dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            return await operation().ConfigureAwait(false);
+        }
+
+        DispatcherOperation<Task<StoreUpdateOperationResult>> dispatcherOperation = dispatcher.InvokeAsync(operation);
+        using (cancellationToken.Register(() => dispatcherOperation.Abort()))
+        {
+            Task<StoreUpdateOperationResult> operationTask = await dispatcherOperation.Task.ConfigureAwait(false);
+            return await operationTask.ConfigureAwait(false);
+        }
+    }
+
     private static IReadOnlyList<StorePackageUpdate> ResolveNativeUpdates(StorePackageUpdateSet updateSet)
     {
         ArgumentNullException.ThrowIfNull(updateSet);
@@ -137,30 +185,6 @@ public sealed class StoreUpdateClient : IStoreUpdateClient
 
     private static string FormatPackageVersion(Windows.ApplicationModel.PackageVersion version) =>
         $"{version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
-
-    private StoreContext CreateStoreContext()
-    {
-        StoreContext context = StoreContext.GetDefault();
-        IntPtr ownerWindowHandle = _ownerWindowHandleProvider?.Invoke() ?? IntPtr.Zero;
-        if (ownerWindowHandle == IntPtr.Zero)
-        {
-            return context;
-        }
-
-        try
-        {
-            WinRT.Interop.InitializeWithWindow.Initialize(context, ownerWindowHandle);
-        }
-        catch (Exception ex)
-        {
-            _processLogService.Log(
-                "StoreUpdate",
-                $"store_context_window_initialize_failed; {UpdateLogMetadata.Build("check", "Error", _lastInstalledVersion, _lastAvailableVersion, _lastUpdateCount, _lastMandatory, 0, ex)}",
-                ProcessLogLevel.Warning);
-        }
-
-        return context;
-    }
 
     private void Log(string eventName, string operation, string state, int failedPackageCount, string? extra = null)
     {

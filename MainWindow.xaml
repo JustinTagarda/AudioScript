@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:AudioScript"
         xmlns:abstractions="clr-namespace:AudioScript.Abstractions"
+        xmlns:controls="clr-namespace:AudioScript.Views.Controls"
         mc:Ignorable="d"
         Title="AudioScript"
         Icon="pack://application:,,,/assets/AudioScript.ico"
@@ -453,7 +454,6 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0"
@@ -519,21 +519,10 @@
                             </TextBlock>
                         </StackPanel>
 
-                        <TextBlock Grid.Column="1"
-                                   Text="{Binding ApplicationAccessTierText}"
-                                   Margin="0,0,8,0"
-                                   FontSize="12"
-                                   FontWeight="Bold"
-                                   TextTrimming="CharacterEllipsis"
-                                   HorizontalAlignment="Right"
-                                   VerticalAlignment="Center"/>
-
-                        <TextBlock Grid.Column="2"
-                                   Text="{Binding ApplicationVersionStatusText}"
-                                   FontSize="12"
-                                   TextTrimming="CharacterEllipsis"
-                                   HorizontalAlignment="Right"
-                                   VerticalAlignment="Center"/>
+                        <controls:AppStatusDisplay Grid.Column="1"
+                                                   DataContext="{Binding AppStatus}"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Center"/>
                     </Grid>
                 </StatusBarItem>
             </StatusBar>

@@ -103,6 +103,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppPreferencesSnapshot appPreferencesSnapshot,
         IAppUpdateService? appUpdateService = null,
         IEntitlementService? entitlementService = null,
+        AppStatusViewModel? appStatus = null,
         Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null,
         Func<Task>? restartApplicationAsync = null)
     {
@@ -121,6 +122,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             ?? AppUpdateSnapshot.Idle(new AppVersionProvider().InstalledVersion);
         _entitlementSnapshot = entitlementService?.CurrentSnapshot
             ?? AppEntitlementSnapshot.Development("AudioScript Premium");
+        AppStatus = appStatus;
         _availableModelsProvider = availableModelsProvider ?? (() => models.ToArray());
 
         _autoPlayTimelineSelection = appPreferencesSnapshot.AutoPlayTimelineSelection;
@@ -216,6 +218,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
     public AsyncRelayCommand RestartApplicationCommand { get; }
+
+    public AppStatusViewModel? AppStatus { get; }
 
     public void RefreshEngines(
         IEnumerable<TranscriptionModelOption> models,
@@ -619,20 +623,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
-    public string ApplicationVersionStatusText
-    {
-        get => $"Version: {_appUpdateSnapshot.InstalledVersion}";
-    }
-
     public string ApplicationAccessTierText
     {
         get
         {
-            if (!_entitlementSnapshot.IsPackaged)
-            {
-                return "Development";
-            }
-
             if (_entitlementSnapshot.State == PremiumEntitlementState.Checking)
             {
                 return string.Empty;
@@ -648,12 +642,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             return _appUpdateSnapshot.State switch
             {
-                AppUpdateState.Checking => "Checking for updates",
                 AppUpdateState.Downloading => "Downloading update",
                 AppUpdateState.Installing => "Installing update",
-                AppUpdateState.Completed => "Update downloaded",
-                AppUpdateState.Deferred => "Update deferred",
-                AppUpdateState.Failed => "Update check failed",
                 _ => string.Empty,
             };
         }
@@ -670,7 +660,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public double ApplicationUpdateProgressPercent => _appUpdateSnapshot.ProgressValue * 100;
 
     public bool IsApplicationUpdateActive =>
-        _appUpdateSnapshot.State is AppUpdateState.Downloading or AppUpdateState.Installing or AppUpdateState.Completed;
+        _appUpdateSnapshot.State is AppUpdateState.Downloading or AppUpdateState.Installing;
 
     public bool IsMandatoryApplicationUpdateAvailable =>
         _appUpdateSnapshot.IsMandatoryUpdateAvailable;
@@ -4776,7 +4766,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _uiContext.Post(_ =>
         {
             _appUpdateSnapshot = snapshot;
-            NotifyPropertyChanged(nameof(ApplicationVersionStatusText));
             NotifyPropertyChanged(nameof(ApplicationUpdateStatusText));
             NotifyPropertyChanged(nameof(ApplicationUpdateStageText));
             NotifyPropertyChanged(nameof(ApplicationUpdateMessageText));
@@ -4876,6 +4865,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         await _entitlementService.RefreshAsync(cancellationToken);
+    }
+
+    public async Task RestorePremiumPurchaseAsync(CancellationToken cancellationToken = default)
+    {
+        if (AppStatus is not null)
+        {
+            await AppStatus.RestorePurchaseAsync(cancellationToken);
+            return;
+        }
+
+        await RefreshPremiumEntitlementAsync(cancellationToken);
     }
 
     private IEnumerable<TranscriptionModelOption> FilterAccessibleEngines(IEnumerable<TranscriptionModelOption> models)
