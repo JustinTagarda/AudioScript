@@ -152,7 +152,6 @@ public partial class App : System.Windows.Application
         _windowPlacementService = new WindowPlacementService(
             Path.Combine(appDataPathProvider.SettingsPath, "window-placement.json"));
 
-        MainWindow? updateBusyWindow = null;
         IntPtr updateOwnerWindowHandle = IntPtr.Zero;
         var appVersionProvider = new AppVersionProvider();
         var storeContextProvider = new StoreContextProvider(processLogService, () => updateOwnerWindowHandle);
@@ -187,7 +186,6 @@ public partial class App : System.Windows.Application
             storeUpdateProvider,
             deferredUpdateStateStore,
             processLogService,
-            () => updateBusyWindow is MainWindow window && window.IsBusyForAppUpdate,
             new StoreUpdateOptions
             {
                 EnableStartupUpdateCheck = true,
@@ -195,7 +193,7 @@ public partial class App : System.Windows.Application
                 UseFallbackStoreUiWhenSilentUnavailable = true,
                 ShowProgressDuringFallbackUi = true,
                 RestartAppAutomatically = false,
-                StartupDelay = TimeSpan.FromSeconds(2),
+                StartupDelay = TimeSpan.Zero,
             });
         var appStatusViewModel = new AppStatusViewModel(
             new StoreLicenseService(_entitlementService),
@@ -237,16 +235,19 @@ public partial class App : System.Windows.Application
         {
             DataContext = _mainViewModel,
         };
-        updateBusyWindow = mainWindow;
         _windowPlacementService.Apply(mainWindow);
         _windowPlacementService.Attach(mainWindow);
 
         _ = _entitlementService.RefreshAsync();
         MainWindow = mainWindow;
+        mainWindow.ContentRendered += (_, _) =>
+        {
+            updateOwnerWindowHandle = new WindowInteropHelper(mainWindow).Handle;
+            _ = _appUpdateService.StartAsync();
+        };
         mainWindow.Show();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         updateOwnerWindowHandle = new WindowInteropHelper(mainWindow).Handle;
-        _ = _appUpdateService.StartAsync();
         processLogService.Log("App", "Application startup completed.");
         processLogService.UpdateCrashContext("app.idle.ready");
     }

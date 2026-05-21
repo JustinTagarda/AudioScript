@@ -6,7 +6,6 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
     private readonly IMicrosoftStoreUpdateProvider _storeUpdateProvider;
     private readonly IDeferredUpdateStateStore _deferredStateStore;
     private readonly ProcessLogService _processLogService;
-    private readonly Func<bool> _isAppBusy;
     private readonly StoreUpdateOptions _options;
     private readonly SemaphoreSlim _workflowSemaphore = new(1, 1);
     private readonly object _sync = new();
@@ -24,14 +23,12 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         IMicrosoftStoreUpdateProvider storeUpdateProvider,
         IDeferredUpdateStateStore deferredStateStore,
         ProcessLogService processLogService,
-        Func<bool> isAppBusy,
         StoreUpdateOptions? options = null)
     {
         _versionProvider = versionProvider ?? throw new ArgumentNullException(nameof(versionProvider));
         _storeUpdateProvider = storeUpdateProvider ?? throw new ArgumentNullException(nameof(storeUpdateProvider));
         _deferredStateStore = deferredStateStore ?? throw new ArgumentNullException(nameof(deferredStateStore));
         _processLogService = processLogService ?? throw new ArgumentNullException(nameof(processLogService));
-        _isAppBusy = isAppBusy ?? throw new ArgumentNullException(nameof(isAppBusy));
         _options = options ?? new StoreUpdateOptions();
         _currentSnapshot = AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion);
     }
@@ -67,6 +64,18 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
         return Task.CompletedTask;
     }
+
+    public Task RunUserInitiatedUpdateFlowAsync(CancellationToken cancellationToken = default) =>
+        RunUpdateFlowAsync(
+            isStartupFlow: false,
+            hideCheckingSnapshot: false,
+            cancellationToken);
+
+    public Task<StoreUpdateOperationResult?> RunExitTimeInstallAsync(CancellationToken cancellationToken = default) =>
+        RunExitTimeInstallAsyncCore(cancellationToken);
+
+    public Task<bool> HasDeferredInstallOnExitAsync(CancellationToken cancellationToken = default) =>
+        HasDeferredInstallOnExitAsyncCore(cancellationToken);
 
     public async Task StopAsync()
     {
@@ -116,7 +125,10 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
                 await Task.Delay(_options.StartupDelay, cancellationToken).ConfigureAwait(false);
             }
 
-            await RunOnceAsync(cancellationToken).ConfigureAwait(false);
+            await RunUpdateFlowAsync(
+                isStartupFlow: true,
+                hideCheckingSnapshot: true,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -131,28 +143,47 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
     public async Task RunOnceAsync(CancellationToken cancellationToken = default)
     {
-        await _workflowSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await RunUserInitiatedUpdateFlowAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task RunUpdateFlowAsync(
+        bool isStartupFlow,
+        bool hideCheckingSnapshot,
+        CancellationToken cancellationToken)
+    {
+        bool entered = false;
         try
         {
-            await RunWorkflowCoreAsync(cancellationToken).ConfigureAwait(false);
+            await _workflowSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            entered = true;
+            await RunWorkflowCoreAsync(
+                isStartupFlow,
+                hideCheckingSnapshot,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            LogException("update_workflow_failed", "startup", ex);
+            LogException("update_workflow_failed", isStartupFlow ? "startup" : "manual", ex);
             Publish(Failed("Update check failed", "Application will continue normally."));
         }
         finally
         {
-            _workflowSemaphore.Release();
+            if (entered)
+            {
+                _workflowSemaphore.Release();
+            }
         }
     }
 
-    private async Task RunWorkflowCoreAsync(CancellationToken cancellationToken)
+    private async Task RunWorkflowCoreAsync(
+        bool isStartupFlow,
+        bool hideCheckingSnapshot,
+        CancellationToken cancellationToken)
     {
         string installedVersion = _versionProvider.InstalledVersion;
         _lastInstalledVersion = installedVersion;
 
-        if (!_options.EnableStartupUpdateCheck)
+        if (isStartupFlow && !_options.EnableStartupUpdateCheck)
         {
             Log("startup_update_check_disabled", "check");
             Publish(AppUpdateSnapshot.Idle(installedVersion));
@@ -162,11 +193,12 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         if (!_storeUpdateProvider.IsStoreUpdateSupported())
         {
             Log("update_check_skipped_not_supported", "check", extra: $"packaged={_versionProvider.IsPackaged}");
+            await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
             Publish(AppUpdateSnapshot.Idle(installedVersion));
             return;
         }
 
-        DeferredUpdateState? existingState = await _deferredStateStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+        DeferredUpdateState? existingState = await LoadDeferredStateAsync(cancellationToken).ConfigureAwait(false);
         if (IsDeferredStateStale(existingState))
         {
             await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
@@ -179,15 +211,18 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             Log("deferred_state_loaded", "check", extra: $"retryCount={existingState.RetryCount}");
         }
 
-        Publish(new AppUpdateSnapshot(
-            AppUpdateState.Checking,
-            "Checking for updates",
-            string.Empty,
-            IsMandatoryUpdateAvailable: false,
-            IsProgressVisible: false,
-            ProgressValue: 0,
-            InstalledVersion: installedVersion,
-            AvailableVersion: null));
+        if (!hideCheckingSnapshot)
+        {
+            Publish(new AppUpdateSnapshot(
+                AppUpdateState.Checking,
+                "Checking for updates",
+                string.Empty,
+                IsMandatoryUpdateAvailable: false,
+                IsProgressVisible: false,
+                ProgressValue: 0,
+                InstalledVersion: installedVersion,
+                AvailableVersion: null));
+        }
         Log("update_check_started", "check");
 
         StoreUpdateQueryResult queryResult = await _storeUpdateProvider
@@ -210,7 +245,16 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         _lastUpdateCount = queryResult.UpdateSet.Updates.Count;
         _lastAvailableVersion = availableVersion ?? "unknown";
         _lastMandatory = mandatory;
-        await SaveDetectedStateAsync(queryResult.UpdateSet, existingState, cancellationToken).ConfigureAwait(false);
+        PackageIdentitySnapshot? identitySnapshot = ResolvePrimaryPackageIdentitySnapshot(queryResult.UpdateSet.Updates);
+        bool isThrottled = IsDeferredInstallThrottled(existingState, identitySnapshot);
+        if (!isThrottled)
+        {
+            await SaveDetectedStateAsync(queryResult.UpdateSet, identitySnapshot, existingState, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            Log("deferred_install_suppressed_by_retry_policy", "check");
+        }
         Log("updates_available", "check");
 
         if (_options.PreferSilentUpdateWhenAvailable
@@ -227,38 +271,24 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             if (silentDownloadResult.Succeeded)
             {
                 Log("silent_download_completed", "download");
-                if (IsSafeToInstallNow())
+                if (!isThrottled)
                 {
-                    Log("silent_install_starting", "install");
-                    StoreUpdateOperationResult silentInstallResult = await _storeUpdateProvider
-                        .TrySilentDownloadAndInstallAsync(
-                            queryResult.UpdateSet,
-                            progress => PublishProgress(AppUpdateState.Installing, "Installing update", installedVersion, availableVersion, mandatory, progress),
-                            cancellationToken)
-                        .ConfigureAwait(false);
-
-                    if (silentInstallResult.Succeeded)
-                    {
-                        await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
-                        Log("silent_install_completed", "install");
-                        Publish(AppUpdateSnapshot.Idle(installedVersion));
-                        return;
-                    }
-
-                    Log(
-                        "silent_install_failed",
-                        "install",
-                        state: silentInstallResult.State.ToString(),
-                        failedPackageCount: silentInstallResult.FailedPackageCount);
-                    await SaveRetryStateAsync(queryResult.UpdateSet, silentInstallResult, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    Log("silent_install_deferred_busy", "install");
-                    await SaveDeferredInstallStateAsync(queryResult.UpdateSet, silentDownloadResult, cancellationToken).ConfigureAwait(false);
+                    await SaveDeferredInstallStateAsync(
+                        queryResult.UpdateSet,
+                        identitySnapshot,
+                        silentDownloadResult,
+                        cancellationToken).ConfigureAwait(false);
                     Publish(AppUpdateSnapshot.Idle(installedVersion));
                     return;
                 }
+                Log("silent_download_completed_but_throttled", "download");
+                await SaveThrottledDeferredInstallSuppressedStateAsync(
+                    queryResult.UpdateSet,
+                    identitySnapshot,
+                    silentDownloadResult,
+                    cancellationToken).ConfigureAwait(false);
+                Publish(AppUpdateSnapshot.Idle(installedVersion));
+                return;
             }
             else
             {
@@ -267,7 +297,11 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
                     "download",
                     state: silentDownloadResult.State.ToString(),
                     failedPackageCount: silentDownloadResult.FailedPackageCount);
-                await SaveRetryStateAsync(queryResult.UpdateSet, silentDownloadResult, cancellationToken).ConfigureAwait(false);
+                await SaveRetryStateAsync(
+                    queryResult.UpdateSet,
+                    identitySnapshot,
+                    silentDownloadResult,
+                    cancellationToken).ConfigureAwait(false);
             }
         }
         else
@@ -282,8 +316,9 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         }
         else
         {
-            await SaveDeferredInstallStateAsync(
+            await SaveRetryStateAsync(
                 queryResult.UpdateSet,
+                identitySnapshot,
                 new StoreUpdateOperationResult(StoreUpdateOperationState.Unknown),
                 cancellationToken).ConfigureAwait(false);
             Publish(AppUpdateSnapshot.Idle(installedVersion));
@@ -320,7 +355,11 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             if (result.Cancelled)
             {
                 Log("fallback_ui_cancelled", "fallback_ui", state: result.State.ToString());
-                await SaveRetryStateAsync(updateSet, result, cancellationToken).ConfigureAwait(false);
+                await SaveRetryStateAsync(
+                    updateSet,
+                    ResolvePrimaryPackageIdentitySnapshot(updateSet.Updates),
+                    result,
+                    cancellationToken).ConfigureAwait(false);
                 Publish(AppUpdateSnapshot.Idle(installedVersion));
                 return;
             }
@@ -330,7 +369,8 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
                 "fallback_ui",
                 state: result.State.ToString(),
                 failedPackageCount: result.FailedPackageCount);
-            await SaveRetryStateAsync(updateSet, result, cancellationToken).ConfigureAwait(false);
+            await SaveRetryStateAsync(updateSet, ResolvePrimaryPackageIdentitySnapshot(updateSet.Updates), result, cancellationToken)
+                .ConfigureAwait(false);
             Publish(AppUpdateSnapshot.Idle(installedVersion));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -338,23 +378,286 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             LogException("fallback_ui_failed", "fallback_ui", ex);
             await SaveRetryStateAsync(
                 updateSet,
+                ResolvePrimaryPackageIdentitySnapshot(updateSet.Updates),
                 new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message),
                 cancellationToken).ConfigureAwait(false);
             Publish(AppUpdateSnapshot.Idle(installedVersion));
         }
     }
 
-    private bool IsSafeToInstallNow()
+    private async Task<bool> HasDeferredInstallOnExitAsyncCore(CancellationToken cancellationToken)
     {
+        if (!_storeUpdateProvider.IsStoreUpdateSupported())
+        {
+            await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
+            Log("deferred_state_skipped_not_supported", "exit_check", extra: $"packaged={_versionProvider.IsPackaged}");
+            return false;
+        }
+
+        DeferredUpdateState? state = await LoadDeferredStateAsync(cancellationToken).ConfigureAwait(false);
+        if (state is null)
+        {
+            return false;
+        }
+
+        if (IsDeferredStateStale(state))
+        {
+            await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
+            Log("deferred_state_cleared_stale", "exit_check");
+            return false;
+        }
+
+        return state.InstallDeferred && state.PackageIdentitySnapshot is not null;
+    }
+
+    private async Task<StoreUpdateOperationResult?> RunExitTimeInstallAsyncCore(CancellationToken cancellationToken)
+    {
+        CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (_options.ExitInstallTimeout > TimeSpan.Zero)
+        {
+            timeoutCts.CancelAfter(_options.ExitInstallTimeout);
+        }
+
+        CancellationToken linkedToken = timeoutCts.Token;
+        DeferredUpdateState? deferredState = null;
+        bool entered = false;
         try
         {
-            return !_isAppBusy();
+            if (!_storeUpdateProvider.IsStoreUpdateSupported())
+            {
+                Log("exit_install_skipped_not_supported", "exit_install", extra: $"packaged={_versionProvider.IsPackaged}");
+                await _deferredStateStore.ClearAsync(CancellationToken.None).ConfigureAwait(false);
+                Publish(AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion));
+                return null;
+            }
+
+            await _workflowSemaphore.WaitAsync(linkedToken).ConfigureAwait(false);
+            entered = true;
+
+            deferredState = await LoadDeferredStateAsync(linkedToken).ConfigureAwait(false);
+            if (deferredState is null || !deferredState.InstallDeferred || deferredState.PackageIdentitySnapshot is null)
+            {
+                return null;
+            }
+
+            if (IsDeferredStateStale(deferredState))
+            {
+                await _deferredStateStore.ClearAsync(CancellationToken.None).ConfigureAwait(false);
+                Log("deferred_state_cleared_stale", "exit_install");
+                return null;
+            }
+
+            Log("exit_install_started", "exit_install", extra: $"retryCount={deferredState.RetryCount}");
+            Publish(new AppUpdateSnapshot(
+                AppUpdateState.Checking,
+                "Preparing update",
+                "Revalidating update before closing",
+                IsMandatoryUpdateAvailable: false,
+                IsProgressVisible: false,
+                ProgressValue: 0,
+                InstalledVersion: _versionProvider.InstalledVersion,
+                AvailableVersion: null));
+
+            StoreUpdateQueryResult queryResult;
+            try
+            {
+                queryResult = await _storeUpdateProvider.GetAvailableUpdatesAsync(linkedToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogException("exit_install_query_failed", "exit_install", ex);
+                await SaveRetryStateAsync(
+                    new StorePackageUpdateSet(Array.Empty<StorePackageUpdateInfo>()),
+                    deferredState.PackageIdentitySnapshot,
+                    new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message),
+                    CancellationToken.None).ConfigureAwait(false);
+                Publish(Failed("Update installation failed", "The app will close normally."));
+                return new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message);
+            }
+
+            if (!queryResult.UpdateSet.HasUpdates)
+            {
+                Log("exit_install_skipped_no_updates", "exit_install");
+                await _deferredStateStore.ClearAsync(CancellationToken.None).ConfigureAwait(false);
+                Publish(AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion));
+                return null;
+            }
+
+            PackageIdentitySnapshot? queryIdentity = ResolveMatchingPackageIdentity(
+                queryResult.UpdateSet.Updates,
+                deferredState.PackageIdentitySnapshot);
+            if (!IsSamePackageIdentity(deferredState.PackageIdentitySnapshot, queryIdentity))
+            {
+                Log("exit_install_skipped_identity_mismatch", "exit_install");
+                await _deferredStateStore.ClearAsync(CancellationToken.None).ConfigureAwait(false);
+                Publish(AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion));
+                return null;
+            }
+
+            bool mandatory = queryResult.UpdateSet.Updates.Any(update => update.IsMandatory);
+            StoreUpdateOperationResult installResult = await _storeUpdateProvider
+                .TrySilentDownloadAndInstallAsync(
+                    queryResult.UpdateSet,
+                    progress => PublishProgress(
+                        AppUpdateState.Installing,
+                        "Installing update",
+                        _versionProvider.InstalledVersion,
+                        ResolveHighestVersion(queryResult.UpdateSet.Updates),
+                        mandatory,
+                        progress),
+                    linkedToken)
+                .ConfigureAwait(false);
+
+            if (installResult.Succeeded)
+            {
+                await _deferredStateStore.ClearAsync(CancellationToken.None).ConfigureAwait(false);
+                Log("exit_install_completed", "exit_install", state: installResult.State.ToString());
+                Publish(AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion));
+                return installResult;
+            }
+
+            Log(
+                "exit_install_failed",
+                "exit_install",
+                state: installResult.State.ToString(),
+                failedPackageCount: installResult.FailedPackageCount,
+                extra: deferredState.PackageIdentitySnapshot.PackageFullName);
+            await SaveRetryStateAsync(
+                queryResult.UpdateSet,
+                deferredState.PackageIdentitySnapshot,
+                installResult,
+                CancellationToken.None).ConfigureAwait(false);
+            Publish(Failed("Update installation failed", "The app will close normally."));
+            return installResult;
+        }
+        catch (OperationCanceledException) when (linkedToken.IsCancellationRequested)
+        {
+            Log("exit_install_canceled", "exit_install");
+            if (deferredState?.PackageIdentitySnapshot is not null)
+            {
+                await SaveRetryStateAsync(
+                    new StorePackageUpdateSet(Array.Empty<StorePackageUpdateInfo>()),
+                    deferredState.PackageIdentitySnapshot,
+                    new StoreUpdateOperationResult(StoreUpdateOperationState.Canceled),
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            Publish(Failed("Update installation canceled", "The app will close normally."));
+            return new StoreUpdateOperationResult(StoreUpdateOperationState.Canceled);
         }
         catch (Exception ex)
         {
-            LogException("busy_check_failed", "check", ex);
+            LogException("exit_install_failed", "exit_install", ex);
+            if (deferredState?.PackageIdentitySnapshot is not null)
+            {
+                await SaveRetryStateAsync(
+                    new StorePackageUpdateSet(Array.Empty<StorePackageUpdateInfo>()),
+                    deferredState.PackageIdentitySnapshot,
+                    new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message),
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            Publish(Failed("Update installation failed", "The app will close normally."));
+            return new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError, ErrorMessage: ex.Message);
+        }
+        finally
+        {
+            timeoutCts.Dispose();
+            if (entered)
+            {
+                _workflowSemaphore.Release();
+            }
+        }
+    }
+
+    private async Task<DeferredUpdateState?> LoadDeferredStateAsync(CancellationToken cancellationToken)
+    {
+        DeferredUpdateState? state = await _deferredStateStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (state is null)
+        {
+            return null;
+        }
+
+        if (state.PackageIdentitySnapshot is null
+            && state.PackageFamilyNames.Count == 0
+            && !state.InstallDeferred
+            && state.RetryCount <= 0)
+        {
+            return null;
+        }
+
+        return state;
+    }
+
+    private bool IsDeferredInstallThrottled(
+        DeferredUpdateState? existingState,
+        PackageIdentitySnapshot? currentIdentitySnapshot)
+    {
+        if (existingState is null
+            || currentIdentitySnapshot is null
+            || existingState.PackageIdentitySnapshot is null
+            || !IsSamePackageIdentity(existingState.PackageIdentitySnapshot, currentIdentitySnapshot)
+            || existingState.RetryCount <= 0)
+        {
             return false;
         }
+
+        if (existingState.RetryCount >= _options.ExitInstallRetryCountLimit)
+        {
+            return true;
+        }
+
+        if (existingState.LastFailureUtc is not DateTimeOffset lastFailureUtc)
+        {
+            return false;
+        }
+
+        return _options.ExitInstallRetryCooldown > TimeSpan.Zero
+            && DateTimeOffset.UtcNow - lastFailureUtc < _options.ExitInstallRetryCooldown;
+    }
+
+    private static bool IsSamePackageIdentity(
+        PackageIdentitySnapshot? left,
+        PackageIdentitySnapshot? right)
+    {
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return string.Equals(left.PackageFamilyName, right.PackageFamilyName, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(left.PackageFullName, right.PackageFullName, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(left.PackageVersion, right.PackageVersion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static PackageIdentitySnapshot? ResolvePrimaryPackageIdentitySnapshot(
+        IEnumerable<StorePackageUpdateInfo> updates)
+    {
+        StorePackageUpdateInfo? update = updates.FirstOrDefault();
+        if (update is null)
+        {
+            return null;
+        }
+
+        return new PackageIdentitySnapshot(
+            update.PackageFamilyName,
+            update.PackageFullName,
+            update.Version);
+    }
+
+    private static PackageIdentitySnapshot? ResolveMatchingPackageIdentity(
+        IEnumerable<StorePackageUpdateInfo> updates,
+        PackageIdentitySnapshot targetIdentity)
+    {
+        StorePackageUpdateInfo? exactMatch = updates.FirstOrDefault(update =>
+            string.Equals(update.PackageFamilyName, targetIdentity.PackageFamilyName, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(update.PackageFullName, targetIdentity.PackageFullName, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(update.Version, targetIdentity.PackageVersion, StringComparison.OrdinalIgnoreCase));
+
+        return exactMatch is not null
+            ? new PackageIdentitySnapshot(
+                exactMatch.PackageFamilyName,
+                exactMatch.PackageFullName,
+                exactMatch.Version)
+            : ResolvePrimaryPackageIdentitySnapshot(updates);
     }
 
     private void PublishProgress(
@@ -378,18 +681,30 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
     private async Task SaveDetectedStateAsync(
         StorePackageUpdateSet updateSet,
+        PackageIdentitySnapshot? identitySnapshot,
         DeferredUpdateState? existingState,
         CancellationToken cancellationToken)
     {
+        if (identitySnapshot is null)
+        {
+            return;
+        }
+
+        bool sameIdentity = IsSamePackageIdentity(existingState?.PackageIdentitySnapshot, identitySnapshot);
         await _deferredStateStore.SaveAsync(new DeferredUpdateState
         {
             LastCheckUtc = DateTimeOffset.UtcNow,
             LastUpdateDetectedUtc = DateTimeOffset.UtcNow,
-            LastFailureUtc = existingState?.LastFailureUtc,
-            LastSuccessfulOperationUtc = existingState?.LastSuccessfulOperationUtc,
-            InstallDeferred = existingState?.InstallDeferred ?? false,
-            RetryCount = existingState?.RetryCount ?? 0,
-            LastFailureCategory = existingState?.LastFailureCategory,
+            LastDownloadCompletedUtc = sameIdentity ? existingState?.LastDownloadCompletedUtc : null,
+            LastInstallDeferredUtc = sameIdentity ? existingState?.LastInstallDeferredUtc : null,
+            LastAttemptUtc = sameIdentity ? existingState?.LastAttemptUtc : null,
+            LastFailureUtc = sameIdentity ? existingState?.LastFailureUtc : null,
+            LastSuccessfulOperationUtc = sameIdentity ? existingState?.LastSuccessfulOperationUtc : null,
+            InstallDeferred = sameIdentity && existingState?.InstallDeferred == true,
+            RetryCount = sameIdentity ? existingState?.RetryCount ?? 0 : 0,
+            LastFailureCategory = sameIdentity ? existingState?.LastFailureCategory : null,
+            LastFailureMessage = sameIdentity ? existingState?.LastFailureMessage : null,
+            PackageIdentitySnapshot = identitySnapshot,
             PackageFamilyNames = updateSet.Updates
                 .Select(update => update.PackageFamilyName)
                 .Where(packageFamilyName => !string.IsNullOrWhiteSpace(packageFamilyName))
@@ -401,38 +716,87 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
     private Task SaveDeferredInstallStateAsync(
         StorePackageUpdateSet updateSet,
+        PackageIdentitySnapshot? identitySnapshot,
         StoreUpdateOperationResult result,
         CancellationToken cancellationToken)
     {
         Log("deferred_install_state_saved", "install", state: result.State.ToString());
-        return SaveStateAsync(updateSet, result, installDeferred: true, cancellationToken);
+        return SaveStateAsync(updateSet, identitySnapshot, result, installDeferred: true, cancellationToken);
+    }
+
+    private Task SaveThrottledDeferredInstallSuppressedStateAsync(
+        StorePackageUpdateSet updateSet,
+        PackageIdentitySnapshot? identitySnapshot,
+        StoreUpdateOperationResult result,
+        CancellationToken cancellationToken)
+    {
+        Log("deferred_install_suppressed_by_retry_policy_saved", "install", state: result.State.ToString());
+        return SaveStateAsync(updateSet, identitySnapshot, result, installDeferred: false, cancellationToken);
     }
 
     private Task SaveRetryStateAsync(
         StorePackageUpdateSet updateSet,
+        PackageIdentitySnapshot? identitySnapshot,
         StoreUpdateOperationResult result,
         CancellationToken cancellationToken)
     {
         Log("retry_state_saved", "retry", state: result.State.ToString());
-        return SaveStateAsync(updateSet, result, installDeferred: false, cancellationToken);
+        return SaveStateAsync(updateSet, identitySnapshot, result, installDeferred: false, cancellationToken);
     }
 
     private async Task SaveStateAsync(
         StorePackageUpdateSet updateSet,
+        PackageIdentitySnapshot? identitySnapshot,
         StoreUpdateOperationResult result,
         bool installDeferred,
         CancellationToken cancellationToken)
     {
         DeferredUpdateState? existingState = await _deferredStateStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+        bool sameIdentity = IsSamePackageIdentity(existingState?.PackageIdentitySnapshot, identitySnapshot);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        int retryCount = result.Succeeded
+            ? sameIdentity
+                ? existingState?.RetryCount ?? 0
+                : 0
+            : (sameIdentity ? existingState?.RetryCount ?? 0 : 0) + 1;
         await _deferredStateStore.SaveAsync(new DeferredUpdateState
         {
-            LastCheckUtc = DateTimeOffset.UtcNow,
-            LastUpdateDetectedUtc = existingState?.LastUpdateDetectedUtc ?? DateTimeOffset.UtcNow,
-            LastFailureUtc = result.Succeeded ? existingState?.LastFailureUtc : DateTimeOffset.UtcNow,
-            LastSuccessfulOperationUtc = result.Succeeded ? DateTimeOffset.UtcNow : existingState?.LastSuccessfulOperationUtc,
-            InstallDeferred = installDeferred,
-            RetryCount = result.Succeeded ? 0 : (existingState?.RetryCount ?? 0) + 1,
-            LastFailureCategory = result.Succeeded ? null : result.State.ToString(),
+            LastCheckUtc = now,
+            LastUpdateDetectedUtc = sameIdentity ? existingState?.LastUpdateDetectedUtc : now,
+            LastDownloadCompletedUtc = installDeferred && result.Succeeded
+                ? now
+                : sameIdentity
+                    ? existingState?.LastDownloadCompletedUtc
+                    : null,
+            LastInstallDeferredUtc = installDeferred
+                ? now
+                : sameIdentity
+                    ? existingState?.LastInstallDeferredUtc
+                    : null,
+            LastAttemptUtc = now,
+            LastFailureUtc = result.Succeeded
+                ? sameIdentity
+                    ? existingState?.LastFailureUtc
+                    : null
+                : now,
+            LastSuccessfulOperationUtc = result.Succeeded
+                ? now
+                : sameIdentity
+                    ? existingState?.LastSuccessfulOperationUtc
+                    : null,
+            InstallDeferred = installDeferred && result.Succeeded,
+            RetryCount = retryCount,
+            LastFailureCategory = result.Succeeded
+                ? sameIdentity
+                    ? existingState?.LastFailureCategory
+                    : null
+                : result.State.ToString(),
+            LastFailureMessage = result.Succeeded
+                ? sameIdentity
+                    ? existingState?.LastFailureMessage
+                    : null
+                : result.ErrorMessage,
+            PackageIdentitySnapshot = identitySnapshot ?? existingState?.PackageIdentitySnapshot,
             PackageFamilyNames = updateSet.Updates
                 .Select(update => update.PackageFamilyName)
                 .Where(packageFamilyName => !string.IsNullOrWhiteSpace(packageFamilyName))

@@ -46,8 +46,14 @@ public sealed record AppUpdateSnapshot(
 
 public sealed record StorePackageUpdateInfo(
     string PackageFamilyName,
+    string PackageFullName,
     string Version,
     bool IsMandatory);
+
+public sealed record PackageIdentitySnapshot(
+    string PackageFamilyName,
+    string PackageFullName,
+    string PackageVersion);
 
 public sealed class StorePackageUpdateSet
 {
@@ -87,15 +93,25 @@ public sealed class DeferredUpdateState
 
     public DateTimeOffset? LastUpdateDetectedUtc { get; init; }
 
+    public DateTimeOffset? LastDownloadCompletedUtc { get; init; }
+
+    public DateTimeOffset? LastInstallDeferredUtc { get; init; }
+
     public DateTimeOffset? LastFailureUtc { get; init; }
 
     public DateTimeOffset? LastSuccessfulOperationUtc { get; init; }
+
+    public DateTimeOffset? LastAttemptUtc { get; init; }
 
     public bool InstallDeferred { get; init; }
 
     public int RetryCount { get; init; }
 
     public string? LastFailureCategory { get; init; }
+
+    public string? LastFailureMessage { get; init; }
+
+    public PackageIdentitySnapshot? PackageIdentitySnapshot { get; init; }
 
     public IReadOnlyList<string> PackageFamilyNames { get; init; } = Array.Empty<string>();
 }
@@ -112,11 +128,17 @@ public sealed class StoreUpdateOptions
 
     public bool RestartAppAutomatically { get; init; }
 
-    public TimeSpan StartupDelay { get; init; } = TimeSpan.FromSeconds(2);
+    public TimeSpan StartupDelay { get; init; } = TimeSpan.Zero;
 
     public TimeSpan MinimumCheckInterval { get; init; } = TimeSpan.Zero;
 
     public TimeSpan DeferredStateMaxAge { get; init; } = TimeSpan.FromDays(14);
+
+    public TimeSpan ExitInstallTimeout { get; init; } = TimeSpan.FromMinutes(2);
+
+    public int ExitInstallRetryCountLimit { get; init; } = 3;
+
+    public TimeSpan ExitInstallRetryCooldown { get; init; } = TimeSpan.FromDays(1);
 }
 
 public interface IAppVersionProvider
@@ -134,12 +156,26 @@ public interface IAppUpdateService : IAsyncDisposable
 
     Task StartAsync(CancellationToken cancellationToken = default);
 
+    Task RunUserInitiatedUpdateFlowAsync(CancellationToken cancellationToken = default);
+
+    Task<StoreUpdateOperationResult?> RunExitTimeInstallAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<bool> HasDeferredInstallOnExitAsync(CancellationToken cancellationToken = default);
+
     Task StopAsync();
 }
 
 public interface IAppUpdateCoordinator
 {
     Task RunStartupUpdateFlowAsync(CancellationToken cancellationToken = default);
+
+    Task RunUserInitiatedUpdateFlowAsync(CancellationToken cancellationToken = default);
+
+    Task<StoreUpdateOperationResult?> RunExitTimeInstallAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<bool> HasDeferredInstallOnExitAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IMicrosoftStoreUpdateProvider

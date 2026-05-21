@@ -35,6 +35,7 @@ public sealed class MicrosoftStoreUpdateProvider : IMicrosoftStoreUpdateProvider
         StorePackageUpdateInfo[] updateInfos = updates
             .Select(update => new StorePackageUpdateInfo(
                 PackageFamilyName: update.Package.Id.FamilyName,
+                PackageFullName: update.Package.Id.FullName,
                 Version: FormatPackageVersion(update.Package.Id.Version),
                 IsMandatory: update.Mandatory))
             .ToArray();

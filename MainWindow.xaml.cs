@@ -126,6 +126,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private LiveTranscriptionWindow? _liveTranscriptionWindow;
     private bool _isLiveSegmentTranscriptionDrainScheduled;
     private bool _isClosingAfterLiveTranscriptionStop;
+    private bool _isClosingAfterDeferredUpdateInstall;
     private bool _forceCancelLiveChunkTranscriptions;
     private bool _isLiveTranscriptionStopping;
 
@@ -948,19 +949,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         return options;
     }
-
-    public bool IsBusyForAppUpdate =>
-        IsTranscribeAudioBatchTranscribing
-        || IsTranscribeAudioBatchPendingStart
-        || IsTranscriptProcessingCanceling
-        || IsLiveTranscribing
-        || _isRowFileTranscriptionRunning
-        || _liveRecordingCaptureSession is not null
-        || _activePlaybackEditTranscription is not null
-        || (_boundViewModel?.IsBusy ?? false)
-        || (_boundViewModel?.IsGenerationRunning ?? false)
-        || (_boundViewModel?.IsLiveTranscriptionRunning ?? false)
-        || (_boundViewModel?.IsAudioPlaying ?? false);
 
     private async Task StopLiveTranscriptionAsync(
         MainViewModel vm,
@@ -1837,23 +1825,127 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void OnMainWindowClosing(object? sender, CancelEventArgs e)
     {
-        if (_isClosingAfterLiveTranscriptionStop
-            || _liveRecordingCaptureSession is null
-            || _boundViewModel is null)
+        if (_isClosingAfterDeferredUpdateInstall)
+        {
+            return;
+        }
+
+        bool resumingAfterLiveTranscriptionStop = _isClosingAfterLiveTranscriptionStop;
+
+        if (!resumingAfterLiveTranscriptionStop
+            && _liveRecordingCaptureSession is not null
+            && _boundViewModel is not null)
+        {
+            e.Cancel = true;
+            IsEnabled = false;
+            try
+            {
+                await StopLiveTranscriptionAsync(_boundViewModel, showToast: false);
+            }
+            finally
+            {
+                _isClosingAfterLiveTranscriptionStop = true;
+                Close();
+            }
+            return;
+        }
+
+        if (DataContext is not MainViewModel vm || vm.AppUpdateService is null)
+        {
+            return;
+        }
+
+        bool hasDeferredInstall = false;
+        try
+        {
+            hasDeferredInstall = await vm.AppUpdateService.HasDeferredInstallOnExitAsync();
+        }
+        catch (Exception ex)
+        {
+            vm.LogHandledException("deferred update close check", ex);
+        }
+
+        if (!hasDeferredInstall)
         {
             return;
         }
 
         e.Cancel = true;
-        IsEnabled = false;
         try
         {
-            await StopLiveTranscriptionAsync(_boundViewModel, showToast: false);
+            await vm.AppUpdateService.StopAsync();
+            await RunDeferredUpdateInstallAsync(vm.AppUpdateService);
+        }
+        catch (Exception ex)
+        {
+            vm.LogHandledException("deferred update close flow", ex);
+            ShowDeferredUpdateInstallFailureMessageSafe();
         }
         finally
         {
-            _isClosingAfterLiveTranscriptionStop = true;
+            _isClosingAfterDeferredUpdateInstall = true;
             Close();
+        }
+    }
+
+    private async Task RunDeferredUpdateInstallAsync(IAppUpdateService appUpdateService)
+    {
+        var progressWindow = new DeferredUpdateInstallWindow(appUpdateService)
+        {
+            Owner = this,
+        };
+
+        Task<StoreUpdateOperationResult?> installTask = appUpdateService.RunExitTimeInstallAsync();
+        _ = installTask.ContinueWith(
+            _ => progressWindow.Dispatcher.BeginInvoke(new Action(progressWindow.CloseAfterOperation)),
+            TaskScheduler.Default);
+
+        progressWindow.ShowDialog();
+        StoreUpdateOperationResult? result = null;
+        Exception? capturedException = null;
+
+        try
+        {
+            result = await installTask.ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            capturedException = ex;
+        }
+
+        if (capturedException is not null)
+        {
+            _processLogService?.LogException(
+                nameof(MainWindow),
+                "deferred_exit_update_install_failed",
+                capturedException);
+            ShowDeferredUpdateInstallFailureMessageSafe();
+            return;
+        }
+
+        if (result is not null && !result.Succeeded)
+        {
+            ShowDeferredUpdateInstallFailureMessageSafe();
+        }
+    }
+
+    private void ShowDeferredUpdateInstallFailureMessageSafe()
+    {
+        try
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                "The update could not be installed. The app will close normally. You can check for updates again later.",
+                "Update installation failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            _processLogService?.LogException(
+                nameof(MainWindow),
+                "deferred_exit_update_install_message_failed",
+                ex);
         }
     }
 

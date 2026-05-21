@@ -14,7 +14,7 @@ namespace AudioScript.Tests;
 public sealed class MainViewModelTests
 {
     [Fact]
-    public async Task UpdateFooterMode_CheckingHiddenAndInstallingUsesCompactFooterWithoutRestartAction()
+    public async Task UpdateFooterMode_CheckingHiddenAndInstallingUsesCompactFooterAndUpdateAction()
     {
         await RunInStaAsync(async () =>
         {
@@ -52,8 +52,8 @@ public sealed class MainViewModelTests
                 {
                     Assert.False(viewModel.IsApplicationFooterCompactMode);
                     Assert.True(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.False(viewModel.IsApplicationRestartVisible);
-                    Assert.False(viewModel.RestartApplicationCommand.CanExecute(null));
+                    Assert.True(viewModel.CanCheckForUpdates);
+                    Assert.True(viewModel.CheckForUpdatesCommand.CanExecute(null));
                     Assert.Equal(string.Empty, viewModel.ApplicationUpdateStatusText);
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
@@ -69,7 +69,7 @@ public sealed class MainViewModelTests
 
                     Assert.False(viewModel.IsApplicationFooterCompactMode);
                     Assert.True(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.False(viewModel.IsApplicationRestartVisible);
+                    Assert.True(viewModel.CanCheckForUpdates);
                     Assert.Equal(string.Empty, viewModel.ApplicationUpdateStatusText);
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
@@ -85,8 +85,8 @@ public sealed class MainViewModelTests
 
                     Assert.True(viewModel.IsApplicationFooterCompactMode);
                     Assert.False(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.False(viewModel.IsApplicationRestartVisible);
-                    Assert.False(viewModel.RestartApplicationCommand.CanExecute(null));
+                    Assert.False(viewModel.CanCheckForUpdates);
+                    Assert.False(viewModel.CheckForUpdatesCommand.CanExecute(null));
                     Assert.Equal("Installing update", viewModel.ApplicationUpdateStatusText);
                 }
                 finally
@@ -2149,6 +2149,21 @@ public sealed class MainViewModelTests
         public Task StartAsync(CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
+        }
+
+        public Task RunUserInitiatedUpdateFlowAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task<StoreUpdateOperationResult?> RunExitTimeInstallAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<StoreUpdateOperationResult?>(null);
+        }
+
+        public Task<bool> HasDeferredInstallOnExitAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(false);
         }
 
         public Task StopAsync()

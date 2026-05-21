@@ -12,6 +12,7 @@ AudioScript is a Windows desktop app built with WPF on .NET 10 for offline trans
 - Supports row operations such as insert, duplicate, delete, split, and speaker renaming
 - Autosaves sessions and restores them from local app data
 - Exports transcripts to Word documents
+- Checks Microsoft Store updates after first render, supports user-initiated update checks, and defers silent installs until app exit
 - Uses a single-instance startup model so only one app window runs at a time
 
 ## Features
@@ -59,6 +60,16 @@ AudioScript is a Windows desktop app built with WPF on .NET 10 for offline trans
   - interview-style layout
 - Opens the exported document after a successful save when a local app is available
 
+### Microsoft Store Updates
+
+- Uses Microsoft Store / MSIX update APIs for packaged builds
+- Starts a hidden update check only after the main window has rendered
+- Falls back to Store / OS-provided update UI when silent download is unavailable or fails
+- Defers successful silent downloads until the user closes the app
+- Shows a non-cancellable app-owned install progress window on exit when deferred install exists
+- Includes a user-initiated `Check for updates` action in the main window footer
+- Does not automatically restart the app after an update
+
 ## Technology Stack
 
 - UI: WPF
@@ -85,6 +96,7 @@ AudioScript is a Windows desktop app built with WPF on .NET 10 for offline trans
 - `MainWindow.xaml` and `MainWindow.xaml.cs`: main shell, dialogs, export workflow, and UI orchestration
 - `ViewModels/MainViewModel.cs`: session state, commands, autosave, transcription, diarization, preferences, and logging
 - `Services/`: app data, persistence, preferences, updates, entitlement, export, provisioning, and model management
+- `DeferredUpdateInstallWindow.xaml` and `DeferredUpdateInstallWindow.xaml.cs`: modal exit-time update progress window
 - `Audio/`: capture, playback, standardization, chunk planning, and audio utilities
 - `Abstractions/`: shared contracts and models
 - `AudioScript.Tests/`: unit tests
@@ -110,6 +122,10 @@ Subfolders:
 - `Temp`
 - `Settings`
 
+Additional update state:
+
+- `%LocalAppData%\Packages\<PackageFamilyName>\LocalState\Settings\update-state.json`
+
 Settings file:
 
 - `%LocalAppData%\Packages\<PackageFamilyName>\LocalState\Settings\app-preferences.json`
@@ -129,6 +145,10 @@ Subfolders:
 - `Logs`
 - `Temp`
 - `Settings`
+
+Additional update state:
+
+- `%LocalAppData%\AudioScript\Settings\update-state.json`
 
 Settings file:
 
@@ -160,6 +180,12 @@ Use the fast build path for routine development:
 
 ```powershell
 msbuild .\AudioScript.csproj /t:Build /p:Configuration=Debug /p:RunAnalyzers=false /m
+```
+
+Verified with:
+
+```powershell
+& 'C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe' .\AudioScript.csproj /t:Build /p:Configuration=Debug /p:RunAnalyzers=false /m
 ```
 
 ## Run Tests
@@ -201,3 +227,4 @@ The packaging script:
 - Speaker diarization runs locally through bundled `pyannote-community-1` assets
 - Packaged builds use Store update APIs for entitlement checks and update handling
 - Unpackaged builds skip Store update checks safely
+- Store update behavior assumes Microsoft Store automatic app updates are off and handles that case by falling back to Store / OS UI when needed

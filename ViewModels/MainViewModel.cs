@@ -45,7 +45,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private readonly AppPreferencesStore _appPreferencesStore;
     private readonly AppThemeService _appThemeService;
     private readonly IAppUpdateService? _appUpdateService;
-    private readonly Func<Task>? _restartApplicationAsync;
     private readonly IEntitlementService? _entitlementService;
     private readonly Func<IReadOnlyList<TranscriptionModelOption>> _availableModelsProvider;
     private readonly SynchronizationContext _uiContext;
@@ -104,8 +103,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         IAppUpdateService? appUpdateService = null,
         IEntitlementService? entitlementService = null,
         AppStatusViewModel? appStatus = null,
-        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null,
-        Func<Task>? restartApplicationAsync = null)
+        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null)
     {
         _audioTranscriptionService = audioTranscriptionService;
         _speakerDiarizationService = speakerDiarizationService;
@@ -115,7 +113,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _appPreferencesStore = appPreferencesStore;
         _appThemeService = appThemeService;
         _appUpdateService = appUpdateService;
-        _restartApplicationAsync = restartApplicationAsync;
         _entitlementService = entitlementService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
         _appUpdateSnapshot = appUpdateService?.CurrentSnapshot
@@ -151,7 +148,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DeleteSelectedSessionCommand = new AsyncRelayCommand(DeleteSelectedSessionAsync, CanDeleteSelectedSession);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
-        RestartApplicationCommand = new AsyncRelayCommand(RestartApplicationAsync, CanRestartApplication);
+        CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, CanExecuteCheckForUpdates);
 
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
@@ -217,9 +214,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
-    public AsyncRelayCommand RestartApplicationCommand { get; }
+    public AsyncRelayCommand CheckForUpdatesCommand { get; }
 
     public AppStatusViewModel? AppStatus { get; }
+
+    public IAppUpdateService? AppUpdateService => _appUpdateService;
 
     public void RefreshEngines(
         IEnumerable<TranscriptionModelOption> models,
@@ -671,8 +670,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool IsApplicationFooterDefaultVisible =>
         !IsApplicationFooterCompactMode;
 
-    public bool IsApplicationRestartVisible =>
-        false;
+    public bool CanCheckForUpdates =>
+        _appUpdateService is not null
+        && !IsApplicationUpdateActive;
 
     public string PremiumStatusText =>
         _entitlementSnapshot.StatusMessage;
@@ -3125,29 +3125,29 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DeleteSelectedSessionCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
-        RestartApplicationCommand.RaiseCanExecuteChanged();
+        CheckForUpdatesCommand.RaiseCanExecuteChanged();
     }
 
-    private bool CanRestartApplication()
+    private bool CanExecuteCheckForUpdates()
     {
-        return IsApplicationRestartVisible && _restartApplicationAsync is not null;
+        return CanCheckForUpdates;
     }
 
-    private async Task RestartApplicationAsync()
+    private async Task CheckForUpdatesAsync()
     {
-        if (_restartApplicationAsync is null)
+        if (_appUpdateService is null)
         {
             return;
         }
 
         try
         {
-            await _restartApplicationAsync().ConfigureAwait(false);
+            await _appUpdateService.RunUserInitiatedUpdateFlowAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            AppendLog($"Application restart failed: {ex.Message}");
-            RaiseError($"Unable to restart AudioScript: {ex.Message}");
+            AppendLog($"Update check failed: {ex.Message}");
+            RaiseError($"Unable to check for updates: {ex.Message}");
         }
     }
 
@@ -4776,8 +4776,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(IsMandatoryApplicationUpdateAvailable));
             NotifyPropertyChanged(nameof(IsApplicationFooterCompactMode));
             NotifyPropertyChanged(nameof(IsApplicationFooterDefaultVisible));
-            NotifyPropertyChanged(nameof(IsApplicationRestartVisible));
-            RestartApplicationCommand.RaiseCanExecuteChanged();
+            NotifyPropertyChanged(nameof(CanCheckForUpdates));
+            CheckForUpdatesCommand.RaiseCanExecuteChanged();
         }, null);
     }
 
