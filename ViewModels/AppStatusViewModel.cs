@@ -10,6 +10,7 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
     private readonly IStoreLicenseService _licenseService;
     private readonly IStorePurchaseService _purchaseService;
     private readonly IStoreNavigationService _navigationService;
+    private readonly IAppUpdateService? _appUpdateService;
     private readonly IAppVersionService _versionService;
     private readonly SynchronizationContext _uiContext;
     private AppEntitlementSnapshot _entitlementSnapshot;
@@ -21,28 +22,47 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
         IStoreLicenseService licenseService,
         IStorePurchaseService purchaseService,
         IStoreNavigationService navigationService,
-        IAppVersionService versionService)
+        IAppVersionService versionService,
+        IAppUpdateService? appUpdateService = null)
     {
         _licenseService = licenseService ?? throw new ArgumentNullException(nameof(licenseService));
         _purchaseService = purchaseService ?? throw new ArgumentNullException(nameof(purchaseService));
         _navigationService = navigationService ?? throw new ArgumentNullException(nameof(navigationService));
         _versionService = versionService ?? throw new ArgumentNullException(nameof(versionService));
+        _appUpdateService = appUpdateService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
         _entitlementSnapshot = _licenseService.CurrentSnapshot;
         _licenseService.SnapshotChanged += OnLicenseSnapshotChanged;
+        if (_appUpdateService is not null)
+        {
+            _appUpdateService.SnapshotChanged += OnAppUpdateSnapshotChanged;
+        }
 
         UpgradeCommand = new AsyncRelayCommand(UpgradeAsync, CanUpgrade);
+        RestorePurchaseCommand = new AsyncRelayCommand(() => RestorePurchaseAsync());
+        CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, () => CanCheckForUpdates);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public AsyncRelayCommand UpgradeCommand { get; }
 
+    public AsyncRelayCommand RestorePurchaseCommand { get; }
+
+    public AsyncRelayCommand CheckForUpdatesCommand { get; }
+
     public string ModeText => _entitlementSnapshot.HasPremium ? "Premium" : "Basic";
 
     public string VersionText => _versionService.VersionText;
 
     public bool IsPremium => _entitlementSnapshot.HasPremium;
+
+    public bool CanCheckForUpdates =>
+        _appUpdateService?.IsStoreUpdateSupported == true
+        && _appUpdateService.CurrentSnapshot.State is not AppUpdateState.Checking
+            and not AppUpdateState.UpdateAvailable
+            and not AppUpdateState.Downloading
+            and not AppUpdateState.Installing;
 
     public string ModeTooltip => IsPremium
         ? "Premium mode active."
@@ -80,6 +100,24 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
     }
 
     private bool CanUpgrade() => !_entitlementSnapshot.HasPremium;
+
+    private async Task CheckForUpdatesAsync()
+    {
+        if (_appUpdateService is null || !_appUpdateService.IsStoreUpdateSupported)
+        {
+            ShowVersionToast("Update check unavailable.");
+            return;
+        }
+
+        try
+        {
+            await _appUpdateService.RunUserInitiatedUpdateFlowAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            ShowVersionToast("Update check unavailable.");
+        }
+    }
 
     private async Task UpgradeAsync()
     {
@@ -134,6 +172,14 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
         }, token);
     }
 
+    private void HideVersionToast()
+    {
+        _versionToastCts?.Cancel();
+        _versionToastCts?.Dispose();
+        _versionToastCts = null;
+        _uiContext.Post(_ => IsVersionToastVisible = false, null);
+    }
+
     private void OnLicenseSnapshotChanged(object? sender, AppEntitlementSnapshot snapshot)
     {
         _entitlementSnapshot = snapshot;
@@ -143,6 +189,15 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsPremium));
             OnPropertyChanged(nameof(ModeTooltip));
             UpgradeCommand.RaiseCanExecuteChanged();
+        }, null);
+    }
+
+    private void OnAppUpdateSnapshotChanged(object? sender, AppUpdateSnapshot snapshot)
+    {
+        _uiContext.Post(_ =>
+        {
+            OnPropertyChanged(nameof(CanCheckForUpdates));
+            CheckForUpdatesCommand.RaiseCanExecuteChanged();
         }, null);
     }
 

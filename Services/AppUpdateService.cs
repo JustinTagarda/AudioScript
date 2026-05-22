@@ -35,6 +35,8 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
     public event EventHandler<AppUpdateSnapshot>? SnapshotChanged;
 
+    public bool IsStoreUpdateSupported => _storeUpdateProvider.IsStoreUpdateSupported();
+
     public AppUpdateSnapshot CurrentSnapshot
     {
         get
@@ -137,7 +139,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         catch (Exception ex)
         {
             LogException("startup_update_flow_failed", "startup", ex);
-            Publish(Failed("Update check failed", "Application will continue normally."));
+            Publish(AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion));
         }
     }
 
@@ -164,7 +166,9 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogException("update_workflow_failed", isStartupFlow ? "startup" : "manual", ex);
-            Publish(Failed("Update check failed", "Application will continue normally."));
+            Publish(isStartupFlow
+                ? AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion)
+                : Failed("Update check failed", "Application will continue normally."));
         }
         finally
         {
@@ -211,6 +215,18 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             Log("deferred_state_loaded", "check", extra: $"retryCount={existingState.RetryCount}");
         }
 
+        if (isStartupFlow
+            && ShouldSkipStartupUpdateCheckDueToInterval(existingState))
+        {
+            string lastCheckUtcText = existingState?.LastCheckUtc?.ToString("O") ?? "n/a";
+            Log(
+                "startup_update_check_throttled",
+                "check",
+                extra: $"minimumInterval={_options.MinimumCheckInterval}; lastCheckUtc={lastCheckUtcText}");
+            Publish(AppUpdateSnapshot.Idle(installedVersion));
+            return;
+        }
+
         if (!hideCheckingSnapshot)
         {
             Publish(new AppUpdateSnapshot(
@@ -247,6 +263,15 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         _lastMandatory = mandatory;
         PackageIdentitySnapshot? identitySnapshot = ResolvePrimaryPackageIdentitySnapshot(queryResult.UpdateSet.Updates);
         bool isThrottled = IsDeferredInstallThrottled(existingState, identitySnapshot);
+        Publish(new AppUpdateSnapshot(
+            AppUpdateState.UpdateAvailable,
+            "Update available",
+            "Microsoft Store update is available.",
+            mandatory,
+            IsProgressVisible: false,
+            ProgressValue: 0,
+            installedVersion,
+            availableVersion));
         if (!isThrottled)
         {
             await SaveDetectedStateAsync(queryResult.UpdateSet, identitySnapshot, existingState, cancellationToken).ConfigureAwait(false);
@@ -612,6 +637,20 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
         return _options.ExitInstallRetryCooldown > TimeSpan.Zero
             && DateTimeOffset.UtcNow - lastFailureUtc < _options.ExitInstallRetryCooldown;
+    }
+
+    private bool ShouldSkipStartupUpdateCheckDueToInterval(DeferredUpdateState? existingState)
+    {
+        if (_options.MinimumCheckInterval <= TimeSpan.Zero
+            || existingState is null
+            || existingState.InstallDeferred
+            || !existingState.LastCheckUtc.HasValue)
+        {
+            return false;
+        }
+
+        TimeSpan elapsed = DateTimeOffset.UtcNow - existingState.LastCheckUtc.Value;
+        return elapsed < _options.MinimumCheckInterval;
     }
 
     private static bool IsSamePackageIdentity(

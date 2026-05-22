@@ -51,6 +51,7 @@ public partial class DeferredUpdateInstallWindow : Window
         TitleText.Text = snapshot.State switch
         {
             AppUpdateState.Checking => "Preparing update",
+            AppUpdateState.UpdateAvailable => "Update available",
             AppUpdateState.Downloading => "Downloading update",
             AppUpdateState.Installing => "Applying update",
             AppUpdateState.Failed => "Update failed",
@@ -73,6 +74,7 @@ public partial class DeferredUpdateInstallWindow : Window
         ProgressText.Text = snapshot.State switch
         {
             AppUpdateState.Checking => "Revalidating the update before closing.",
+            AppUpdateState.UpdateAvailable => "An update is ready to install.",
             AppUpdateState.Downloading => "Downloading package updates.",
             AppUpdateState.Installing => "Installing package updates.",
             AppUpdateState.Failed => "The update could not be installed.",

@@ -130,7 +130,7 @@ public sealed class StoreUpdateOptions
 
     public TimeSpan StartupDelay { get; init; } = TimeSpan.Zero;
 
-    public TimeSpan MinimumCheckInterval { get; init; } = TimeSpan.Zero;
+    public TimeSpan MinimumCheckInterval { get; init; } = TimeSpan.FromHours(12);
 
     public TimeSpan DeferredStateMaxAge { get; init; } = TimeSpan.FromDays(14);
 
@@ -150,6 +150,8 @@ public interface IAppVersionProvider
 
 public interface IAppUpdateService : IAsyncDisposable
 {
+    bool IsStoreUpdateSupported { get; }
+
     AppUpdateSnapshot CurrentSnapshot { get; }
 
     event EventHandler<AppUpdateSnapshot>? SnapshotChanged;
@@ -168,6 +170,8 @@ public interface IAppUpdateService : IAsyncDisposable
 
 public interface IAppUpdateCoordinator
 {
+    bool IsStoreUpdateSupported { get; }
+
     Task RunStartupUpdateFlowAsync(CancellationToken cancellationToken = default);
 
     Task RunUserInitiatedUpdateFlowAsync(CancellationToken cancellationToken = default);

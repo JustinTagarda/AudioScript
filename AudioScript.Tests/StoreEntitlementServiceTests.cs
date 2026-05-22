@@ -15,9 +15,42 @@ public sealed class StoreEntitlementServiceTests
                 options: new StoreEntitlementServiceOptions
                 {
                     PremiumStoreIds = Array.Empty<string>(),
+                    PremiumProductIds = ["premium"],
                 }));
 
         Assert.Contains("Premium Store add-on ID is required", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Constructor_PackagedBuildWithoutPremiumProductIds_ThrowsInvalidOperationException()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new StoreEntitlementService(
+                new FakeVersionProvider(isPackaged: true),
+                new ProcessLogService(),
+                options: new StoreEntitlementServiceOptions
+                {
+                    PremiumStoreIds = ["9PD5288V5Q49"],
+                    PremiumProductIds = Array.Empty<string>(),
+                }));
+
+        Assert.Contains("Premium Product ID is required", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Constructor_PackagedBuildWithMultiplePremiumStoreIds_ThrowsInvalidOperationException()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new StoreEntitlementService(
+                new FakeVersionProvider(isPackaged: true),
+                new ProcessLogService(),
+                options: new StoreEntitlementServiceOptions
+                {
+                    PremiumStoreIds = ["9PD5288V5Q49", "duplicate"],
+                    PremiumProductIds = ["audioscript_premium_lifetime"],
+                }));
+
+        Assert.Contains("Exactly one Premium Store add-on ID is required", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -29,6 +62,7 @@ public sealed class StoreEntitlementServiceTests
             options: new StoreEntitlementServiceOptions
             {
                 PremiumStoreIds = Array.Empty<string>(),
+                PremiumProductIds = Array.Empty<string>(),
             });
 
         Assert.NotNull(service);

@@ -146,10 +146,18 @@ public sealed class StoreEntitlementService : IEntitlementService
         _premiumEntitlementCache = premiumEntitlementCache;
         _options = options ?? new StoreEntitlementServiceOptions();
         _lastVerifiedPremiumUtc = _premiumEntitlementCache?.ReadLastVerifiedPremiumUtc();
-        if (_appVersionProvider.IsPackaged && !_options.PremiumStoreIds.Any(id => !string.IsNullOrWhiteSpace(id)))
+        if (_appVersionProvider.IsPackaged && _options.PremiumStoreIds.Count != 1)
         {
             const string message =
-                "At least one Premium Store add-on ID is required for packaged builds. Configure StoreEntitlementServiceOptions.PremiumStoreIds.";
+                "Exactly one Premium Store add-on ID is required for packaged builds. Configure StoreEntitlementServiceOptions.PremiumStoreIds.";
+            _processLogService.Log("Premium", $"configuration_error; {message}");
+            throw new InvalidOperationException(message);
+        }
+
+        if (_appVersionProvider.IsPackaged && _options.PremiumProductIds.Count != 1)
+        {
+            const string message =
+                "Exactly one Premium Product ID is required for packaged builds. Configure StoreEntitlementServiceOptions.PremiumProductIds.";
             _processLogService.Log("Premium", $"configuration_error; {message}");
             throw new InvalidOperationException(message);
         }

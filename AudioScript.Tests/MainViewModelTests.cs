@@ -69,8 +69,26 @@ public sealed class MainViewModelTests
 
                     Assert.False(viewModel.IsApplicationFooterCompactMode);
                     Assert.True(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.True(viewModel.CanCheckForUpdates);
-                    Assert.Equal(string.Empty, viewModel.ApplicationUpdateStatusText);
+                    Assert.False(viewModel.CanCheckForUpdates);
+                    Assert.False(viewModel.CheckForUpdatesCommand.CanExecute(null));
+                    Assert.Equal("Checking for updates", viewModel.ApplicationUpdateStatusText);
+
+                    appUpdateService.Publish(new AppUpdateSnapshot(
+                        AppUpdateState.UpdateAvailable,
+                        "Update available",
+                        "Microsoft Store update is available.",
+                        IsMandatoryUpdateAvailable: false,
+                        IsProgressVisible: false,
+                        ProgressValue: 0,
+                        InstalledVersion: "1.2.3.4",
+                        AvailableVersion: "1.2.3.5"));
+                    queuedContext.Drain();
+
+                    Assert.False(viewModel.IsApplicationFooterCompactMode);
+                    Assert.True(viewModel.IsApplicationFooterDefaultVisible);
+                    Assert.False(viewModel.CanCheckForUpdates);
+                    Assert.False(viewModel.CheckForUpdatesCommand.CanExecute(null));
+                    Assert.Equal("Update available", viewModel.ApplicationUpdateStatusText);
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
                         AppUpdateState.Installing,
@@ -88,6 +106,62 @@ public sealed class MainViewModelTests
                     Assert.False(viewModel.CanCheckForUpdates);
                     Assert.False(viewModel.CheckForUpdatesCommand.CanExecute(null));
                     Assert.Equal("Installing update", viewModel.ApplicationUpdateStatusText);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task CheckForUpdatesCommand_UsesUpdateCoordinator()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var appUpdateService = new StubAppUpdateService(AppUpdateSnapshot.Idle("1.2.3.4"));
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall),
+                    appUpdateService: appUpdateService);
+
+                try
+                {
+                    viewModel.CheckForUpdatesCommand.Execute(null);
+                    queuedContext.Drain();
+
+                    Assert.True(viewModel.CheckForUpdatesCommand.CanExecute(null));
+                    Assert.Equal(1, appUpdateService.UserInitiatedUpdateFlowCallCount);
                 }
                 finally
                 {
@@ -2142,9 +2216,13 @@ public sealed class MainViewModelTests
             CurrentSnapshot = snapshot;
         }
 
+        public bool IsStoreUpdateSupported { get; set; } = true;
+
         public AppUpdateSnapshot CurrentSnapshot { get; private set; }
 
         public event EventHandler<AppUpdateSnapshot>? SnapshotChanged;
+
+        public int UserInitiatedUpdateFlowCallCount { get; private set; }
 
         public Task StartAsync(CancellationToken cancellationToken = default)
         {
@@ -2153,6 +2231,7 @@ public sealed class MainViewModelTests
 
         public Task RunUserInitiatedUpdateFlowAsync(CancellationToken cancellationToken = default)
         {
+            UserInitiatedUpdateFlowCallCount++;
             return Task.CompletedTask;
         }
 

@@ -33,6 +33,25 @@
                                                 Value="Arrow"/>
                                     </DataTrigger>
                                 </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                    </TextBlock>
+
+                    <TextBlock Text="Restore"
+                               Margin="0,0,10,0"
+                               FontSize="12"
+                               FontWeight="Normal"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               ToolTip="Click to recheck your purchase.">
+                        <TextBlock.InputBindings>
+                            <MouseBinding MouseAction="LeftClick"
+                                          Command="{Binding RestorePurchaseCommand}"/>
+                        </TextBlock.InputBindings>
+                        <TextBlock.Style>
+                            <Style TargetType="{x:Type TextBlock}">
+                                <Setter Property="Cursor"
+                                        Value="Hand"/>
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
@@ -42,7 +61,27 @@
                                 FontSize="12"
                                 FontWeight="Normal"
                                 VerticalAlignment="Center"
-                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                IsEnabled="{Binding CanCheckForUpdates}"
+                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                ToolTip="Click to check for updates.">
+                        <TextBlock.InputBindings>
+                            <MouseBinding MouseAction="LeftClick"
+                                          Command="{Binding CheckForUpdatesCommand}"/>
+                        </TextBlock.InputBindings>
+                        <TextBlock.Style>
+                            <Style TargetType="{x:Type TextBlock}">
+                                <Setter Property="Cursor"
+                                        Value="Hand"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CanCheckForUpdates}"
+                                                 Value="False">
+                                        <Setter Property="Cursor"
+                                                Value="Arrow"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
 
                 <Popup PlacementTarget="{Binding ElementName=VersionTextBlock}"

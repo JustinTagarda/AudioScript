@@ -3,7 +3,18 @@ using AudioScript.Audio;
 
 namespace AudioScript.Services;
 
-public sealed class ChunkedAudioTranscriptionService {
+public interface IChunkedAudioTranscriptionService {
+    Task<TranscriptionResult> TranscribeAudioFileAsync(
+        string audioFilePath,
+        string model,
+        CancellationToken cancellationToken,
+        IProgress<TranscriptionProgressSnapshot>? progress = null,
+        int startChunkIndex = 0,
+        IReadOnlyList<TranscriptionTimedLine>? existingCommittedLines = null,
+        Action<TranscriptionChunkCommit>? chunkCommitted = null);
+}
+
+public sealed class ChunkedAudioTranscriptionService : IChunkedAudioTranscriptionService {
     private readonly AudioChunkingService _audioChunkingService;
     private readonly IAudioTranscriptionService _requestService;
     private readonly ProcessLogService _processLogService;

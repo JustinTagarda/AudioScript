@@ -64,10 +64,13 @@ AudioScript is a Windows desktop app built with WPF on .NET 10 for offline trans
 
 - Uses Microsoft Store / MSIX update APIs for packaged builds
 - Starts a hidden update check only after the main window has rendered
+- Can throttle repeated hidden startup checks with `MinimumCheckInterval` while still revalidating deferred installs on close
 - Falls back to Store / OS-provided update UI when silent download is unavailable or fails
 - Defers successful silent downloads until the user closes the app
 - Shows a non-cancellable app-owned install progress window on exit when deferred install exists
 - Includes a user-initiated `Check for updates` action in the main window footer
+- Routes the bottom-right version label through the same user-initiated update flow
+- The bottom-right status control also exposes a restore-purchase action
 - Does not automatically restart the app after an update
 
 ## Technology Stack
@@ -89,6 +92,9 @@ AudioScript is a Windows desktop app built with WPF on .NET 10 for offline trans
   - premium model installation/use
 - Premium product name in the app: `AudioScript Premium`
 - Microsoft Store add-on ID used by the app: `9PD5288V5Q49`
+- Premium is configured from a single durable add-on catalog entry with lifetime `Forever`, and the promo-code target is the same Premium product.
+- Premium is represented as a durable Microsoft Store add-on and is expected to remain a lifetime entitlement for the parent app.
+- Promo code redemption targets the same durable Premium add-on.
 
 ## Repository Layout
 
@@ -226,5 +232,9 @@ The packaging script:
 - Transcription runs locally and does not require an API key
 - Speaker diarization runs locally through bundled `pyannote-community-1` assets
 - Packaged builds use Store update APIs for entitlement checks and update handling
+- The bottom-right status control exposes purchase restore, and the version label starts the same update flow as the main footer button
+- Restore purchase rechecks entitlement and reports the current Premium state in a small toast
+- Clicking the bottom-right version label runs the same user-initiated update flow as the main footer button
 - Unpackaged builds skip Store update checks safely
 - Store update behavior assumes Microsoft Store automatic app updates are off and handles that case by falling back to Store / OS UI when needed
+- Startup update checks are silent and may be throttled without affecting deferred install revalidation on close

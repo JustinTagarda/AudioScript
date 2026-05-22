@@ -21,6 +21,7 @@ public sealed class AppUpdateServiceTests
         });
         await using var service = CreateService(isPackaged: false, provider, store);
 
+        Assert.False(service.IsStoreUpdateSupported);
         await service.RunOnceAsync();
 
         Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
@@ -36,6 +37,8 @@ public sealed class AppUpdateServiceTests
             QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: false, canSilentlyDownload: true)),
         };
         await using var service = CreateService(isPackaged: true, provider);
+
+        Assert.True(service.IsStoreUpdateSupported);
 
         await service.RunOnceAsync();
 
@@ -71,6 +74,7 @@ public sealed class AppUpdateServiceTests
 
         await service.RunOnceAsync();
 
+        Assert.Contains(AppUpdateState.UpdateAvailable, states);
         Assert.Contains(AppUpdateState.Downloading, states);
         Assert.Equal(1, provider.DownloadCount);
         Assert.Equal(0, provider.InstallCount);
@@ -93,7 +97,7 @@ public sealed class AppUpdateServiceTests
         Assert.NotNull(result);
         Assert.True(result!.Succeeded);
         Assert.Equal(1, provider.InstallCount);
-        Assert.Equal(0, provider.DownloadCount);
+        Assert.Equal(1, provider.DownloadCount);
         Assert.Null(store.CurrentState);
         Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
     }
@@ -122,6 +126,74 @@ public sealed class AppUpdateServiceTests
         Assert.Equal(0, provider.InstallCount);
         Assert.False(store.CurrentState?.InstallDeferred);
         Assert.Equal(3, store.CurrentState?.RetryCount);
+    }
+
+    [Fact]
+    public async Task RunStartupUpdateFlowAsync_CheckFailure_StaysIdle()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            QueryHandler = _ => throw new InvalidOperationException("query failed"),
+        };
+        await using var service = CreateService(isPackaged: true, provider);
+        List<AppUpdateState> states = new();
+        service.SnapshotChanged += (_, snapshot) => states.Add(snapshot.State);
+
+        await service.RunStartupUpdateFlowAsync();
+
+        Assert.DoesNotContain(AppUpdateState.Failed, states);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
+    }
+
+    [Fact]
+    public async Task RunStartupUpdateFlowAsync_RespectsMinimumCheckInterval()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            QueryHandler = _ => throw new InvalidOperationException("query should not run"),
+        };
+        var store = new InMemoryDeferredUpdateStateStore();
+        await store.SaveAsync(new DeferredUpdateState
+        {
+            LastCheckUtc = DateTimeOffset.UtcNow,
+            PackageIdentitySnapshot = new PackageIdentitySnapshot(
+                "AudioScript_test",
+                "AudioScript_test_full",
+                "2.0.0.0"),
+        });
+        await using var service = CreateService(isPackaged: true, provider, store);
+
+        await service.RunStartupUpdateFlowAsync();
+
+        Assert.Equal(0, provider.QueryCount);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
+        Assert.NotNull(store.CurrentState);
+    }
+
+    [Fact]
+    public async Task RunStartupUpdateFlowAsync_IgnoresMinimumCheckIntervalForDeferredInstall()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: false, canSilentlyDownload: true)),
+        };
+        var store = new InMemoryDeferredUpdateStateStore();
+        await store.SaveAsync(new DeferredUpdateState
+        {
+            LastCheckUtc = DateTimeOffset.UtcNow,
+            InstallDeferred = true,
+            RetryCount = 1,
+            PackageIdentitySnapshot = new PackageIdentitySnapshot(
+                "AudioScript_test",
+                "AudioScript_test_full",
+                "2.0.0.0"),
+        });
+        await using var service = CreateService(isPackaged: true, provider, store);
+
+        await service.RunStartupUpdateFlowAsync();
+
+        Assert.Equal(1, provider.QueryCount);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
     }
 
     [Fact]

@@ -37,7 +37,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         ".mp4",
     };
 
-    private readonly ChunkedAudioTranscriptionService _audioTranscriptionService;
+    private readonly IChunkedAudioTranscriptionService _audioTranscriptionService;
     private readonly ChunkedSpeakerDiarizationService _speakerDiarizationService;
     private readonly IAudioPlaybackService _audioPlaybackService;
     private readonly ProcessLogService _processLogService;
@@ -92,7 +92,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public MainViewModel(
         IEnumerable<TranscriptionModelOption> models,
-        ChunkedAudioTranscriptionService audioTranscriptionService,
+        IChunkedAudioTranscriptionService audioTranscriptionService,
         ChunkedSpeakerDiarizationService speakerDiarizationService,
         IAudioPlaybackService audioPlaybackService,
         ProcessLogService processLogService,
@@ -191,6 +191,37 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppendLogCore($"Startup mode: {SelectedEngine?.DisplayName ?? "Unavailable"}.");
         LoadRecentSessions(selectSessionId: null);
 
+    }
+
+    public MainViewModel(
+        IEnumerable<TranscriptionModelOption> models,
+        IAudioTranscriptionService audioTranscriptionService,
+        ChunkedSpeakerDiarizationService speakerDiarizationService,
+        IAudioPlaybackService audioPlaybackService,
+        ProcessLogService processLogService,
+        TranscriptSessionStore sessionStore,
+        AppPreferencesStore appPreferencesStore,
+        AppThemeService appThemeService,
+        AppPreferencesSnapshot appPreferencesSnapshot,
+        IAppUpdateService? appUpdateService = null,
+        IEntitlementService? entitlementService = null,
+        AppStatusViewModel? appStatus = null,
+        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null)
+        : this(
+            models,
+            new PassThroughChunkedAudioTranscriptionService(audioTranscriptionService),
+            speakerDiarizationService,
+            audioPlaybackService,
+            processLogService,
+            sessionStore,
+            appPreferencesStore,
+            appThemeService,
+            appPreferencesSnapshot,
+            appUpdateService,
+            entitlementService,
+            appStatus,
+            availableModelsProvider)
+    {
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -641,10 +672,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             return _appUpdateSnapshot.State switch
             {
-                AppUpdateState.Downloading => "Downloading update",
-                AppUpdateState.Installing => "Installing update",
-                _ => string.Empty,
-            };
+            AppUpdateState.Downloading => "Downloading update",
+            AppUpdateState.Installing => "Installing update",
+            AppUpdateState.UpdateAvailable => "Update available",
+            AppUpdateState.Checking => "Checking for updates",
+            _ => string.Empty,
+        };
         }
     }
 
@@ -671,8 +704,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         !IsApplicationFooterCompactMode;
 
     public bool CanCheckForUpdates =>
-        _appUpdateService is not null
-        && !IsApplicationUpdateActive;
+        _appUpdateService?.IsStoreUpdateSupported == true
+        && _appUpdateSnapshot.State is not AppUpdateState.Checking
+            and not AppUpdateState.UpdateAvailable
+            and not AppUpdateState.Downloading
+            and not AppUpdateState.Installing;
 
     public string PremiumStatusText =>
         _entitlementSnapshot.StatusMessage;
@@ -1448,7 +1484,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public void FailPreparedTranscribeAudioWorkflow()
     {
-        _transcribeAudioWorkflow = null;
+        CancelPreparedTranscribeAudioWorkflow();
     }
 
     public void PausePreparedTranscribeAudioWorkflow()
@@ -3128,6 +3164,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         CheckForUpdatesCommand.RaiseCanExecuteChanged();
     }
 
+    private sealed class PassThroughChunkedAudioTranscriptionService : IChunkedAudioTranscriptionService
+    {
+        private readonly IAudioTranscriptionService _requestService;
+
+        public PassThroughChunkedAudioTranscriptionService(IAudioTranscriptionService requestService)
+        {
+            _requestService = requestService ?? throw new ArgumentNullException(nameof(requestService));
+        }
+
+        public Task<TranscriptionResult> TranscribeAudioFileAsync(
+            string audioFilePath,
+            string model,
+            CancellationToken cancellationToken,
+            IProgress<TranscriptionProgressSnapshot>? progress = null,
+            int startChunkIndex = 0,
+            IReadOnlyList<TranscriptionTimedLine>? existingCommittedLines = null,
+            Action<TranscriptionChunkCommit>? chunkCommitted = null)
+        {
+            return _requestService.TranscribeAudioFileAsync(audioFilePath, model, cancellationToken, progress);
+        }
+    }
+
     private bool CanExecuteCheckForUpdates()
     {
         return CanCheckForUpdates;
@@ -3147,7 +3205,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         catch (Exception ex)
         {
             AppendLog($"Update check failed: {ex.Message}");
-            RaiseError($"Unable to check for updates: {ex.Message}");
+            RaiseToast("Update check", $"Unable to check for updates: {ex.Message}");
         }
     }
 

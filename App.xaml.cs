@@ -18,8 +18,7 @@ public partial class App : System.Windows.Application
 {
     private const string SingleInstanceMutexName = @"Local\AudioScript_SingleInstance";
     private const string ActivateEventName = @"Local\AudioScript_Activate";
-    private static readonly string[] PremiumStoreIds = ["9PD5288V5Q49"];
-    private static readonly string[] PremiumProductIds = ["audioscript_premium_lifetime"];
+    private static readonly StorePremiumAddonDefinition PremiumAddon = StorePremiumAddonCatalog.AudioScriptPremiumLifetime;
 
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
@@ -34,14 +33,6 @@ public partial class App : System.Windows.Application
     private WindowPlacementService? _windowPlacementService;
     private AppPreferencesStore? _appPreferencesStore;
     private AppThemeService? _appThemeService;
-
-    [STAThread]
-    private static void Main(string[] args)
-    {
-        var app = new App();
-        app.InitializeComponent();
-        app.Run();
-    }
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
@@ -68,6 +59,7 @@ public partial class App : System.Windows.Application
         var appDataPathProvider = AppDataPathProvider.Create();
         var processLogService = new ProcessLogService(appDataPathProvider.LogsPath);
         _processLogService = processLogService;
+        PremiumAddon.Validate();
         RegisterGlobalExceptionLogging(processLogService);
         processLogService.UpdateCrashContext("app.startup.bootstrap");
         processLogService.Log("App", $"Application startup initiated. Log file: {processLogService.LogFilePath}");
@@ -155,6 +147,7 @@ public partial class App : System.Windows.Application
         IntPtr updateOwnerWindowHandle = IntPtr.Zero;
         var appVersionProvider = new AppVersionProvider();
         var storeContextProvider = new StoreContextProvider(processLogService, () => updateOwnerWindowHandle);
+        var storeNavigationService = new StoreNavigationService(processLogService);
         var premiumEntitlementCache = new PremiumEntitlementCache(
             Path.Combine(appDataPathProvider.SettingsPath, "premium-entitlement.cache"),
             processLogService);
@@ -166,9 +159,9 @@ public partial class App : System.Windows.Application
             premiumEntitlementCache,
             new StoreEntitlementServiceOptions
             {
-                PremiumProductDisplayName = "AudioScript Premium",
-                PremiumStoreIds = PremiumStoreIds,
-                PremiumProductIds = PremiumProductIds,
+                PremiumProductDisplayName = PremiumAddon.DisplayName,
+                PremiumStoreIds = [PremiumAddon.StoreId],
+                PremiumProductIds = [PremiumAddon.ProductId],
                 PremiumKeyword = "premium",
             });
         var storeUpdateProvider = new MicrosoftStoreUpdateProvider(
@@ -198,8 +191,9 @@ public partial class App : System.Windows.Application
         var appStatusViewModel = new AppStatusViewModel(
             new StoreLicenseService(_entitlementService),
             new StorePurchaseService(_entitlementService),
-            new StoreNavigationService(processLogService),
-            new AppVersionService(appVersionProvider));
+            storeNavigationService,
+            new AppVersionService(appVersionProvider),
+            _appUpdateService);
 
         _mainViewModel = new MainViewModel(
             whisperModelManager.GetSelectableTranscriptionModels(),
