@@ -70,7 +70,6 @@ AudioScript is a Windows desktop app built with WPF on .NET 10 for offline trans
 - Shows a non-cancellable app-owned install progress window on exit when deferred install exists
 - Includes a user-initiated `Check for updates` action in the main window footer
 - Routes the bottom-right version label through the same user-initiated update flow
-- The bottom-right status control also exposes a restore-purchase action
 - Does not automatically restart the app after an update
 
 ## Technology Stack
@@ -232,8 +231,7 @@ The packaging script:
 - Transcription runs locally and does not require an API key
 - Speaker diarization runs locally through bundled `pyannote-community-1` assets
 - Packaged builds use Store update APIs for entitlement checks and update handling
-- The bottom-right status control exposes purchase restore, and the version label starts the same update flow as the main footer button
-- Restore purchase rechecks entitlement and reports the current Premium state in a small toast
+- Restore purchase is available from Settings via `Re-check Premium`; it rechecks entitlement and reports the current Premium state in a small toast
 - Clicking the bottom-right version label runs the same user-initiated update flow as the main footer button
 - Unpackaged builds skip Store update checks safely
 - Store update behavior assumes Microsoft Store automatic app updates are off and handles that case by falling back to Store / OS UI when needed

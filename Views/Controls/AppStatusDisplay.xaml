@@ -4,12 +4,12 @@
              MinHeight="24">
     <Grid>
         <Border HorizontalAlignment="Right"
-                VerticalAlignment="Bottom"
+                VerticalAlignment="Center"
                 Background="Transparent">
             <Grid>
                 <StackPanel Orientation="Horizontal"
                             HorizontalAlignment="Right"
-                            VerticalAlignment="Bottom">
+                            VerticalAlignment="Center">
                     <TextBlock Text="{Binding ModeText}"
                                Margin="0,0,10,0"
                                FontSize="12"
@@ -35,25 +35,6 @@
                                 </Style.Triggers>
                                 </Style>
                             </TextBlock.Style>
-                    </TextBlock>
-
-                    <TextBlock Text="Restore"
-                               Margin="0,0,10,0"
-                               FontSize="12"
-                               FontWeight="Normal"
-                               VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               ToolTip="Click to recheck your purchase.">
-                        <TextBlock.InputBindings>
-                            <MouseBinding MouseAction="LeftClick"
-                                          Command="{Binding RestorePurchaseCommand}"/>
-                        </TextBlock.InputBindings>
-                        <TextBlock.Style>
-                            <Style TargetType="{x:Type TextBlock}">
-                                <Setter Property="Cursor"
-                                        Value="Hand"/>
-                            </Style>
-                        </TextBlock.Style>
                     </TextBlock>
 
                      <TextBlock x:Name="VersionTextBlock"

@@ -27,7 +27,7 @@ public sealed class AppStatusViewModelTests
     }
 
     [Fact]
-    public async Task RestorePurchaseCommand_NoPurchase_ShowsRestoreToast()
+    public async Task RestorePurchaseAsync_NoPurchase_ShowsRestoreToast()
     {
         var viewModel = new AppStatusViewModel(
             new StubLicenseService(),
@@ -35,8 +35,7 @@ public sealed class AppStatusViewModelTests
             new StubNavigationService(),
             new AppVersionService(new StubVersionProvider()));
 
-        viewModel.RestorePurchaseCommand.Execute(null);
-        await Task.Delay(100);
+        await viewModel.RestorePurchaseAsync();
 
         Assert.Equal("No Premium purchase found", viewModel.VersionToastText);
         Assert.True(viewModel.IsVersionToastVisible);
@@ -59,7 +58,7 @@ public sealed class AppStatusViewModelTests
     private sealed class StubPurchaseService : IStorePurchaseService
     {
         public Task<PremiumPurchaseResult> RequestPremiumPurchaseAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new PremiumPurchaseResult(PremiumPurchaseStatus.NotAvailable, "Not available."));
+            Task.FromResult(new PremiumPurchaseResult(PremiumPurchaseStatus.NotSupported, "Not available."));
     }
 
     private sealed class StubNavigationService : IStoreNavigationService

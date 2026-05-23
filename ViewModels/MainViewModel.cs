@@ -4902,8 +4902,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         if (_entitlementService is null)
         {
             return new PremiumPurchaseResult(
-                PremiumPurchaseStatus.NotAvailable,
-                $"{PremiumProductDisplayName} purchase is unavailable in this build.");
+                PremiumPurchaseStatus.NotSupported,
+                "Premium purchase is available only in the Microsoft Store version.");
         }
 
         PremiumPurchaseResult result = await _entitlementService.RequestPremiumPurchaseAsync(cancellationToken);

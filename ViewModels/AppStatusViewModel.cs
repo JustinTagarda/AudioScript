@@ -9,7 +9,6 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
 {
     private readonly IStoreLicenseService _licenseService;
     private readonly IStorePurchaseService _purchaseService;
-    private readonly IStoreNavigationService _navigationService;
     private readonly IAppUpdateService? _appUpdateService;
     private readonly IAppVersionService _versionService;
     private readonly SynchronizationContext _uiContext;
@@ -27,7 +26,7 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
     {
         _licenseService = licenseService ?? throw new ArgumentNullException(nameof(licenseService));
         _purchaseService = purchaseService ?? throw new ArgumentNullException(nameof(purchaseService));
-        _navigationService = navigationService ?? throw new ArgumentNullException(nameof(navigationService));
+        ArgumentNullException.ThrowIfNull(navigationService);
         _versionService = versionService ?? throw new ArgumentNullException(nameof(versionService));
         _appUpdateService = appUpdateService;
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
@@ -39,15 +38,12 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
         }
 
         UpgradeCommand = new AsyncRelayCommand(UpgradeAsync, CanUpgrade);
-        RestorePurchaseCommand = new AsyncRelayCommand(() => RestorePurchaseAsync());
         CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, () => CanCheckForUpdates);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public AsyncRelayCommand UpgradeCommand { get; }
-
-    public AsyncRelayCommand RestorePurchaseCommand { get; }
 
     public AsyncRelayCommand CheckForUpdatesCommand { get; }
 
@@ -127,25 +123,7 @@ public sealed class AppStatusViewModel : INotifyPropertyChanged
         }
 
         PremiumPurchaseResult result = await _purchaseService.RequestPremiumPurchaseAsync().ConfigureAwait(false);
-        if (result.Status == PremiumPurchaseStatus.NotAvailable
-            && !_versionService.IsPackaged
-            && _navigationService.CanOpenAppStorePage)
-        {
-            try
-            {
-                await _navigationService.OpenAppStorePageAsync().ConfigureAwait(false);
-                return;
-            }
-            catch
-            {
-                ShowVersionToast("Premium purchase unavailable in this build.");
-                return;
-            }
-        }
-
-        ShowVersionToast(result.Status == PremiumPurchaseStatus.NotAvailable && !_navigationService.CanOpenAppStorePage
-            ? "Premium purchase unavailable in this build."
-            : result.Message);
+        ShowVersionToast(result.Message);
     }
 
     private void ShowVersionToast(string message)

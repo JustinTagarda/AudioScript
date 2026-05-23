@@ -447,9 +447,11 @@
             <StatusBar DockPanel.Dock="Bottom"
                        Margin="0"
                        MinHeight="28"
-                       Padding="6,2">
+                       Padding="6,2"
+                       VerticalContentAlignment="Center">
                 <StatusBarItem Padding="0"
-                               HorizontalContentAlignment="Stretch">
+                               HorizontalContentAlignment="Stretch"
+                               VerticalContentAlignment="Center">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -462,7 +464,8 @@
                             <TextBlock Text="{Binding ApplicationUpdateStatusText}"
                                        FontSize="12"
                                        TextTrimming="CharacterEllipsis"
-                                       TextAlignment="Left">
+                                       TextAlignment="Left"
+                                       VerticalAlignment="Center">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground"
@@ -502,7 +505,8 @@
                             <TextBlock Text="© 2026 JustinTagarda. All rights reserved."
                                        Margin="0,0,8,0"
                                        FontSize="12"
-                                       TextTrimming="CharacterEllipsis">
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Visibility"

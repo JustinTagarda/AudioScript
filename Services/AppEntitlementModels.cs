@@ -37,10 +37,11 @@ public enum PremiumPurchaseStatus
     Succeeded,
     AlreadyOwned,
     Canceled,
-    NotAvailable,
+    Failed,
     NetworkError,
     ServerError,
-    UnknownError,
+    NotSupported,
+    Blocked,
 }
 
 public sealed record PremiumPurchaseResult(
@@ -217,15 +218,15 @@ public sealed class StoreEntitlementService : IEntitlementService
         if (!_appVersionProvider.IsPackaged)
         {
             return new PremiumPurchaseResult(
-                PremiumPurchaseStatus.NotAvailable,
-                "Premium purchase is only available in the Microsoft Store package.");
+                PremiumPurchaseStatus.NotSupported,
+                "Premium purchase is available only in the Microsoft Store version.");
         }
 
         if (IsProcessElevated())
         {
             return new PremiumPurchaseResult(
-                PremiumPurchaseStatus.NotAvailable,
-                "Premium purchase is unavailable while AudioScript is running as administrator.");
+                PremiumPurchaseStatus.Blocked,
+                "Close the app and reopen it normally. Microsoft Store purchase is unavailable while running as administrator.");
         }
 
         StoreContext context = CreateStoreContext();
@@ -240,13 +241,14 @@ public sealed class StoreEntitlementService : IEntitlementService
                 StatusMessage = $"{_options.PremiumProductDisplayName} is not currently available in Microsoft Store.",
             });
             return new PremiumPurchaseResult(
-                PremiumPurchaseStatus.NotAvailable,
-                $"{_options.PremiumProductDisplayName} is not currently available in Microsoft Store.");
+                PremiumPurchaseStatus.Failed,
+                "Premium purchase failed.");
         }
 
         try
         {
-            StorePurchaseResult result = await premiumProduct.RequestPurchaseAsync().AsTask(cancellationToken);
+            string addOnStoreId = _options.PremiumStoreIds[0];
+            StorePurchaseResult result = await context.RequestPurchaseAsync(addOnStoreId).AsTask(cancellationToken);
             PremiumPurchaseResult purchaseResult = MapPurchaseResult(result, premiumProduct.Title);
             if (purchaseResult.Status is PremiumPurchaseStatus.Succeeded or PremiumPurchaseStatus.AlreadyOwned)
             {
@@ -264,8 +266,8 @@ public sealed class StoreEntitlementService : IEntitlementService
         {
             LogException("premium_purchase_failed", ex);
             return new PremiumPurchaseResult(
-                PremiumPurchaseStatus.UnknownError,
-                $"Unable to open Microsoft Store purchase flow: {ex.Message}");
+                PremiumPurchaseStatus.Failed,
+                "Premium purchase failed.");
         }
     }
 
@@ -666,16 +668,16 @@ public sealed class StoreEntitlementService : IEntitlementService
                 $"{productTitle} is already unlocked."),
             StorePurchaseStatus.NotPurchased => new PremiumPurchaseResult(
                 PremiumPurchaseStatus.Canceled,
-                $"{productTitle} purchase was canceled."),
+                "Premium purchase canceled."),
             StorePurchaseStatus.NetworkError => new PremiumPurchaseResult(
                 PremiumPurchaseStatus.NetworkError,
-                $"Microsoft Store could not complete the {productTitle} purchase because of a network error."),
+                "Premium purchase failed due to a network error. Check your connection and try again."),
             StorePurchaseStatus.ServerError => new PremiumPurchaseResult(
                 PremiumPurchaseStatus.ServerError,
-                $"Microsoft Store could not complete the {productTitle} purchase because of a server error."),
+                "Microsoft Store could not complete the purchase right now. Try again later."),
             _ => new PremiumPurchaseResult(
-                PremiumPurchaseStatus.UnknownError,
-                $"Microsoft Store returned an unexpected purchase status for {productTitle}."),
+                PremiumPurchaseStatus.Failed,
+                "Premium purchase failed."),
         };
     }
 

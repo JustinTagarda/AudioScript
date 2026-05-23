@@ -2199,7 +2199,7 @@ public sealed class MainViewModelTests
         public Task<PremiumPurchaseResult> RequestPremiumPurchaseAsync(CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new PremiumPurchaseResult(
-                PremiumPurchaseStatus.NotAvailable,
+                PremiumPurchaseStatus.NotSupported,
                 "Stub entitlement service does not support purchases."));
         }
 
