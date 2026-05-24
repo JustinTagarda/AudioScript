@@ -126,8 +126,6 @@ public sealed class StoreUpdateOptions
 
     public bool ShowProgressDuringFallbackUi { get; init; } = true;
 
-    public bool RestartAppAutomatically { get; init; }
-
     public TimeSpan StartupDelay { get; init; } = TimeSpan.Zero;
 
     public TimeSpan MinimumCheckInterval { get; init; } = TimeSpan.FromHours(12);

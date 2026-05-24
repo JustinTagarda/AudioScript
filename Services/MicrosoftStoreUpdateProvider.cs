@@ -96,14 +96,19 @@ public sealed class MicrosoftStoreUpdateProvider : IMicrosoftStoreUpdateProvider
         Action<StoreUpdateOperationProgress>? progress,
         CancellationToken cancellationToken = default)
     {
-        StoreContext context = _storeContextProvider.GetContext();
         IReadOnlyList<StorePackageUpdate> updates = ResolveNativeUpdates(updateSet);
         return RunStoreUiOperationAsync(
-            () => RunOperationAsync(
-                operationName: "fallback_ui",
-                operationFactory: () => context.RequestDownloadAndInstallStorePackageUpdatesAsync(updates),
-                progress,
-                cancellationToken),
+            () =>
+            {
+                // Store UI flows for desktop apps must initialize StoreContext and invoke
+                // RequestDownloadAndInstall on the UI thread with owner window association.
+                StoreContext context = _storeContextProvider.GetContext();
+                return RunOperationAsync(
+                    operationName: "fallback_ui",
+                    operationFactory: () => context.RequestDownloadAndInstallStorePackageUpdatesAsync(updates),
+                    progress,
+                    cancellationToken);
+            },
             cancellationToken);
     }
 

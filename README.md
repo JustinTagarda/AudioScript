@@ -63,14 +63,17 @@ AudioScript is a Windows desktop app built with WPF on .NET 10 for offline trans
 ### Microsoft Store Updates
 
 - Uses Microsoft Store / MSIX update APIs for packaged builds
-- Starts a hidden update check only after the main window has rendered
+- Starts a hidden, non-blocking update check only after the main window has rendered
+- Keeps automatic startup update checks hidden from app-owned update status/progress UI
 - Can throttle repeated hidden startup checks with `MinimumCheckInterval` while still revalidating deferred installs on close
 - Falls back to Store / OS-provided update UI when silent download is unavailable or fails
 - Defers successful silent downloads until the user closes the app
 - Shows a non-cancellable app-owned install progress window on exit when deferred install exists
-- Includes a user-initiated `Check for updates` action in the main window footer
+- Allows Store / OS consent UI during exit-time install when silent install conditions are not met
+- Includes a user-initiated `Check for updates` action in the application status area
 - Routes the bottom-right version label through the same user-initiated update flow
 - Does not automatically restart the app after an update
+- Enforces production update policy at service construction (startup check enabled, silent-first attempt enabled, Store/OS fallback enabled)
 
 ## Technology Stack
 
@@ -235,4 +238,4 @@ The packaging script:
 - Clicking the bottom-right version label runs the same user-initiated update flow as the main footer button
 - Unpackaged builds skip Store update checks safely
 - Store update behavior assumes Microsoft Store automatic app updates are off and handles that case by falling back to Store / OS UI when needed
-- Startup update checks are silent and may be throttled without affecting deferred install revalidation on close
+- Startup update checks are silent, app-UI-hidden, and may be throttled without affecting deferred install revalidation on close

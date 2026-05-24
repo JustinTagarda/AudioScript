@@ -185,7 +185,6 @@ public partial class App : System.Windows.Application
                 PreferSilentUpdateWhenAvailable = true,
                 UseFallbackStoreUiWhenSilentUnavailable = true,
                 ShowProgressDuringFallbackUi = true,
-                RestartAppAutomatically = false,
                 StartupDelay = TimeSpan.Zero,
             });
         var appStatusViewModel = new AppStatusViewModel(

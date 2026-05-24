@@ -148,7 +148,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DeleteSelectedSessionCommand = new AsyncRelayCommand(DeleteSelectedSessionAsync, CanDeleteSelectedSession);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
-        CheckForUpdatesCommand = new AsyncRelayCommand(CheckForUpdatesAsync, CanExecuteCheckForUpdates);
 
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
@@ -245,7 +244,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
-    public AsyncRelayCommand CheckForUpdatesCommand { get; }
 
     public AppStatusViewModel? AppStatus { get; }
 
@@ -702,13 +700,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool IsApplicationFooterDefaultVisible =>
         !IsApplicationFooterCompactMode;
-
-    public bool CanCheckForUpdates =>
-        _appUpdateService?.IsStoreUpdateSupported == true
-        && _appUpdateSnapshot.State is not AppUpdateState.Checking
-            and not AppUpdateState.UpdateAvailable
-            and not AppUpdateState.Downloading
-            and not AppUpdateState.Installing;
 
     public string PremiumStatusText =>
         _entitlementSnapshot.StatusMessage;
@@ -3161,7 +3152,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DeleteSelectedSessionCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
-        CheckForUpdatesCommand.RaiseCanExecuteChanged();
     }
 
     private sealed class PassThroughChunkedAudioTranscriptionService : IChunkedAudioTranscriptionService
@@ -3183,29 +3173,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             Action<TranscriptionChunkCommit>? chunkCommitted = null)
         {
             return _requestService.TranscribeAudioFileAsync(audioFilePath, model, cancellationToken, progress);
-        }
-    }
-
-    private bool CanExecuteCheckForUpdates()
-    {
-        return CanCheckForUpdates;
-    }
-
-    private async Task CheckForUpdatesAsync()
-    {
-        if (_appUpdateService is null)
-        {
-            return;
-        }
-
-        try
-        {
-            await _appUpdateService.RunUserInitiatedUpdateFlowAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            AppendLog($"Update check failed: {ex.Message}");
-            RaiseToast("Update check", $"Unable to check for updates: {ex.Message}");
         }
     }
 
@@ -4834,8 +4801,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             NotifyPropertyChanged(nameof(IsMandatoryApplicationUpdateAvailable));
             NotifyPropertyChanged(nameof(IsApplicationFooterCompactMode));
             NotifyPropertyChanged(nameof(IsApplicationFooterDefaultVisible));
-            NotifyPropertyChanged(nameof(CanCheckForUpdates));
-            CheckForUpdatesCommand.RaiseCanExecuteChanged();
         }, null);
     }
 

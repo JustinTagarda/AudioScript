@@ -30,6 +30,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         _deferredStateStore = deferredStateStore ?? throw new ArgumentNullException(nameof(deferredStateStore));
         _processLogService = processLogService ?? throw new ArgumentNullException(nameof(processLogService));
         _options = options ?? new StoreUpdateOptions();
+        ValidateProductionPolicy(_options);
         _currentSnapshot = AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion);
     }
 
@@ -263,15 +264,18 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         _lastMandatory = mandatory;
         PackageIdentitySnapshot? identitySnapshot = ResolvePrimaryPackageIdentitySnapshot(queryResult.UpdateSet.Updates);
         bool isThrottled = IsDeferredInstallThrottled(existingState, identitySnapshot);
-        Publish(new AppUpdateSnapshot(
-            AppUpdateState.UpdateAvailable,
-            "Update available",
-            "Microsoft Store update is available.",
-            mandatory,
-            IsProgressVisible: false,
-            ProgressValue: 0,
-            installedVersion,
-            availableVersion));
+        if (!isStartupFlow)
+        {
+            Publish(new AppUpdateSnapshot(
+                AppUpdateState.UpdateAvailable,
+                "Update available",
+                "Microsoft Store update is available.",
+                mandatory,
+                IsProgressVisible: false,
+                ProgressValue: 0,
+                installedVersion,
+                availableVersion));
+        }
         if (!isThrottled)
         {
             await SaveDetectedStateAsync(queryResult.UpdateSet, identitySnapshot, existingState, cancellationToken).ConfigureAwait(false);
@@ -289,7 +293,15 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             StoreUpdateOperationResult silentDownloadResult = await _storeUpdateProvider
                 .TrySilentDownloadAsync(
                     queryResult.UpdateSet,
-                    progress => PublishProgress(AppUpdateState.Downloading, "Downloading update", installedVersion, availableVersion, mandatory, progress),
+                    isStartupFlow
+                        ? null
+                        : progress => PublishProgress(
+                            AppUpdateState.Downloading,
+                            "Downloading update",
+                            installedVersion,
+                            availableVersion,
+                            mandatory,
+                            progress),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -336,7 +348,13 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
         if (_options.UseFallbackStoreUiWhenSilentUnavailable)
         {
-            await RunFallbackStoreUiAsync(queryResult.UpdateSet, installedVersion, availableVersion, mandatory, cancellationToken)
+            await RunFallbackStoreUiAsync(
+                    queryResult.UpdateSet,
+                    installedVersion,
+                    availableVersion,
+                    mandatory,
+                    isStartupFlow,
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
         else
@@ -355,6 +373,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         string installedVersion,
         string? availableVersion,
         bool mandatory,
+        bool isStartupFlow,
         CancellationToken cancellationToken)
     {
         try
@@ -363,7 +382,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             StoreUpdateOperationResult result = await _storeUpdateProvider
                 .RequestDownloadAndInstallWithStoreUiAsync(
                     updateSet,
-                    _options.ShowProgressDuringFallbackUi
+                    _options.ShowProgressDuringFallbackUi && !isStartupFlow
                         ? progress => PublishProgress(AppUpdateState.Installing, "Installing update", installedVersion, availableVersion, mandatory, progress)
                         : null,
                     cancellationToken)
@@ -520,18 +539,56 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             }
 
             bool mandatory = queryResult.UpdateSet.Updates.Any(update => update.IsMandatory);
-            StoreUpdateOperationResult installResult = await _storeUpdateProvider
-                .TrySilentDownloadAndInstallAsync(
-                    queryResult.UpdateSet,
-                    progress => PublishProgress(
-                        AppUpdateState.Installing,
-                        "Installing update",
-                        _versionProvider.InstalledVersion,
-                        ResolveHighestVersion(queryResult.UpdateSet.Updates),
-                        mandatory,
-                        progress),
-                    linkedToken)
-                .ConfigureAwait(false);
+            string? availableVersion = ResolveHighestVersion(queryResult.UpdateSet.Updates);
+
+            StoreUpdateOperationResult installResult;
+            if (_storeUpdateProvider.CanSilentlyDownloadUpdates(queryResult))
+            {
+                Log("exit_install_silent_starting", "exit_install");
+                installResult = await _storeUpdateProvider
+                    .TrySilentDownloadAndInstallAsync(
+                        queryResult.UpdateSet,
+                        progress => PublishProgress(
+                            AppUpdateState.Installing,
+                            "Installing update",
+                            _versionProvider.InstalledVersion,
+                            availableVersion,
+                            mandatory,
+                            progress),
+                        linkedToken)
+                    .ConfigureAwait(false);
+
+                if (!installResult.Succeeded)
+                {
+                    Log(
+                        "exit_install_silent_failed",
+                        "exit_install",
+                        state: installResult.State.ToString(),
+                        failedPackageCount: installResult.FailedPackageCount);
+                }
+            }
+            else
+            {
+                Log("exit_install_silent_unavailable", "exit_install");
+                installResult = new StoreUpdateOperationResult(StoreUpdateOperationState.Unknown);
+            }
+
+            if (!installResult.Succeeded)
+            {
+                Log("exit_install_fallback_ui_starting", "exit_install");
+                installResult = await _storeUpdateProvider
+                    .RequestDownloadAndInstallWithStoreUiAsync(
+                        queryResult.UpdateSet,
+                        progress => PublishProgress(
+                            AppUpdateState.Installing,
+                            "Installing update",
+                            _versionProvider.InstalledVersion,
+                            availableVersion,
+                            mandatory,
+                            progress),
+                        linkedToken)
+                    .ConfigureAwait(false);
+            }
 
             if (installResult.Succeeded)
             {
@@ -958,5 +1015,23 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             failedPackageCount: 0,
             exception: ex);
         _processLogService.Log("AppUpdate", $"{eventName}; {metadata}", ProcessLogLevel.Error);
+    }
+
+    private static void ValidateProductionPolicy(StoreUpdateOptions options)
+    {
+        if (!options.EnableStartupUpdateCheck)
+        {
+            throw new InvalidOperationException("Store update policy violation: startup update check must remain enabled.");
+        }
+
+        if (!options.PreferSilentUpdateWhenAvailable)
+        {
+            throw new InvalidOperationException("Store update policy violation: silent update attempt must remain enabled when supported.");
+        }
+
+        if (!options.UseFallbackStoreUiWhenSilentUnavailable)
+        {
+            throw new InvalidOperationException("Store update policy violation: Store/OS fallback UI must remain enabled.");
+        }
     }
 }

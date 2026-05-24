@@ -103,6 +103,108 @@ public sealed class AppUpdateServiceTests
     }
 
     [Fact]
+    public async Task RunExitTimeInstallAsync_SilentUnavailable_UsesFallbackStoreUiAndClearsState()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: true, canSilentlyDownload: false)),
+        };
+        var store = new InMemoryDeferredUpdateStateStore();
+        await using var service = CreateService(isPackaged: true, provider, store);
+
+        await store.SaveAsync(new DeferredUpdateState
+        {
+            InstallDeferred = true,
+            RetryCount = 1,
+            PackageIdentitySnapshot = new PackageIdentitySnapshot(
+                "AudioScript_test",
+                "AudioScript_test_full",
+                "2.0.0.0"),
+        });
+
+        StoreUpdateOperationResult? result = await service.RunExitTimeInstallAsync();
+
+        Assert.NotNull(result);
+        Assert.True(result!.Succeeded);
+        Assert.Equal(0, provider.InstallCount);
+        Assert.Equal(1, provider.StoreUiCount);
+        Assert.Null(store.CurrentState);
+    }
+
+    [Fact]
+    public async Task RunExitTimeInstallAsync_SilentInstallFails_UsesFallbackStoreUi()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            InstallResult = new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError),
+        };
+        var store = new InMemoryDeferredUpdateStateStore();
+        await using var service = CreateService(isPackaged: true, provider, store);
+
+        await service.RunOnceAsync();
+        Assert.True(store.CurrentState?.InstallDeferred);
+
+        StoreUpdateOperationResult? result = await service.RunExitTimeInstallAsync();
+
+        Assert.NotNull(result);
+        Assert.True(result!.Succeeded);
+        Assert.Equal(1, provider.InstallCount);
+        Assert.Equal(1, provider.StoreUiCount);
+    }
+
+    [Fact]
+    public async Task RunExitTimeInstallAsync_FallbackUiCanceled_ClearsDeferredInstallIntentAndPersistsRetryState()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            InstallResult = new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError),
+            StoreUiResult = new StoreUpdateOperationResult(StoreUpdateOperationState.Canceled),
+        };
+        var store = new InMemoryDeferredUpdateStateStore();
+        await using var service = CreateService(isPackaged: true, provider, store);
+
+        await service.RunOnceAsync();
+        Assert.True(store.CurrentState?.InstallDeferred);
+
+        StoreUpdateOperationResult? result = await service.RunExitTimeInstallAsync();
+
+        Assert.NotNull(result);
+        Assert.True(result!.Cancelled);
+        Assert.Equal(1, provider.InstallCount);
+        Assert.Equal(1, provider.StoreUiCount);
+        Assert.NotNull(store.CurrentState);
+        Assert.False(store.CurrentState!.InstallDeferred);
+        Assert.True(store.CurrentState.RetryCount > 0);
+        Assert.Equal(StoreUpdateOperationState.Canceled.ToString(), store.CurrentState.LastFailureCategory);
+    }
+
+    [Fact]
+    public async Task RunExitTimeInstallAsync_FallbackUiFails_ClearsDeferredInstallIntentAndPersistsRetryState()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            InstallResult = new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError),
+            StoreUiResult = new StoreUpdateOperationResult(StoreUpdateOperationState.OtherError),
+        };
+        var store = new InMemoryDeferredUpdateStateStore();
+        await using var service = CreateService(isPackaged: true, provider, store);
+
+        await service.RunOnceAsync();
+        Assert.True(store.CurrentState?.InstallDeferred);
+
+        StoreUpdateOperationResult? result = await service.RunExitTimeInstallAsync();
+
+        Assert.NotNull(result);
+        Assert.Equal(StoreUpdateOperationState.OtherError, result!.State);
+        Assert.Equal(1, provider.InstallCount);
+        Assert.Equal(1, provider.StoreUiCount);
+        Assert.NotNull(store.CurrentState);
+        Assert.False(store.CurrentState!.InstallDeferred);
+        Assert.True(store.CurrentState.RetryCount > 0);
+        Assert.Equal(StoreUpdateOperationState.OtherError.ToString(), store.CurrentState.LastFailureCategory);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_ThrottledUpdateDoesNotPersistDeferredInstall()
     {
         var provider = new FakeMicrosoftStoreUpdateProvider();
@@ -193,6 +295,46 @@ public sealed class AppUpdateServiceTests
         await service.RunStartupUpdateFlowAsync();
 
         Assert.Equal(1, provider.QueryCount);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
+    }
+
+    [Fact]
+    public async Task RunStartupUpdateFlowAsync_UpdateAvailableWithoutSilent_KeepsAppUiHidden()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: true, canSilentlyDownload: false)),
+        };
+        await using var service = CreateService(isPackaged: true, provider);
+        List<AppUpdateState> states = new();
+        service.SnapshotChanged += (_, snapshot) => states.Add(snapshot.State);
+
+        await service.RunStartupUpdateFlowAsync();
+
+        Assert.DoesNotContain(AppUpdateState.Checking, states);
+        Assert.DoesNotContain(AppUpdateState.UpdateAvailable, states);
+        Assert.DoesNotContain(AppUpdateState.Downloading, states);
+        Assert.DoesNotContain(AppUpdateState.Installing, states);
+        Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
+    }
+
+    [Fact]
+    public async Task RunStartupUpdateFlowAsync_SilentDownloadSuccess_KeepsAppUiHidden()
+    {
+        var provider = new FakeMicrosoftStoreUpdateProvider
+        {
+            QueryHandler = _ => Task.FromResult(QueryResult(hasUpdates: true, canSilentlyDownload: true)),
+        };
+        await using var service = CreateService(isPackaged: true, provider, new InMemoryDeferredUpdateStateStore());
+        List<AppUpdateState> states = new();
+        service.SnapshotChanged += (_, snapshot) => states.Add(snapshot.State);
+
+        await service.RunStartupUpdateFlowAsync();
+
+        Assert.DoesNotContain(AppUpdateState.Checking, states);
+        Assert.DoesNotContain(AppUpdateState.UpdateAvailable, states);
+        Assert.DoesNotContain(AppUpdateState.Downloading, states);
+        Assert.DoesNotContain(AppUpdateState.Installing, states);
         Assert.Equal(AppUpdateState.Idle, service.CurrentSnapshot.State);
     }
 
@@ -367,6 +509,20 @@ public sealed class AppUpdateServiceTests
                 Directory.Delete(logPath, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public void Constructor_DisallowsPolicyBreakingOptions()
+    {
+        Assert.Throws<InvalidOperationException>(() => new AppUpdateService(
+            new FakeVersionProvider(isPackaged: true),
+            new FakeMicrosoftStoreUpdateProvider(),
+            new InMemoryDeferredUpdateStateStore(),
+            new ProcessLogService(Path.Combine(Path.GetTempPath(), $"AudioScript-update-tests-{Guid.NewGuid():N}")),
+            new StoreUpdateOptions
+            {
+                EnableStartupUpdateCheck = false,
+            }));
     }
 
     private static AppUpdateService CreateService(
