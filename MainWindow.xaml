@@ -5,7 +5,6 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:AudioScript"
         xmlns:abstractions="clr-namespace:AudioScript.Abstractions"
-        xmlns:controls="clr-namespace:AudioScript.Views.Controls"
         mc:Ignorable="d"
         Title="AudioScript"
         Icon="pack://application:,,,/assets/AudioScript.ico"
@@ -522,11 +521,6 @@
                                 </TextBlock.Style>
                             </TextBlock>
                         </StackPanel>
-
-                        <controls:AppStatusDisplay Grid.Column="1"
-                                                   DataContext="{Binding AppStatus}"
-                                                   HorizontalAlignment="Right"
-                                                   VerticalAlignment="Center"/>
                     </Grid>
                 </StatusBarItem>
             </StatusBar>

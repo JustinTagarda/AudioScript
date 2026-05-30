@@ -102,7 +102,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppPreferencesSnapshot appPreferencesSnapshot,
         IAppUpdateService? appUpdateService = null,
         IEntitlementService? entitlementService = null,
-        AppStatusViewModel? appStatus = null,
         Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null)
     {
         _audioTranscriptionService = audioTranscriptionService;
@@ -119,7 +118,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             ?? AppUpdateSnapshot.Idle(new AppVersionProvider().InstalledVersion);
         _entitlementSnapshot = entitlementService?.CurrentSnapshot
             ?? AppEntitlementSnapshot.Development("AudioScript Premium");
-        AppStatus = appStatus;
         _availableModelsProvider = availableModelsProvider ?? (() => models.ToArray());
 
         _autoPlayTimelineSelection = appPreferencesSnapshot.AutoPlayTimelineSelection;
@@ -204,7 +202,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppPreferencesSnapshot appPreferencesSnapshot,
         IAppUpdateService? appUpdateService = null,
         IEntitlementService? entitlementService = null,
-        AppStatusViewModel? appStatus = null,
         Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null)
         : this(
             models,
@@ -218,7 +215,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             appPreferencesSnapshot,
             appUpdateService,
             entitlementService,
-            appStatus,
             availableModelsProvider)
     {
     }
@@ -244,8 +240,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
-
-    public AppStatusViewModel? AppStatus { get; }
 
     public IAppUpdateService? AppUpdateService => _appUpdateService;
 
@@ -4892,12 +4886,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public async Task RestorePremiumPurchaseAsync(CancellationToken cancellationToken = default)
     {
-        if (AppStatus is not null)
-        {
-            await AppStatus.RestorePurchaseAsync(cancellationToken);
-            return;
-        }
-
         await RefreshPremiumEntitlementAsync(cancellationToken);
     }
 

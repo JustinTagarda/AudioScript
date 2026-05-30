@@ -5,11 +5,9 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Threading;
 using AudioScript.Audio;
 using AudioScript.Services;
-using AudioScript.Services.Store;
 using AudioScript.ViewModels;
 
 namespace AudioScript;
@@ -18,8 +16,6 @@ public partial class App : System.Windows.Application
 {
     private const string SingleInstanceMutexName = @"Local\AudioScript_SingleInstance";
     private const string ActivateEventName = @"Local\AudioScript_Activate";
-    private static readonly StorePremiumAddonDefinition PremiumAddon = StorePremiumAddonCatalog.AudioScriptPremiumLifetime;
-
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
     private CancellationTokenSource? _activationListenerCts;
@@ -28,8 +24,6 @@ public partial class App : System.Windows.Application
     private AssetProvisioningService? _assetProvisioningService;
 
     private MainViewModel? _mainViewModel;
-    private IAppUpdateService? _appUpdateService;
-    private IEntitlementService? _entitlementService;
     private WindowPlacementService? _windowPlacementService;
     private AppPreferencesStore? _appPreferencesStore;
     private AppThemeService? _appThemeService;
@@ -59,7 +53,6 @@ public partial class App : System.Windows.Application
         var appDataPathProvider = AppDataPathProvider.Create();
         var processLogService = new ProcessLogService(appDataPathProvider.LogsPath);
         _processLogService = processLogService;
-        PremiumAddon.Validate();
         RegisterGlobalExceptionLogging(processLogService);
         processLogService.UpdateCrashContext("app.startup.bootstrap");
         processLogService.Log("App", $"Application startup initiated. Log file: {processLogService.LogFilePath}");
@@ -143,57 +136,6 @@ public partial class App : System.Windows.Application
             MinimumPeakLevel: 0);
         _windowPlacementService = new WindowPlacementService(
             Path.Combine(appDataPathProvider.SettingsPath, "window-placement.json"));
-
-        IntPtr updateOwnerWindowHandle = IntPtr.Zero;
-        var appVersionProvider = new AppVersionProvider();
-        var storeContextProvider = new StoreContextProvider(processLogService, () => updateOwnerWindowHandle);
-        var storeNavigationService = new StoreNavigationService(processLogService);
-        var premiumEntitlementCache = new PremiumEntitlementCache(
-            Path.Combine(appDataPathProvider.SettingsPath, "premium-entitlement.cache"),
-            processLogService);
-        _entitlementService = new StoreEntitlementService(
-            appVersionProvider,
-            processLogService,
-            () => updateOwnerWindowHandle,
-            storeContextProvider,
-            premiumEntitlementCache,
-            new StoreEntitlementServiceOptions
-            {
-                PremiumProductDisplayName = PremiumAddon.DisplayName,
-                PremiumStoreIds = [PremiumAddon.StoreId],
-                PremiumProductIds = [PremiumAddon.ProductId],
-                PremiumKeyword = "premium",
-            });
-        var storeUpdateProvider = new MicrosoftStoreUpdateProvider(
-            appVersionProvider,
-            processLogService,
-            storeContextProvider);
-        processLogService.Log(
-            "StoreUpdate",
-            $"store_update_provider_selected; packaged={appVersionProvider.IsPackaged}; storeApiSupported={storeContextProvider.IsStoreApiAvailable}; provider={storeUpdateProvider.GetType().Name}");
-        var deferredUpdateStateStore = new DeferredUpdateStateStore(
-            Path.Combine(appDataPathProvider.SettingsPath, "update-state.json"),
-            processLogService);
-        _appUpdateService = new AppUpdateService(
-            appVersionProvider,
-            storeUpdateProvider,
-            deferredUpdateStateStore,
-            processLogService,
-            new StoreUpdateOptions
-            {
-                EnableStartupUpdateCheck = true,
-                PreferSilentUpdateWhenAvailable = true,
-                UseFallbackStoreUiWhenSilentUnavailable = true,
-                ShowProgressDuringFallbackUi = true,
-                StartupDelay = TimeSpan.Zero,
-            });
-        var appStatusViewModel = new AppStatusViewModel(
-            new StoreLicenseService(_entitlementService),
-            new StorePurchaseService(_entitlementService),
-            storeNavigationService,
-            new AppVersionService(appVersionProvider),
-            _appUpdateService);
-
         _mainViewModel = new MainViewModel(
             whisperModelManager.GetSelectableTranscriptionModels(),
             chunkedAudioTranscriptionService,
@@ -204,9 +146,8 @@ public partial class App : System.Windows.Application
             _appPreferencesStore,
             _appThemeService,
             appPreferencesSnapshot,
-            _appUpdateService,
-            _entitlementService,
-            appStatusViewModel,
+            appUpdateService: null,
+            entitlementService: null,
             () => whisperModelManager.GetSelectableTranscriptionModels());
 
         var mainWindow = new MainWindow(
@@ -230,17 +171,9 @@ public partial class App : System.Windows.Application
         };
         _windowPlacementService.Apply(mainWindow);
         _windowPlacementService.Attach(mainWindow);
-
-        _ = _entitlementService.RefreshAsync();
         MainWindow = mainWindow;
-        mainWindow.ContentRendered += (_, _) =>
-        {
-            updateOwnerWindowHandle = new WindowInteropHelper(mainWindow).Handle;
-            _ = _appUpdateService.StartAsync();
-        };
         mainWindow.Show();
         ShutdownMode = ShutdownMode.OnMainWindowClose;
-        updateOwnerWindowHandle = new WindowInteropHelper(mainWindow).Handle;
         processLogService.Log("App", "Application startup completed.");
         processLogService.UpdateCrashContext("app.idle.ready");
     }
@@ -410,12 +343,7 @@ public partial class App : System.Windows.Application
         _processLogService?.UpdateCrashContext("app.shutdown.started");
         try
         {
-            _appUpdateService?.StopAsync().GetAwaiter().GetResult();
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            _appUpdateService?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            _entitlementService?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            _appUpdateService = null;
-            _entitlementService = null;
         }
         finally
         {
