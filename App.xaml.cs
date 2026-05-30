@@ -6,8 +6,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using System.Windows.Interop;
 using AudioScript.Audio;
 using AudioScript.Services;
+using AudioScript.Services.Store;
 using AudioScript.ViewModels;
 
 namespace AudioScript;
@@ -68,6 +70,27 @@ public partial class App : System.Windows.Application
             processLogService);
 
         var appDataMigrationService = new AppDataMigrationService(appDataPathProvider, processLogService);
+        var appVersionProvider = new AppVersionProvider();
+        StorePremiumAddonDefinition premiumAddon = StorePremiumAddonCatalog.AudioScriptPremiumLifetime;
+        premiumAddon.Validate();
+        var storeContextProvider = new StoreContextProvider(processLogService, ResolveStoreOwnerWindowHandle);
+        var premiumEntitlementCache = new PremiumEntitlementCache(
+            Path.Combine(appDataPathProvider.SettingsPath, "premium-entitlement-cache.json"),
+            processLogService);
+        var entitlementService = new StoreEntitlementService(
+            appVersionProvider,
+            processLogService,
+            ownerWindowHandleProvider: ResolveStoreOwnerWindowHandle,
+            storeContextProvider: storeContextProvider,
+            premiumEntitlementCache: premiumEntitlementCache,
+            options: new StoreEntitlementServiceOptions
+            {
+                TreatUnpackagedBuildsAsPremium = false,
+                PremiumProductDisplayName = premiumAddon.DisplayName,
+                PremiumStoreIds = [premiumAddon.StoreId],
+                PremiumProductIds = [premiumAddon.ProductId],
+                PremiumKeyword = "premium",
+            });
         var whisperModelManager = new WhisperModelManager(
             processLogService,
             appDataPathProvider.ModelsPath,
@@ -147,7 +170,7 @@ public partial class App : System.Windows.Application
             _appThemeService,
             appPreferencesSnapshot,
             appUpdateService: null,
-            entitlementService: null,
+            entitlementService: entitlementService,
             () => whisperModelManager.GetSelectableTranscriptionModels());
 
         var mainWindow = new MainWindow(
@@ -173,6 +196,20 @@ public partial class App : System.Windows.Application
         _windowPlacementService.Attach(mainWindow);
         MainWindow = mainWindow;
         mainWindow.Show();
+        mainWindow.ContentRendered += async (_, _) =>
+        {
+            try
+            {
+                await _mainViewModel.RefreshPremiumEntitlementAsync();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                processLogService.LogException("Premium", "premium_startup_refresh_failed", ex);
+            }
+        };
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         processLogService.Log("App", "Application startup completed.");
         processLogService.UpdateCrashContext("app.idle.ready");
@@ -504,6 +541,32 @@ public partial class App : System.Windows.Application
         catch
         {
             // Ignore activation signal failures for secondary instances.
+        }
+    }
+
+    private IntPtr ResolveStoreOwnerWindowHandle()
+    {
+        IntPtr scopedHandle = StorePurchaseOwnerWindowBinding.GetCurrentOrDefault();
+        if (scopedHandle != IntPtr.Zero)
+        {
+            return scopedHandle;
+        }
+
+        Window? owner = Windows.OfType<Window>().FirstOrDefault(window => window.IsActive)
+            ?? MainWindow
+            ?? Windows.OfType<Window>().FirstOrDefault(window => window.IsVisible);
+        if (owner is null)
+        {
+            return IntPtr.Zero;
+        }
+
+        try
+        {
+            return new WindowInteropHelper(owner).Handle;
+        }
+        catch
+        {
+            return IntPtr.Zero;
         }
     }
 }

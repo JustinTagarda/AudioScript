@@ -1,4 +1,7 @@
+using System;
+using System.IO;
 using AudioScript.Services;
+using AudioScript.Services.Store;
 using AudioScript.ViewModels;
 using Xunit;
 
@@ -58,13 +61,44 @@ public sealed class BasicPremiumGatingPolicyTests
     }
 
     [Fact]
-    public void Policy_StartupFallbackWithoutEntitlementService_DefaultsToDevelopmentPremium()
+    public void Policy_UnpackagedStoreEntitlementService_DefaultsToBasicWhenConfigured()
     {
-        AppEntitlementSnapshot fallback = AppEntitlementSnapshot.Development("AudioScript Premium");
+        string logsPath = Path.Combine(Path.GetTempPath(), "audioscript-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(logsPath);
+        var processLogService = new ProcessLogService(logsPath);
 
-        Assert.True(fallback.HasPremium);
-        Assert.Equal(PremiumEntitlementState.VerifiedPremium, fallback.State);
-        Assert.False(fallback.IsPackaged);
+        try
+        {
+            var service = new StoreEntitlementService(
+                new FakeAppVersionProvider(isPackaged: false),
+                processLogService,
+                options: new StoreEntitlementServiceOptions
+                {
+                    TreatUnpackagedBuildsAsPremium = false,
+                    PremiumStoreIds = [StorePremiumAddonCatalog.AudioScriptPremiumLifetime.StoreId],
+                    PremiumProductIds = [StorePremiumAddonCatalog.AudioScriptPremiumLifetime.ProductId],
+                });
+
+            AppEntitlementSnapshot snapshot = service.CurrentSnapshot;
+            Assert.False(snapshot.HasPremium);
+            Assert.Equal(PremiumEntitlementState.Checking, snapshot.State);
+            Assert.False(snapshot.IsPackaged);
+        }
+        finally
+        {
+            processLogService.Dispose();
+        }
+    }
+
+    private sealed class FakeAppVersionProvider : IAppVersionProvider
+    {
+        public FakeAppVersionProvider(bool isPackaged)
+        {
+            IsPackaged = isPackaged;
+        }
+
+        public bool IsPackaged { get; }
+
+        public string InstalledVersion => "0.0.0.0";
     }
 }
-

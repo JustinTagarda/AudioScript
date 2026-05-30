@@ -64,18 +64,16 @@ Required behavior in packaged builds:
 - Premium status is derived from Store entitlement verification, not development fallback.
 - Purchase and restore/re-check flows are functional.
 
-## Known Risk (Current Branch Snapshot)
+## Startup Wiring Status
 
-At the time of writing, startup currently passes `entitlementService: null` in `App.xaml.cs`, which causes the ViewModel to use development fallback entitlement (`HasPremium = true`).
-This bypasses production Basic/Premium separation at startup unless explicitly wired.
-
-Treat this as a compliance gap against this policy for packaged production behavior.
+Startup now wires a non-null `StoreEntitlementService` in `App.xaml.cs` and runs a post-render entitlement refresh.
+Packaged production behavior must remain Store-verified (Basic by default, Premium only when entitlement is owned).
 
 ## Restoration Checklist
 
 When restoring or validating gating:
 
-1. Confirm packaged startup wires a non-null `IEntitlementService` into `MainViewModel`.
+1. Confirm packaged startup wires a non-null `IEntitlementService` into `MainViewModel` and refreshes entitlement after initial render.
 2. Confirm Basic cannot run Live Transcription.
 3. Confirm Basic cannot run Speaker Diarization.
 4. Confirm Basic cannot install/use premium models.
@@ -91,4 +89,3 @@ Any intended product change to Basic/Premium boundaries must include:
 1. Policy document update.
 2. Regression test updates.
 3. Clear PR note explaining the product decision and migration implications.
-

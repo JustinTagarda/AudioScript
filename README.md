@@ -69,3 +69,11 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 ### Expected Output Location
 
 - `AudioScript.Package\AppPackages\*.msixupload`
+
+## Premium Entitlement Model
+
+- Basic mode remains usable forever.
+- Premium is unlocked only by Microsoft Store durable add-on ownership.
+- Add-on catalog source of truth: `Services/Store/StorePremiumAddonCatalog.cs`
+- Entitlement verification and fallback cache: `Services/AppEntitlementModels.cs`
+- Premium CTA convergence uses shared in-app purchase flow (`StoreContext.RequestPurchaseAsync(addOnStoreId)`), including the footer `AppStatusDisplay` Upgrade button.

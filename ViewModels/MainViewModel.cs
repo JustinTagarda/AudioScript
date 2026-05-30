@@ -146,6 +146,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DeleteSelectedSessionCommand = new AsyncRelayCommand(DeleteSelectedSessionAsync, CanDeleteSelectedSession);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
+        UpgradeToPremiumCommand = new AsyncRelayCommand(RequestUpgradeToPremiumAsync, CanRequestUpgradeToPremium);
 
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
@@ -240,6 +241,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
+    public AsyncRelayCommand UpgradeToPremiumCommand { get; }
 
     public IAppUpdateService? AppUpdateService => _appUpdateService;
 
@@ -658,6 +660,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
+    public bool IsApplicationAccessTierVisible =>
+        _entitlementSnapshot.State != PremiumEntitlementState.Checking;
+
+    public bool IsUpgradeButtonVisible =>
+        _entitlementSnapshot.State != PremiumEntitlementState.Checking
+        && !_entitlementSnapshot.HasPremium;
+
     public string ApplicationUpdateStatusText
     {
         get
@@ -882,6 +891,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _audioTimelineTimer.Stop();
         _audioTimelineTimer.Tick -= OnAudioTimelineTick;
         _audioPlaybackService.Dispose();
+        _ = _entitlementService?.DisposeAsync();
         AppendLog("Disposed transcription resources.");
         return ValueTask.CompletedTask;
     }
@@ -3139,6 +3149,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return IsAudioFileLoaded && IsAudioPlaying;
     }
 
+    private bool CanRequestUpgradeToPremium()
+    {
+        return !HasPremium
+            && !IsPremiumEntitlementChecking
+            && CanPromptPremiumPurchase;
+    }
+
+    private Task RequestUpgradeToPremiumAsync()
+    {
+        PremiumUpsellRequested?.Invoke(
+            this,
+            new PremiumUpsellRequest(
+                "Premium",
+                $"{PremiumProductDisplayName} unlocks all premium features. Upgrade in Microsoft Store to continue."));
+        return Task.CompletedTask;
+    }
+
     private void RefreshCommandStates()
     {
         CloseCommand.RaiseCanExecuteChanged();
@@ -3146,6 +3173,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         DeleteSelectedSessionCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
+        UpgradeToPremiumCommand.RaiseCanExecuteChanged();
     }
 
     private sealed class PassThroughChunkedAudioTranscriptionService : IChunkedAudioTranscriptionService
@@ -3191,6 +3219,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(CanRunTranscribeAudioPrimaryAction));
         NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
         NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
+        NotifyPropertyChanged(nameof(IsApplicationAccessTierVisible));
+        NotifyPropertyChanged(nameof(IsUpgradeButtonVisible));
     }
 
     private void NotifyCurrentTranscriptStateChanged()

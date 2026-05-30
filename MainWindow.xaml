@@ -521,6 +521,9 @@
                                 </TextBlock.Style>
                             </TextBlock>
                         </StackPanel>
+                        <local:AppStatusDisplay Grid.Column="1"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Center"/>
                     </Grid>
                 </StatusBarItem>
             </StatusBar>

@@ -20,6 +20,7 @@ using System.Windows.Threading;
 using AudioScript.Abstractions;
 using AudioScript.Audio;
 using AudioScript.Services;
+using AudioScript.Services.Store;
 using AudioScript.ViewModels;
 using DataGridCell = System.Windows.Controls.DataGridCell;
 using DataGridCellsPresenter = System.Windows.Controls.Primitives.DataGridCellsPresenter;
@@ -1687,8 +1688,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             return false;
         }
+        Window initiatingWindow = GetInitiatingWindow();
+        PremiumPurchaseResult result;
+        IntPtr initiatingWindowHandle = IntPtr.Zero;
+        try
+        {
+            initiatingWindowHandle = new System.Windows.Interop.WindowInteropHelper(initiatingWindow).Handle;
+        }
+        catch (Exception ex)
+        {
+            _boundViewModel?.LogHandledException("premium owner handle resolve", ex);
+        }
 
-        PremiumPurchaseResult result = await vm.RequestPremiumPurchaseAsync();
+        try
+        {
+            using IDisposable scope = StorePurchaseOwnerWindowBinding.BeginScope(initiatingWindowHandle);
+            result = await vm.RequestPremiumPurchaseAsync();
+        }
+        finally
+        {
+            RecoverWindowAccessibility(initiatingWindow);
+        }
+
         switch (result.Status)
         {
             case PremiumPurchaseStatus.Succeeded:
@@ -1700,11 +1721,56 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return true;
 
             case PremiumPurchaseStatus.Canceled:
+                ShowCopyToast(
+                    "Purchase canceled",
+                    result.Message,
+                    ToastNotificationType.Info);
                 return false;
 
             default:
                 ShowErrorDialog(result.Message, title: $"{featureName} unavailable");
                 return false;
+        }
+    }
+
+    private Window GetInitiatingWindow()
+    {
+        return System.Windows.Application.Current.Windows
+            .OfType<Window>()
+            .FirstOrDefault(window => window.IsActive)
+            ?? this;
+    }
+
+    private void RecoverWindowAccessibility(Window? initiatingWindow)
+    {
+        try
+        {
+            if (initiatingWindow is not null)
+            {
+                initiatingWindow.IsEnabled = true;
+                initiatingWindow.Activate();
+                _ = initiatingWindow.Focus();
+            }
+        }
+        catch (Exception ex)
+        {
+            _boundViewModel?.LogHandledException("premium initiating window recovery", ex);
+        }
+
+        try
+        {
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            IsEnabled = true;
+            Activate();
+            _ = Focus();
+        }
+        catch (Exception ex)
+        {
+            _boundViewModel?.LogHandledException("premium main window recovery", ex);
         }
     }
 
