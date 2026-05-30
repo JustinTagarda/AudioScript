@@ -7,19 +7,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <!-- 4-part version required by MSIX / Microsoft Store -->
-    <Version>2.0.14.0</Version>
+    <Version>2.0.16.0</Version>
     <ApplicationIcon>assets\AudioScript.ico</ApplicationIcon>
     <Company>Justin Tagarda</Company>
     <Product>AudioScript</Product>
     <Copyright>© 2026 Justin Tagarda. All rights reserved.</Copyright>
     <Description>Offline audio transcription for local files and live playback capture.</Description>
     <DefaultItemExcludes>$(DefaultItemExcludes);AudioScript.Package\AppPackages\**;artifacts\**;publish\**;AudioScript.Tests\**</DefaultItemExcludes>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(StoreSelfContained)' == 'true'">
-    <SelfContained>true</SelfContained>
-    <PublishSingleFile>false</PublishSingleFile>
-    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.2.0" />
@@ -29,11 +23,11 @@
   <ItemGroup>
     <Compile Remove="bin\\**\\*.cs" />
     <Compile Remove="obj\\**\\*.cs" />
-    <Compile Remove="AudioScript.Package\\**\\*.cs" />
     <Compile Remove="artifacts\\**\\*.cs" />
     <Compile Remove="publish\\**\\*.cs" />
     <Compile Remove="AudioScript.Tests\\**\\*.cs" />
     <Compile Remove="assets\\python\\**\\*.cs" />
+    <None Remove="AudioScript.Package\\**\\*" />
     <None Remove="assets\\models\\ggml-small.bin" />
     <None Remove="assets\\pyannote\\**\\*" />
     <None Remove="assets\\python\\**\\*" />
