@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using AudioScript.Services;
 using AudioScript.Services.Store;
 using AudioScript.ViewModels;
@@ -9,6 +11,74 @@ namespace AudioScript.Tests;
 
 public sealed class BasicPremiumGatingPolicyTests
 {
+    [Fact]
+    public void Policy_UnpackagedDevelopmentRun_HidesStatusAndUpgradeAffordance()
+    {
+        MainViewModel viewModel = CreateVisibilityContractViewModel(
+            new AppEntitlementSnapshot(
+                IsPackaged: false,
+                HasPremium: false,
+                IsPremiumProductAvailable: false,
+                PremiumProductDisplayName: "AudioScript Premium",
+                StatusMessage: "Premium entitlement is unavailable outside the Microsoft Store package."));
+
+        Assert.False(viewModel.IsApplicationAccessTierVisible);
+        Assert.False(viewModel.IsUpgradeButtonVisible);
+        Assert.False(viewModel.IsPremiumStatusBannerVisible);
+        Assert.Equal(string.Empty, viewModel.ApplicationAccessTierText);
+    }
+
+    [Fact]
+    public void Policy_UnpackagedDevelopmentRun_DoesNotEnforcePremiumGates()
+    {
+        MainViewModel viewModel = CreateVisibilityContractViewModel(
+            new AppEntitlementSnapshot(
+                IsPackaged: false,
+                HasPremium: false,
+                IsPremiumProductAvailable: false,
+                PremiumProductDisplayName: "AudioScript Premium",
+                StatusMessage: "Premium entitlement is unavailable outside the Microsoft Store package."));
+
+        Assert.True(viewModel.IsDevelopmentUnpackagedMode);
+        Assert.True(viewModel.CanUseLiveTranscription);
+        Assert.True(viewModel.CanUseSpeakerDiarization);
+        Assert.True(viewModel.CanInstallModel(TranscriptionModelCatalog.WhisperLargeV3Turbo));
+    }
+
+    [Fact]
+    public void Policy_PackagedOwned_ShowsPremiumAndHidesUpgrade()
+    {
+        MainViewModel viewModel = CreateVisibilityContractViewModel(
+            new AppEntitlementSnapshot(
+                IsPackaged: true,
+                HasPremium: true,
+                IsPremiumProductAvailable: true,
+                PremiumProductDisplayName: "AudioScript Premium",
+                StatusMessage: "AudioScript Premium is unlocked.",
+                State: PremiumEntitlementState.VerifiedPremium));
+
+        Assert.True(viewModel.IsApplicationAccessTierVisible);
+        Assert.False(viewModel.IsUpgradeButtonVisible);
+        Assert.Equal("Premium", viewModel.ApplicationAccessTierText);
+    }
+
+    [Fact]
+    public void Policy_PackagedNotOwned_ShowsBasicAndUpgrade()
+    {
+        MainViewModel viewModel = CreateVisibilityContractViewModel(
+            new AppEntitlementSnapshot(
+                IsPackaged: true,
+                HasPremium: false,
+                IsPremiumProductAvailable: true,
+                PremiumProductDisplayName: "AudioScript Premium",
+                StatusMessage: "AudioScript Premium is available for purchase in Microsoft Store.",
+                State: PremiumEntitlementState.VerifiedBasic));
+
+        Assert.True(viewModel.IsApplicationAccessTierVisible);
+        Assert.True(viewModel.IsUpgradeButtonVisible);
+        Assert.Equal("Basic", viewModel.ApplicationAccessTierText);
+    }
+
     [Theory]
     [InlineData(TranscriptionModelCatalog.ManualTranscription, false)]
     [InlineData(TranscriptionModelCatalog.WhisperSmall, false)]
@@ -100,5 +170,14 @@ public sealed class BasicPremiumGatingPolicyTests
         public bool IsPackaged { get; }
 
         public string InstalledVersion => "0.0.0.0";
+    }
+
+    private static MainViewModel CreateVisibilityContractViewModel(AppEntitlementSnapshot snapshot)
+    {
+        var viewModel = (MainViewModel)RuntimeHelpers.GetUninitializedObject(typeof(MainViewModel));
+        FieldInfo? field = typeof(MainViewModel).GetField("_entitlementSnapshot", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(viewModel, snapshot);
+        return viewModel;
     }
 }

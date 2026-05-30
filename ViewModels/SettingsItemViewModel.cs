@@ -8,16 +8,22 @@ public sealed class SettingsItemViewModel : INotifyPropertyChanged
 {
     private bool _isInstalled;
     private bool _hasPremiumAccess;
+    private bool _isDevelopmentUnpackagedMode;
     private bool _isBusy;
     private bool _isOperationBlocked;
     private double _progressPercent;
     private string _progressText = string.Empty;
 
-    public SettingsItemViewModel(WhisperEngineModelDefinition definition, bool isInstalled, bool hasPremiumAccess)
+    public SettingsItemViewModel(
+        WhisperEngineModelDefinition definition,
+        bool isInstalled,
+        bool hasPremiumAccess,
+        bool isDevelopmentUnpackagedMode = false)
     {
         Definition = definition;
         _isInstalled = isInstalled;
         _hasPremiumAccess = hasPremiumAccess;
+        _isDevelopmentUnpackagedMode = isDevelopmentUnpackagedMode;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -107,9 +113,15 @@ public sealed class SettingsItemViewModel : INotifyPropertyChanged
 
     public bool ShowFixedInstalledNotice => IsFixedInstalled;
 
-    public bool RequiresPremiumToInstall => IsPremiumOnlyEngine && !_hasPremiumAccess;
+    public bool RequiresPremiumToInstall =>
+        !_isDevelopmentUnpackagedMode
+        && IsPremiumOnlyEngine
+        && !_hasPremiumAccess;
 
-    public bool ShowPremiumUpsell => RequiresPremiumToInstall && !IsBusy;
+    public bool ShowPremiumUpsell =>
+        !_isDevelopmentUnpackagedMode
+        && RequiresPremiumToInstall
+        && !IsBusy;
 
     public string PremiumUpsellText => "Premium required to install this engine.";
 
@@ -140,6 +152,16 @@ public sealed class SettingsItemViewModel : INotifyPropertyChanged
     public void SetPremiumAccess(bool hasPremiumAccess)
     {
         if (SetProperty(ref _hasPremiumAccess, hasPremiumAccess))
+        {
+            NotifyActionPropertiesChanged();
+            OnPropertyChanged(nameof(RequiresPremiumToInstall));
+            OnPropertyChanged(nameof(ShowPremiumUpsell));
+        }
+    }
+
+    public void SetDevelopmentUnpackagedMode(bool isDevelopmentUnpackagedMode)
+    {
+        if (SetProperty(ref _isDevelopmentUnpackagedMode, isDevelopmentUnpackagedMode))
         {
             NotifyActionPropertiesChanged();
             OnPropertyChanged(nameof(RequiresPremiumToInstall));

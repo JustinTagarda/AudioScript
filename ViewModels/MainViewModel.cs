@@ -428,19 +428,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             or PremiumEntitlementState.VerificationInconclusive;
 
     public bool CanPromptPremiumPurchase =>
-        _entitlementSnapshot.State == PremiumEntitlementState.VerifiedBasic;
+        !IsDevelopmentUnpackagedMode
+        && _entitlementSnapshot.State == PremiumEntitlementState.VerifiedBasic;
 
     public bool IsPremiumStatusBannerVisible =>
-        _entitlementSnapshot.State != PremiumEntitlementState.VerifiedPremium;
+        !IsDevelopmentUnpackagedMode
+        && _entitlementSnapshot.State != PremiumEntitlementState.VerifiedPremium;
 
     public string PremiumProductDisplayName =>
         _entitlementSnapshot.PremiumProductDisplayName;
 
+    public bool IsDevelopmentUnpackagedMode =>
+        !_entitlementSnapshot.IsPackaged;
+
     public bool CanUseLiveTranscription =>
-        AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, HasPremium);
+        IsDevelopmentUnpackagedMode
+        || AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, HasPremium);
 
     public bool CanUseSpeakerDiarization =>
-        AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, HasPremium);
+        IsDevelopmentUnpackagedMode
+        || AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, HasPremium);
 
     public bool IsTranscribeAudioTranscriptionEnabled =>
         SelectedEngine is not null
@@ -663,10 +670,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     }
 
     public bool IsApplicationAccessTierVisible =>
-        _entitlementSnapshot.State != PremiumEntitlementState.Checking;
+        !IsDevelopmentUnpackagedMode
+        && _entitlementSnapshot.State != PremiumEntitlementState.Checking;
 
     public bool IsUpgradeButtonVisible =>
-        _entitlementSnapshot.State != PremiumEntitlementState.Checking
+        !IsDevelopmentUnpackagedMode
+        && _entitlementSnapshot.State != PremiumEntitlementState.Checking
         && !_entitlementSnapshot.HasPremium;
 
     public string ApplicationUpdateStageText => _appUpdateSnapshot.StageText;
@@ -3152,6 +3161,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private Task RequestUpgradeToPremiumAsync()
     {
+        if (IsDevelopmentUnpackagedMode)
+        {
+            return Task.CompletedTask;
+        }
+
         PremiumUpsellRequested?.Invoke(
             this,
             new PremiumUpsellRequest(
@@ -3219,6 +3233,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(IsPremiumEntitlementVerificationFailed));
         NotifyPropertyChanged(nameof(CanPromptPremiumPurchase));
         NotifyPropertyChanged(nameof(IsPremiumStatusBannerVisible));
+        NotifyPropertyChanged(nameof(IsDevelopmentUnpackagedMode));
         NotifyPropertyChanged(nameof(PremiumProductDisplayName));
         NotifyPropertyChanged(nameof(CanUseLiveTranscription));
         NotifyPropertyChanged(nameof(CanUseSpeakerDiarization));
@@ -4846,6 +4861,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private bool EnsureCanCreateNewSession(string contextLabel)
     {
+        if (IsDevelopmentUnpackagedMode)
+        {
+            return true;
+        }
+
         if (HasPremium)
         {
             return true;
@@ -4899,7 +4919,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool CanInstallModel(string modelId)
     {
-        return AppFeatureAccess.CanInstallModel(modelId, HasPremium);
+        return IsDevelopmentUnpackagedMode
+            || AppFeatureAccess.CanInstallModel(modelId, HasPremium);
     }
 
     public async Task<PremiumPurchaseResult> RequestPremiumPurchaseAsync(CancellationToken cancellationToken = default)
@@ -4937,12 +4958,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private IEnumerable<TranscriptionModelOption> FilterAccessibleEngines(IEnumerable<TranscriptionModelOption> models)
     {
+        if (IsDevelopmentUnpackagedMode)
+        {
+            return models;
+        }
+
         return models.Where(model => AppFeatureAccess.CanUseModel(model.Id, HasPremium));
     }
 
     private void EnsureSelectedEngineAllowed()
     {
-        if (SelectedEngine is null || AppFeatureAccess.CanUseModel(SelectedEngine.Id, HasPremium))
+        if (SelectedEngine is null
+            || IsDevelopmentUnpackagedMode
+            || AppFeatureAccess.CanUseModel(SelectedEngine.Id, HasPremium))
         {
             return;
         }

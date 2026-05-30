@@ -52,4 +52,30 @@ public sealed class AppFeatureAccessTests
         Assert.False(item.RequiresPremiumToInstall);
         Assert.True(item.CanInstall);
     }
+
+    [Fact]
+    public void SettingsItemViewModel_DevelopmentUnpackagedMode_AllowsPremiumEngineWithoutUpsell()
+    {
+        var definition = new WhisperEngineModelDefinition(
+            Id: TranscriptionModelCatalog.WhisperMedium,
+            DisplayName: "Whisper medium",
+            FileName: "ggml-medium.bin",
+            SizeText: "about 1.5 GB",
+            Description: "Higher accuracy.",
+            Benefits: "Premium model.",
+            Notes: "Requires Premium.",
+            GgmlType: WhisperModelVariant.Medium,
+            ExpectedBytes: 10,
+            IsBundled: false,
+            IsFixedInstalled: false);
+        var item = new SettingsItemViewModel(
+            definition,
+            isInstalled: false,
+            hasPremiumAccess: false,
+            isDevelopmentUnpackagedMode: true);
+
+        Assert.False(item.RequiresPremiumToInstall);
+        Assert.False(item.ShowPremiumUpsell);
+        Assert.True(item.CanInstall);
+    }
 }

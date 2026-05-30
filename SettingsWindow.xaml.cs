@@ -26,7 +26,11 @@ public partial class SettingsWindow : Window
         _processLogService = processLogService;
         Items = new ObservableCollection<SettingsItemViewModel>(
             _modelManager.Models.Select(model =>
-                new SettingsItemViewModel(model, _modelManager.IsModelInstalled(model.Id), _viewModel.HasPremium)));
+                new SettingsItemViewModel(
+                    model,
+                    _modelManager.IsModelInstalled(model.Id),
+                    _viewModel.HasPremium,
+                    _viewModel.IsDevelopmentUnpackagedMode)));
 
         InitializeComponent();
         ModelsItemsControl.ItemsSource = Items;
@@ -223,12 +227,14 @@ public partial class SettingsWindow : Window
         foreach (SettingsItemViewModel item in Items)
         {
             item.SetPremiumAccess(_viewModel.HasPremium);
+            item.SetDevelopmentUnpackagedMode(_viewModel.IsDevelopmentUnpackagedMode);
         }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (!string.Equals(e.PropertyName, nameof(MainViewModel.HasPremium), StringComparison.Ordinal))
+        if (!string.Equals(e.PropertyName, nameof(MainViewModel.HasPremium), StringComparison.Ordinal)
+            && !string.Equals(e.PropertyName, nameof(MainViewModel.IsDevelopmentUnpackagedMode), StringComparison.Ordinal))
         {
             return;
         }
@@ -240,6 +246,13 @@ public partial class SettingsWindow : Window
     {
         try
         {
+            if (_viewModel.IsDevelopmentUnpackagedMode)
+            {
+                ShowError(
+                    $"Microsoft Store purchase for {_viewModel.PremiumProductDisplayName} is unavailable in local debug runs.");
+                return;
+            }
+
             if (_viewModel.IsPremiumEntitlementChecking || _viewModel.IsPremiumEntitlementVerificationFailed)
             {
                 await _viewModel.RefreshPremiumEntitlementAsync();

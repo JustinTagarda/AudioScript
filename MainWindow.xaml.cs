@@ -356,6 +356,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (!vm.CanUseSpeakerDiarization)
         {
+            if (vm.IsDevelopmentUnpackagedMode)
+            {
+                ShowBlockingMessage(
+                    "Feature unavailable in local debug run",
+                    "Speaker diarization upgrade/purchase prompts are disabled outside the Microsoft Store package.");
+                return;
+            }
+
             if (!await PromptPremiumFeatureAsync(
                 "Detect Speaker",
                 $"Detect Speaker is available with {vm.PremiumProductDisplayName}. Upgrade in Microsoft Store to unlock this feature."))
@@ -764,6 +772,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (!vm.CanUseLiveTranscription)
         {
+            if (vm.IsDevelopmentUnpackagedMode)
+            {
+                ShowBlockingMessage(
+                    "Feature unavailable in local debug run",
+                    "Live transcription upgrade/purchase prompts are disabled outside the Microsoft Store package.");
+                return;
+            }
+
             if (!await PromptPremiumFeatureAsync(
                 "Live Transcription",
                 $"Live Transcription is available with {vm.PremiumProductDisplayName}. Upgrade in Microsoft Store to unlock this feature."))

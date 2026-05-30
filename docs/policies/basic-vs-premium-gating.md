@@ -64,6 +64,19 @@ Required behavior in packaged builds:
 - Premium status is derived from Store entitlement verification, not development fallback.
 - Purchase and restore/re-check flows are functional.
 
+## Development Mode Exception
+
+For unpackaged/local development runs (including direct Debug executable launch, not Store-installed):
+
+- Do not surface Basic/Premium gating UX.
+- Keep `Basic/Premium` status text hidden.
+- Keep `Upgrade` button hidden.
+- Suppress Basic/Premium upsell prompts in this development-mode path.
+- Do not enforce Basic/Premium feature and session-limit gating in this path.
+- Allow local development access to premium-gated feature paths and premium model install/use flows without Store purchase prompts.
+
+This exception is development-only and does not alter packaged production entitlement behavior.
+
 ## Startup Wiring Status
 
 Startup now wires a non-null `StoreEntitlementService` in `App.xaml.cs` and runs a post-render entitlement refresh.
