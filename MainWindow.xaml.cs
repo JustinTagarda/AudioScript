@@ -131,6 +131,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isClosingAfterDeferredUpdateInstall;
     private bool _forceCancelLiveChunkTranscriptions;
     private bool _isLiveTranscriptionStopping;
+    private DeferredUpdateInstallWindow? _updateProgressWindow;
 
     public MainWindow(
         Func<PlaybackTranscriptionSession>? playbackTranscriptionSessionFactory = null,
@@ -1934,42 +1935,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (DataContext is not MainViewModel vm || vm.AppUpdateService is null)
-        {
-            return;
-        }
-
-        bool hasDeferredInstall = false;
-        try
-        {
-            hasDeferredInstall = await vm.AppUpdateService.HasDeferredInstallOnExitAsync();
-        }
-        catch (Exception ex)
-        {
-            vm.LogHandledException("deferred update close check", ex);
-        }
-
-        if (!hasDeferredInstall)
-        {
-            return;
-        }
-
-        e.Cancel = true;
-        try
-        {
-            await vm.AppUpdateService.StopAsync();
-            await RunDeferredUpdateInstallAsync(vm.AppUpdateService);
-        }
-        catch (Exception ex)
-        {
-            vm.LogHandledException("deferred update close flow", ex);
-            ShowDeferredUpdateInstallFailureMessageSafe();
-        }
-        finally
-        {
-            _isClosingAfterDeferredUpdateInstall = true;
-            Close();
-        }
+        _ = DataContext as MainViewModel;
     }
 
     private async Task RunDeferredUpdateInstallAsync(IAppUpdateService appUpdateService)
@@ -2613,6 +2579,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (sender is MainViewModel vm)
             {
                 ApplyApplicationUpdateTaskbarProgress(vm);
+                SyncUpdateProgressWindow(vm);
             }
 
             return;
@@ -2669,6 +2636,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AppUpdateState.Failed => TaskbarItemProgressState.Error,
             _ => TaskbarItemProgressState.None,
         };
+    }
+
+    private void SyncUpdateProgressWindow(MainViewModel vm)
+    {
+        bool shouldOpen = vm.ApplicationUpdateState is AppUpdateState.Checking
+            or AppUpdateState.Downloading
+            or AppUpdateState.Installing;
+
+        if (shouldOpen)
+        {
+            if (_updateProgressWindow is null)
+            {
+                _updateProgressWindow = new DeferredUpdateInstallWindow(vm.AppUpdateService!)
+                {
+                    Owner = this,
+                };
+                _updateProgressWindow.Closed += (_, _) => _updateProgressWindow = null;
+                _updateProgressWindow.Show();
+            }
+            return;
+        }
+
+        if (_updateProgressWindow is not null
+            && vm.ApplicationUpdateState is AppUpdateState.Completed or AppUpdateState.Failed or AppUpdateState.Idle)
+        {
+            _updateProgressWindow.CloseAfterOperation();
+            _updateProgressWindow = null;
+        }
     }
 
     private void ApplyFloatingSurfaceTheme()

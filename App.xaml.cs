@@ -24,6 +24,7 @@ public partial class App : System.Windows.Application
     private Task? _activationListenerTask;
     private ProcessLogService? _processLogService;
     private AssetProvisioningService? _assetProvisioningService;
+    private AppUpdateService? _appUpdateService;
 
     private MainViewModel? _mainViewModel;
     private WindowPlacementService? _windowPlacementService;
@@ -91,6 +92,18 @@ public partial class App : System.Windows.Application
                 PremiumProductIds = [premiumAddon.ProductId],
                 PremiumKeyword = "premium",
             });
+        var deferredUpdateStateStore = new DeferredUpdateStateStore(
+            Path.Combine(appDataPathProvider.SettingsPath, "store-update-state.json"),
+            processLogService);
+        var storeUpdateProvider = new MicrosoftStoreUpdateProvider(
+            appVersionProvider,
+            processLogService,
+            storeContextProvider);
+        _appUpdateService = new AppUpdateService(
+            appVersionProvider,
+            storeUpdateProvider,
+            deferredUpdateStateStore,
+            processLogService);
         var whisperModelManager = new WhisperModelManager(
             processLogService,
             appDataPathProvider.ModelsPath,
@@ -169,7 +182,7 @@ public partial class App : System.Windows.Application
             _appPreferencesStore,
             _appThemeService,
             appPreferencesSnapshot,
-            appUpdateService: null,
+            appUpdateService: _appUpdateService,
             entitlementService: entitlementService,
             () => whisperModelManager.GetSelectableTranscriptionModels());
 
@@ -201,6 +214,10 @@ public partial class App : System.Windows.Application
             try
             {
                 await _mainViewModel.RefreshPremiumEntitlementAsync();
+                if (_appUpdateService is not null)
+                {
+                    await _appUpdateService.StartAsync();
+                }
             }
             catch (OperationCanceledException)
             {
@@ -430,6 +447,22 @@ public partial class App : System.Windows.Application
         }
 
         base.OnExit(e);
+        if (_appUpdateService is not null)
+        {
+            try
+            {
+                _appUpdateService.StopAsync().GetAwaiter().GetResult();
+                _appUpdateService.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                _processLogService?.LogException("AppUpdate", "app_update_shutdown_failed", ex);
+            }
+            finally
+            {
+                _appUpdateService = null;
+            }
+        }
         _assetProvisioningService?.Dispose();
         _assetProvisioningService = null;
         _processLogService?.Log("App", "Application exit completed.");

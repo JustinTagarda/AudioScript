@@ -46,6 +46,16 @@
                        FontSize="11"
                        Opacity="0.78"
                        Text="Waiting to start..."/>
+            <TextBlock x:Name="PackageDetailText"
+                       Margin="0,6,0,0"
+                       FontSize="11"
+                       Opacity="0.72"
+                       TextWrapping="Wrap"/>
+            <TextBlock x:Name="GuidanceText"
+                       Margin="0,6,0,0"
+                       FontSize="11"
+                       Opacity="0.82"
+                       TextWrapping="Wrap"/>
         </StackPanel>
     </Grid>
 </Window>

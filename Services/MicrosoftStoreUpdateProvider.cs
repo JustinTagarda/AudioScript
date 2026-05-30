@@ -112,6 +112,61 @@ public sealed class MicrosoftStoreUpdateProvider : IMicrosoftStoreUpdateProvider
             cancellationToken);
     }
 
+    public async Task<StoreQueueRecoveryState> TryGetActiveQueueStateAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            StoreContext context = _storeContextProvider.GetContext();
+            var method = context.GetType().GetMethod("GetAssociatedStoreQueueItemsAsync");
+            if (method is null)
+            {
+                return new StoreQueueRecoveryState(false);
+            }
+
+            object? op = method.Invoke(context, null);
+            if (op is null)
+            {
+                return new StoreQueueRecoveryState(false);
+            }
+
+            dynamic dynOp = op;
+            object items = await dynOp.AsTask().ConfigureAwait(false);
+            foreach (object item in (System.Collections.IEnumerable)items)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Type t = item.GetType();
+                object? status = t.GetProperty("Status")?.GetValue(item);
+                string stateText = status?.GetType().GetProperty("StoreQueueItemState")?.GetValue(status)?.ToString()
+                    ?? status?.GetType().GetProperty("State")?.GetValue(status)?.ToString()
+                    ?? "Unknown";
+                if (!string.Equals(stateText, "Active", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(stateText, "Downloading", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(stateText, "Deploying", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string? package = t.GetProperty("PackageFamilyName")?.GetValue(item)?.ToString();
+                return new StoreQueueRecoveryState(
+                    HasActiveQueueItem: true,
+                    PhaseText: "Installing",
+                    ProgressValue: 0,
+                    PackageDetailText: package);
+            }
+
+            return new StoreQueueRecoveryState(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _processLogService.LogException("StoreUpdate", "store_queue_recovery_failed", ex);
+            return new StoreQueueRecoveryState(false);
+        }
+    }
+
     private async Task<StoreUpdateOperationResult> RunOperationAsync(
         string operationName,
         Func<Windows.Foundation.IAsyncOperationWithProgress<StorePackageUpdateResult, StorePackageUpdateStatus>> operationFactory,
@@ -122,7 +177,25 @@ public sealed class MicrosoftStoreUpdateProvider : IMicrosoftStoreUpdateProvider
             operationFactory();
         operation.Progress = (_, status) =>
         {
-            progress?.Invoke(new StoreUpdateOperationProgress(ClampProgress(status.PackageDownloadProgress)));
+            string phaseText = status.PackageUpdateState switch
+            {
+                StorePackageUpdateState.Pending => "Preparing",
+                StorePackageUpdateState.Downloading => "Downloading",
+                StorePackageUpdateState.Deploying => "Installing",
+                StorePackageUpdateState.Completed => "Completed",
+                StorePackageUpdateState.Canceled => "Canceled",
+                StorePackageUpdateState.ErrorLowBattery => "Failed",
+                StorePackageUpdateState.ErrorWiFiRecommended => "Failed",
+                StorePackageUpdateState.ErrorWiFiRequired => "Failed",
+                StorePackageUpdateState.OtherError => "Failed",
+                _ => "Preparing",
+            };
+            progress?.Invoke(new StoreUpdateOperationProgress(
+                ClampProgress(status.PackageDownloadProgress),
+                PhaseText: phaseText,
+                PackageFamilyName: status.PackageFamilyName,
+                BytesDownloaded: status.PackageBytesDownloaded,
+                TotalBytesToDownload: status.PackageDownloadSizeInBytes));
         };
 
         StorePackageUpdateResult result = await operation.AsTask(cancellationToken);
@@ -175,6 +248,8 @@ public sealed class MicrosoftStoreUpdateProvider : IMicrosoftStoreUpdateProvider
             StorePackageUpdateState.Completed => StoreUpdateOperationState.Completed,
             StorePackageUpdateState.Canceled => StoreUpdateOperationState.Canceled,
             StorePackageUpdateState.ErrorLowBattery => StoreUpdateOperationState.ErrorLowBattery,
+            StorePackageUpdateState.ErrorWiFiRecommended => StoreUpdateOperationState.ErrorWiFiRecommended,
+            StorePackageUpdateState.ErrorWiFiRequired => StoreUpdateOperationState.ErrorWiFiRequired,
             StorePackageUpdateState.OtherError => StoreUpdateOperationState.OtherError,
             _ => StoreUpdateOperationState.Unknown,
         };

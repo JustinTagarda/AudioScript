@@ -57,5 +57,14 @@
     <ProjectReference Include="..\AudioScript.csproj" />
   </ItemGroup>
 
+  <UsingTask TaskName="XmlPeek" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll" />
+
+  <Target Name="ValidateStorePublisherDisplayName" BeforeTargets="GenerateAppxPackageOnBuild;_GenerateAppxPackageRecipeFile;CreateAppxPackage">
+    <XmlPeek XmlInputPath="Package.appxmanifest" Query="/*[local-name()='Package']/*[local-name()='Properties']/*[local-name()='PublisherDisplayName']/text()">
+      <Output TaskParameter="Result" PropertyName="ManifestPublisherDisplayName" />
+    </XmlPeek>
+    <Error Condition="'$(ManifestPublisherDisplayName)' != 'JustinTagarda'" Text="Store packaging blocked: Package.appxmanifest PublisherDisplayName must be exactly 'JustinTagarda'. Current value: '$(ManifestPublisherDisplayName)'" />
+  </Target>
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets" />
 </Project>
+

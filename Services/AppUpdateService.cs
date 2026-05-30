@@ -17,6 +17,11 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
     private string _lastAvailableVersion = "unknown";
     private int _lastUpdateCount;
     private bool _lastMandatory;
+    private System.Threading.Timer? _retryTimer;
+    private StorePackageUpdateSet? _lastKnownUpdateSet;
+    private bool _lastKnownCanSilentlyDownload;
+    private string? _lastKnownAvailableVersion;
+    private bool _lastKnownMandatory;
 
     public AppUpdateService(
         IAppVersionProvider versionProvider,
@@ -106,6 +111,8 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
         lock (_sync)
         {
+            _retryTimer?.Dispose();
+            _retryTimer = null;
             _startupTask = null;
             _lifetimeCts?.Dispose();
             _lifetimeCts = null;
@@ -187,6 +194,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
     {
         string installedVersion = _versionProvider.InstalledVersion;
         _lastInstalledVersion = installedVersion;
+        CancellationToken lifetimeToken = _lifetimeCts?.Token ?? cancellationToken;
 
         if (isStartupFlow && !_options.EnableStartupUpdateCheck)
         {
@@ -203,6 +211,23 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             return;
         }
 
+        StoreQueueRecoveryState queueState = await _storeUpdateProvider.TryGetActiveQueueStateAsync(cancellationToken).ConfigureAwait(false);
+        if (queueState.HasActiveQueueItem)
+        {
+            Publish(new AppUpdateSnapshot(
+                AppUpdateState.Installing,
+                queueState.PhaseText ?? "Installing",
+                queueState.PhaseText ?? "Installing",
+                IsMandatoryUpdateAvailable: false,
+                IsProgressVisible: true,
+                ProgressValue: queueState.ProgressValue,
+                InstalledVersion: installedVersion,
+                AvailableVersion: null,
+                HasActiveQueueItem: true,
+                PackageDetailText: queueState.PackageDetailText));
+            return;
+        }
+
         DeferredUpdateState? existingState = await LoadDeferredStateAsync(cancellationToken).ConfigureAwait(false);
         if (IsDeferredStateStale(existingState))
         {
@@ -216,8 +241,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             Log("deferred_state_loaded", "check", extra: $"retryCount={existingState.RetryCount}");
         }
 
-        if (isStartupFlow
-            && ShouldSkipStartupUpdateCheckDueToInterval(existingState))
+        if (ShouldSkipStartupUpdateCheckDueToInterval(existingState))
         {
             string lastCheckUtcText = existingState?.LastCheckUtc?.ToString("O") ?? "n/a";
             Log(
@@ -251,8 +275,30 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             _lastUpdateCount = 0;
             _lastAvailableVersion = "unknown";
             _lastMandatory = false;
-            await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            await _deferredStateStore.SaveAsync(new DeferredUpdateState
+            {
+                LastCheckUtc = now,
+                LastUpdateDetectedUtc = existingState?.LastUpdateDetectedUtc,
+                LastDownloadCompletedUtc = existingState?.LastDownloadCompletedUtc,
+                LastInstallDeferredUtc = existingState?.LastInstallDeferredUtc,
+                LastFailureUtc = existingState?.LastFailureUtc,
+                LastSuccessfulOperationUtc = existingState?.LastSuccessfulOperationUtc,
+                LastAttemptUtc = existingState?.LastAttemptUtc,
+                InstallDeferred = false,
+                RetryCount = 0,
+                LastFailureCategory = null,
+                LastFailureMessage = null,
+                PackageIdentitySnapshot = null,
+                PackageFamilyNames = Array.Empty<string>(),
+                RecentCheckHistoryUtc = AppendCheckHistory(existingState?.RecentCheckHistoryUtc, now),
+            }, cancellationToken).ConfigureAwait(false);
+            _lastKnownUpdateSet = null;
             Log("no_updates_available", "check");
+            if (isStartupFlow)
+            {
+                ScheduleOneHourRetry(lifetimeToken);
+            }
             Publish(AppUpdateSnapshot.Idle(installedVersion));
             return;
         }
@@ -264,18 +310,15 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         _lastMandatory = mandatory;
         PackageIdentitySnapshot? identitySnapshot = ResolvePrimaryPackageIdentitySnapshot(queryResult.UpdateSet.Updates);
         bool isThrottled = IsDeferredInstallThrottled(existingState, identitySnapshot);
-        if (!isStartupFlow)
-        {
-            Publish(new AppUpdateSnapshot(
-                AppUpdateState.UpdateAvailable,
-                "Update available",
-                "Microsoft Store update is available.",
-                mandatory,
-                IsProgressVisible: false,
-                ProgressValue: 0,
-                installedVersion,
-                availableVersion));
-        }
+        Publish(new AppUpdateSnapshot(
+            AppUpdateState.UpdateAvailable,
+            "Update available",
+            "Microsoft Store update is available.",
+            mandatory,
+            IsProgressVisible: false,
+            ProgressValue: 0,
+            installedVersion,
+            availableVersion));
         if (!isThrottled)
         {
             await SaveDetectedStateAsync(queryResult.UpdateSet, identitySnapshot, existingState, cancellationToken).ConfigureAwait(false);
@@ -286,85 +329,94 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         }
         Log("updates_available", "check");
 
-        if (_options.PreferSilentUpdateWhenAvailable
-            && _storeUpdateProvider.CanSilentlyDownloadUpdates(queryResult))
-        {
-            Log("silent_download_starting", "download", extra: "canSilent=true");
-            StoreUpdateOperationResult silentDownloadResult = await _storeUpdateProvider
-                .TrySilentDownloadAsync(
-                    queryResult.UpdateSet,
-                    isStartupFlow
-                        ? null
-                        : progress => PublishProgress(
-                            AppUpdateState.Downloading,
-                            "Downloading update",
-                            installedVersion,
-                            availableVersion,
-                            mandatory,
-                            progress),
-                    cancellationToken)
-                .ConfigureAwait(false);
+        _lastKnownUpdateSet = queryResult.UpdateSet;
+        _lastKnownCanSilentlyDownload = queryResult.CanSilentlyDownload;
+        _lastKnownAvailableVersion = availableVersion;
+        _lastKnownMandatory = mandatory;
 
-            if (silentDownloadResult.Succeeded)
-            {
-                Log("silent_download_completed", "download");
-                if (!isThrottled)
-                {
-                    await SaveDeferredInstallStateAsync(
-                        queryResult.UpdateSet,
-                        identitySnapshot,
-                        silentDownloadResult,
-                        cancellationToken).ConfigureAwait(false);
-                    Publish(AppUpdateSnapshot.Idle(installedVersion));
-                    return;
-                }
-                Log("silent_download_completed_but_throttled", "download");
-                await SaveThrottledDeferredInstallSuppressedStateAsync(
-                    queryResult.UpdateSet,
-                    identitySnapshot,
-                    silentDownloadResult,
-                    cancellationToken).ConfigureAwait(false);
-                Publish(AppUpdateSnapshot.Idle(installedVersion));
-                return;
-            }
-            else
-            {
-                Log(
-                    "silent_download_failed",
-                    "download",
-                    state: silentDownloadResult.State.ToString(),
-                    failedPackageCount: silentDownloadResult.FailedPackageCount);
-                await SaveRetryStateAsync(
-                    queryResult.UpdateSet,
-                    identitySnapshot,
-                    silentDownloadResult,
-                    cancellationToken).ConfigureAwait(false);
-            }
-        }
-        else
+        if (isStartupFlow)
         {
-            Log("silent_update_unavailable", "check", extra: $"canSilent={queryResult.CanSilentlyDownload}");
+            return;
         }
 
-        if (_options.UseFallbackStoreUiWhenSilentUnavailable)
-        {
-            await RunFallbackStoreUiAsync(
-                    queryResult.UpdateSet,
+        CancelRetryTimer();
+
+        StorePackageUpdateSet installSet = _lastKnownUpdateSet ?? queryResult.UpdateSet;
+        Publish(new AppUpdateSnapshot(
+            AppUpdateState.Checking,
+            "Preparing",
+            "Waiting for permission",
+            mandatory,
+            IsProgressVisible: true,
+            ProgressValue: 0,
+            installedVersion,
+            availableVersion));
+        StoreUpdateOperationResult result = await _storeUpdateProvider
+            .RequestDownloadAndInstallWithStoreUiAsync(
+                installSet,
+                progress => PublishProgress(
+                    AppUpdateState.Installing,
+                    "Installing",
                     installedVersion,
                     availableVersion,
                     mandatory,
-                    isStartupFlow,
-                    cancellationToken)
-                .ConfigureAwait(false);
-        }
-        else
+                    progress),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.Succeeded)
         {
-            await SaveRetryStateAsync(
-                queryResult.UpdateSet,
-                identitySnapshot,
-                new StoreUpdateOperationResult(StoreUpdateOperationState.Unknown),
-                cancellationToken).ConfigureAwait(false);
+            await _deferredStateStore.ClearAsync(cancellationToken).ConfigureAwait(false);
+            _lastKnownUpdateSet = null;
+            Publish(new AppUpdateSnapshot(
+                AppUpdateState.Completed,
+                "Completed",
+                "Update completed.",
+                mandatory,
+                IsProgressVisible: true,
+                ProgressValue: 1,
+                installedVersion,
+                availableVersion,
+                ResultGuidanceText: null));
             Publish(AppUpdateSnapshot.Idle(installedVersion));
+            return;
+        }
+
+        await SaveRetryStateAsync(
+            installSet,
+            identitySnapshot,
+            result,
+            cancellationToken).ConfigureAwait(false);
+        Publish(Failed("Failed", BuildFailureGuidance(result.State)));
+    }
+
+    private void ScheduleOneHourRetry(CancellationToken lifetimeToken)
+    {
+        lock (_sync)
+        {
+            _retryTimer?.Dispose();
+            _retryTimer = new System.Threading.Timer(async _ =>
+            {
+                try
+                {
+                    await RunUpdateFlowAsync(
+                        isStartupFlow: true,
+                        hideCheckingSnapshot: true,
+                        lifetimeToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }, null, TimeSpan.FromHours(1), Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void CancelRetryTimer()
+    {
+        lock (_sync)
+        {
+            _retryTimer?.Dispose();
+            _retryTimer = null;
         }
     }
 
@@ -698,16 +750,38 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
 
     private bool ShouldSkipStartupUpdateCheckDueToInterval(DeferredUpdateState? existingState)
     {
-        if (_options.MinimumCheckInterval <= TimeSpan.Zero
-            || existingState is null
-            || existingState.InstallDeferred
-            || !existingState.LastCheckUtc.HasValue)
+        if (existingState is null || existingState.InstallDeferred)
         {
             return false;
         }
 
-        TimeSpan elapsed = DateTimeOffset.UtcNow - existingState.LastCheckUtc.Value;
-        return elapsed < _options.MinimumCheckInterval;
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        IReadOnlyList<DateTimeOffset> history = TrimCheckHistory(existingState.RecentCheckHistoryUtc, now);
+        bool tooFrequent = _options.MinimumCheckInterval > TimeSpan.Zero
+            && existingState.LastCheckUtc.HasValue
+            && now - existingState.LastCheckUtc.Value < _options.MinimumCheckInterval;
+        bool overRollingLimit = history.Count >= 10;
+        return tooFrequent || overRollingLimit;
+    }
+
+    private static IReadOnlyList<DateTimeOffset> TrimCheckHistory(IEnumerable<DateTimeOffset>? history, DateTimeOffset nowUtc)
+    {
+        if (history is null)
+        {
+            return Array.Empty<DateTimeOffset>();
+        }
+
+        return history
+            .Where(x => nowUtc - x <= TimeSpan.FromHours(24))
+            .OrderBy(x => x)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<DateTimeOffset> AppendCheckHistory(IEnumerable<DateTimeOffset>? history, DateTimeOffset nowUtc)
+    {
+        List<DateTimeOffset> list = TrimCheckHistory(history, nowUtc).ToList();
+        list.Add(nowUtc);
+        return list;
     }
 
     private static bool IsSamePackageIdentity(
@@ -772,8 +846,30 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             IsProgressVisible: true,
             ProgressValue: ClampProgress(progress.ProgressValue),
             installedVersion,
-            availableVersion));
+            availableVersion,
+            HasActiveQueueItem: true,
+            PackageDetailText: BuildPackageDetailText(progress)));
     }
+
+    private static string? BuildPackageDetailText(StoreUpdateOperationProgress progress)
+    {
+        if (progress.BytesDownloaded is not ulong downloaded || progress.TotalBytesToDownload is not ulong total || total == 0)
+        {
+            return progress.PackageFamilyName;
+        }
+
+        return $"{progress.PackageFamilyName ?? "Package"} ({downloaded / (1024d * 1024d):0.0} MB / {total / (1024d * 1024d):0.0} MB)";
+    }
+
+    private static string BuildFailureGuidance(StoreUpdateOperationState state) =>
+        state switch
+        {
+            StoreUpdateOperationState.Canceled => "Update was canceled. Retry when ready.",
+            StoreUpdateOperationState.ErrorLowBattery => "Charge the device, then retry.",
+            StoreUpdateOperationState.ErrorWiFiRecommended => "Connect to Wi-Fi for a reliable update, then retry.",
+            StoreUpdateOperationState.ErrorWiFiRequired => "Connect to Wi-Fi, then retry.",
+            _ => "Retry again later from the Update button.",
+        };
 
     private async Task SaveDetectedStateAsync(
         StorePackageUpdateSet updateSet,
@@ -806,6 +902,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
                 .Where(packageFamilyName => !string.IsNullOrWhiteSpace(packageFamilyName))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
+            RecentCheckHistoryUtc = AppendCheckHistory(existingState?.RecentCheckHistoryUtc, DateTimeOffset.UtcNow),
         }, cancellationToken).ConfigureAwait(false);
         Log("deferred_state_update_detected_saved", "check");
     }
@@ -898,6 +995,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
                 .Where(packageFamilyName => !string.IsNullOrWhiteSpace(packageFamilyName))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
+            RecentCheckHistoryUtc = AppendCheckHistory(existingState?.RecentCheckHistoryUtc, now),
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1022,11 +1120,6 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         if (!options.EnableStartupUpdateCheck)
         {
             throw new InvalidOperationException("Store update policy violation: startup update check must remain enabled.");
-        }
-
-        if (!options.PreferSilentUpdateWhenAvailable)
-        {
-            throw new InvalidOperationException("Store update policy violation: silent update attempt must remain enabled when supported.");
         }
 
         if (!options.UseFallbackStoreUiWhenSilentUnavailable)

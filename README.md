@@ -77,3 +77,15 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 - Add-on catalog source of truth: `Services/Store/StorePremiumAddonCatalog.cs`
 - Entitlement verification and fallback cache: `Services/AppEntitlementModels.cs`
 - Premium CTA convergence uses shared in-app purchase flow (`StoreContext.RequestPurchaseAsync(addOnStoreId)`), including the footer `AppStatusDisplay` Upgrade button.
+
+## Microsoft Store App Update Flow
+
+- Store update logic runs only when package identity is present and Store APIs are available.
+- On startup (after first render), the app performs a non-blocking Store update check via `StoreContext.GetAppAndOptionalStorePackageUpdatesAsync()`.
+- Startup checks are throttled to at least 30 minutes apart and capped to ten checks in a rolling 24-hour window.
+- When no update is found at startup, the app schedules a one-hour in-session retry.
+- The footer shows a compact `Update` button only when updates are positively confirmed.
+- Clicking `Update` starts `StoreContext.RequestDownloadAndInstallStorePackageUpdatesAsync(...)`.
+- Update progress is shown in a dedicated modal window with phase, percentage, and package detail text.
+- On startup, the app attempts Store queue recovery (associated queue items) and keeps the modal state synchronized when an active update is detected.
+- Update failures surface concise retry guidance; normal app usage remains available.

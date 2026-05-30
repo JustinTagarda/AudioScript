@@ -52,7 +52,6 @@ public sealed class MainViewModelTests
                 {
                     Assert.False(viewModel.IsApplicationFooterCompactMode);
                     Assert.True(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.Equal(string.Empty, viewModel.ApplicationUpdateStatusText);
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
                         AppUpdateState.Checking,
@@ -67,7 +66,6 @@ public sealed class MainViewModelTests
 
                     Assert.False(viewModel.IsApplicationFooterCompactMode);
                     Assert.True(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.Equal("Checking for updates", viewModel.ApplicationUpdateStatusText);
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
                         AppUpdateState.UpdateAvailable,
@@ -82,7 +80,6 @@ public sealed class MainViewModelTests
 
                     Assert.False(viewModel.IsApplicationFooterCompactMode);
                     Assert.True(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.Equal("Update available", viewModel.ApplicationUpdateStatusText);
 
                     appUpdateService.Publish(new AppUpdateSnapshot(
                         AppUpdateState.Installing,
@@ -97,7 +94,6 @@ public sealed class MainViewModelTests
 
                     Assert.True(viewModel.IsApplicationFooterCompactMode);
                     Assert.False(viewModel.IsApplicationFooterDefaultVisible);
-                    Assert.Equal("Installing update", viewModel.ApplicationUpdateStatusText);
                 }
                 finally
                 {

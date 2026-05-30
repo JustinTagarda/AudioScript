@@ -147,6 +147,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
         UpgradeToPremiumCommand = new AsyncRelayCommand(RequestUpgradeToPremiumAsync, CanRequestUpgradeToPremium);
+        CheckForAppUpdateCommand = new AsyncRelayCommand(CheckForAppUpdateAsync, CanCheckForAppUpdate);
 
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
@@ -242,6 +243,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
     public AsyncRelayCommand UpgradeToPremiumCommand { get; }
+    public AsyncRelayCommand CheckForAppUpdateCommand { get; }
 
     public IAppUpdateService? AppUpdateService => _appUpdateService;
 
@@ -667,21 +669,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _entitlementSnapshot.State != PremiumEntitlementState.Checking
         && !_entitlementSnapshot.HasPremium;
 
-    public string ApplicationUpdateStatusText
-    {
-        get
-        {
-            return _appUpdateSnapshot.State switch
-            {
-            AppUpdateState.Downloading => "Downloading update",
-            AppUpdateState.Installing => "Installing update",
-            AppUpdateState.UpdateAvailable => "Update available",
-            AppUpdateState.Checking => "Checking for updates",
-            _ => string.Empty,
-        };
-        }
-    }
-
     public string ApplicationUpdateStageText => _appUpdateSnapshot.StageText;
 
     public string ApplicationUpdateMessageText => _appUpdateSnapshot.StatusMessage;
@@ -693,10 +680,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public double ApplicationUpdateProgressPercent => _appUpdateSnapshot.ProgressValue * 100;
 
     public bool IsApplicationUpdateActive =>
-        _appUpdateSnapshot.State is AppUpdateState.Downloading or AppUpdateState.Installing;
+        _appUpdateSnapshot.State is AppUpdateState.Checking or AppUpdateState.Downloading or AppUpdateState.Installing;
 
-    public bool IsMandatoryApplicationUpdateAvailable =>
-        _appUpdateSnapshot.IsMandatoryUpdateAvailable;
+    public bool IsUpdateButtonVisible =>
+        _appUpdateSnapshot.State == AppUpdateState.UpdateAvailable
+        || _appUpdateSnapshot.HasActiveQueueItem;
+
+    public bool IsUpdateButtonEnabled =>
+        IsUpdateButtonVisible && !IsApplicationUpdateActive;
+
+    public string AppVersionText =>
+        _appUpdateSnapshot.InstalledVersion;
 
     public bool IsApplicationFooterCompactMode =>
         IsApplicationUpdateActive;
@@ -3166,6 +3160,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    private bool CanCheckForAppUpdate()
+    {
+        return _appUpdateService is not null
+            && IsUpdateButtonEnabled;
+    }
+
+    private async Task CheckForAppUpdateAsync()
+    {
+        if (_appUpdateService is null)
+        {
+            return;
+        }
+
+        await _appUpdateService.RunUserInitiatedUpdateFlowAsync();
+    }
+
     private void RefreshCommandStates()
     {
         CloseCommand.RaiseCanExecuteChanged();
@@ -3174,6 +3184,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
         UpgradeToPremiumCommand.RaiseCanExecuteChanged();
+        CheckForAppUpdateCommand.RaiseCanExecuteChanged();
     }
 
     private sealed class PassThroughChunkedAudioTranscriptionService : IChunkedAudioTranscriptionService
@@ -3221,6 +3232,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
         NotifyPropertyChanged(nameof(IsApplicationAccessTierVisible));
         NotifyPropertyChanged(nameof(IsUpgradeButtonVisible));
+        NotifyPropertyChanged(nameof(IsUpdateButtonVisible));
+        NotifyPropertyChanged(nameof(IsUpdateButtonEnabled));
+        NotifyPropertyChanged(nameof(AppVersionText));
     }
 
     private void NotifyCurrentTranscriptStateChanged()
@@ -4815,16 +4829,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _uiContext.Post(_ =>
         {
             _appUpdateSnapshot = snapshot;
-            NotifyPropertyChanged(nameof(ApplicationUpdateStatusText));
             NotifyPropertyChanged(nameof(ApplicationUpdateStageText));
             NotifyPropertyChanged(nameof(ApplicationUpdateMessageText));
             NotifyPropertyChanged(nameof(ApplicationUpdateState));
             NotifyPropertyChanged(nameof(IsApplicationUpdateProgressVisible));
             NotifyPropertyChanged(nameof(ApplicationUpdateProgressPercent));
             NotifyPropertyChanged(nameof(IsApplicationUpdateActive));
-            NotifyPropertyChanged(nameof(IsMandatoryApplicationUpdateAvailable));
             NotifyPropertyChanged(nameof(IsApplicationFooterCompactMode));
             NotifyPropertyChanged(nameof(IsApplicationFooterDefaultVisible));
+            NotifyPropertyChanged(nameof(IsUpdateButtonVisible));
+            NotifyPropertyChanged(nameof(IsUpdateButtonEnabled));
+            NotifyPropertyChanged(nameof(AppVersionText));
+            RefreshCommandStates();
         }, null);
     }
 

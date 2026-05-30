@@ -50,18 +50,20 @@ public partial class DeferredUpdateInstallWindow : Window
     {
         TitleText.Text = snapshot.State switch
         {
-            AppUpdateState.Checking => "Preparing update",
-            AppUpdateState.UpdateAvailable => "Update available",
-            AppUpdateState.Downloading => "Downloading update",
-            AppUpdateState.Installing => "Applying update",
+            AppUpdateState.Checking => "Preparing",
+            AppUpdateState.UpdateAvailable => "Preparing",
+            AppUpdateState.Downloading => "Downloading",
+            AppUpdateState.Installing => "Installing",
+            AppUpdateState.Completed => "Completed",
             AppUpdateState.Failed => "Update failed",
+            AppUpdateState.Idle => "Completed",
             _ => "Applying update",
         };
 
         StatusText.Text = !string.IsNullOrWhiteSpace(snapshot.StatusMessage)
             ? snapshot.StatusMessage
             : snapshot.State == AppUpdateState.Idle
-                ? "Preparing update"
+                ? "Completed"
                 : snapshot.StageText;
 
         bool showProgress = snapshot.IsProgressVisible
@@ -69,18 +71,23 @@ public partial class DeferredUpdateInstallWindow : Window
                 or AppUpdateState.Downloading
                 or AppUpdateState.Installing;
         UpdateProgressBar.Visibility = showProgress ? Visibility.Visible : Visibility.Collapsed;
-        UpdateProgressBar.IsIndeterminate = snapshot.State is AppUpdateState.Checking;
+        UpdateProgressBar.IsIndeterminate = false;
         UpdateProgressBar.Value = Math.Clamp(snapshot.ProgressValue * 100, 0, 100);
         ProgressText.Text = snapshot.State switch
         {
-            AppUpdateState.Checking => "Revalidating the update before closing.",
-            AppUpdateState.UpdateAvailable => "An update is ready to install.",
+            AppUpdateState.Checking => "Preparing update request.",
+            AppUpdateState.UpdateAvailable => "Waiting for permission.",
             AppUpdateState.Downloading => "Downloading package updates.",
             AppUpdateState.Installing => "Installing package updates.",
+            AppUpdateState.Completed => "Update completed.",
+            AppUpdateState.Idle => "Update completed.",
             AppUpdateState.Failed => "The update could not be installed.",
             _ when snapshot.IsProgressVisible => "Working on the update.",
             _ => "Waiting to start...",
         };
+        PackageDetailText.Text = snapshot.PackageDetailText ?? string.Empty;
+        GuidanceText.Text = snapshot.ResultGuidanceText ?? string.Empty;
+        _allowClose = snapshot.State is AppUpdateState.Completed or AppUpdateState.Failed or AppUpdateState.Idle;
     }
 
     private void OnClosed(object? sender, EventArgs e)

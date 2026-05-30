@@ -18,6 +18,8 @@ public enum StoreUpdateOperationState
     Completed,
     Canceled,
     ErrorLowBattery,
+    ErrorWiFiRecommended,
+    ErrorWiFiRequired,
     OtherError,
     Unknown,
 }
@@ -30,7 +32,10 @@ public sealed record AppUpdateSnapshot(
     bool IsProgressVisible,
     double ProgressValue,
     string InstalledVersion,
-    string? AvailableVersion)
+    string? AvailableVersion,
+    bool HasActiveQueueItem = false,
+    string? PackageDetailText = null,
+    string? ResultGuidanceText = null)
 {
     public static AppUpdateSnapshot Idle(string installedVersion) =>
         new(
@@ -74,7 +79,18 @@ public sealed record StoreUpdateQueryResult(
     StorePackageUpdateSet UpdateSet,
     bool CanSilentlyDownload);
 
-public sealed record StoreUpdateOperationProgress(double ProgressValue);
+public sealed record StoreQueueRecoveryState(
+    bool HasActiveQueueItem,
+    string? PhaseText = null,
+    double ProgressValue = 0,
+    string? PackageDetailText = null);
+
+public sealed record StoreUpdateOperationProgress(
+    double ProgressValue,
+    string? PhaseText = null,
+    string? PackageFamilyName = null,
+    ulong? BytesDownloaded = null,
+    ulong? TotalBytesToDownload = null);
 
 public sealed record StoreUpdateOperationResult(
     StoreUpdateOperationState State,
@@ -114,13 +130,15 @@ public sealed class DeferredUpdateState
     public PackageIdentitySnapshot? PackageIdentitySnapshot { get; init; }
 
     public IReadOnlyList<string> PackageFamilyNames { get; init; } = Array.Empty<string>();
+
+    public IReadOnlyList<DateTimeOffset> RecentCheckHistoryUtc { get; init; } = Array.Empty<DateTimeOffset>();
 }
 
 public sealed class StoreUpdateOptions
 {
     public bool EnableStartupUpdateCheck { get; init; } = true;
 
-    public bool PreferSilentUpdateWhenAvailable { get; init; } = true;
+    public bool PreferSilentUpdateWhenAvailable { get; init; } = false;
 
     public bool UseFallbackStoreUiWhenSilentUnavailable { get; init; } = true;
 
@@ -128,7 +146,7 @@ public sealed class StoreUpdateOptions
 
     public TimeSpan StartupDelay { get; init; } = TimeSpan.Zero;
 
-    public TimeSpan MinimumCheckInterval { get; init; } = TimeSpan.FromHours(12);
+    public TimeSpan MinimumCheckInterval { get; init; } = TimeSpan.FromMinutes(30);
 
     public TimeSpan DeferredStateMaxAge { get; init; } = TimeSpan.FromDays(14);
 
@@ -202,6 +220,8 @@ public interface IMicrosoftStoreUpdateProvider
         StorePackageUpdateSet updateSet,
         Action<StoreUpdateOperationProgress>? progress,
         CancellationToken cancellationToken = default);
+
+    Task<StoreQueueRecoveryState> TryGetActiveQueueStateAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IDeferredUpdateStateStore
