@@ -48,3 +48,24 @@ AudioScript is a Windows desktop WPF app for local/offline audio transcription, 
 ```powershell
 dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 ```
+
+## Microsoft Store Packaging Baseline (x64-only)
+
+- Packaging project: `AudioScript.Package\AudioScript.Package.wapproj`
+- Packaging manifest: `AudioScript.Package\Package.appxmanifest`
+- Fixed manifest requirements:
+  - `Identity Name=JustinTagardaSoftware.AudioScript`
+  - `Identity Publisher=CN=68EC506E-4B5E-416B-93E8-BA707CA3BE0F`
+  - `TargetDeviceFamily Name=Windows.Desktop`
+- Store package target architecture: `x64` only
+- Upload mode: `StoreUpload`
+
+### Generate Store Upload Artifact
+
+```powershell
+& 'C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' .\AudioScript.Package\AudioScript.Package.wapproj /t:Restore,Build /p:Configuration=Release /p:Platform=x64 /p:UapAppxPackageBuildMode=StoreUpload /p:AppxBundle=Always /p:AppxBundlePlatforms=x64 /m
+```
+
+### Expected Output Location
+
+- `AudioScript.Package\AppPackages\*.msixupload`

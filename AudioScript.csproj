@@ -14,6 +14,17 @@
     <Copyright>© 2026 Justin Tagarda. All rights reserved.</Copyright>
     <Description>Offline audio transcription for local files and live playback capture.</Description>
     <DefaultItemExcludes>$(DefaultItemExcludes);AudioScript.Package\AppPackages\**;artifacts\**;publish\**;AudioScript.Tests\**</DefaultItemExcludes>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <AppxManifest>AudioScript.Package\Package.appxmanifest</AppxManifest>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+    <UapAppxPackageBuildMode>StoreUpload</UapAppxPackageBuildMode>
+    <AppxBundle>Always</AppxBundle>
+    <AppxBundlePlatforms>x64</AppxBundlePlatforms>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <AppxPackageDir>bin\Release\AppPackages\</AppxPackageDir>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.2.0" />

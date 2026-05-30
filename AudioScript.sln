@@ -5,6 +5,8 @@ VisualStudioVersion = 18.4.11612.150
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioScript", "AudioScript.csproj", "{D280F3A7-2F71-68E7-D215-1178F691123B}"
 EndProject
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "AudioScript.Package", "AudioScript.Package\AudioScript.Package.wapproj", "{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,14 @@ Global
 		{D280F3A7-2F71-68E7-D215-1178F691123B}.Release|Any CPU.Build.0 = Release|Any CPU
 		{D280F3A7-2F71-68E7-D215-1178F691123B}.Release|x64.ActiveCfg = Release|Any CPU
 		{D280F3A7-2F71-68E7-D215-1178F691123B}.Release|x64.Build.0 = Release|Any CPU
+		{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}.Debug|Any CPU.Build.0 = Debug|x64
+		{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}.Debug|x64.ActiveCfg = Debug|x64
+		{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}.Debug|x64.Build.0 = Debug|x64
+		{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}.Release|Any CPU.ActiveCfg = Release|x64
+		{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}.Release|Any CPU.Build.0 = Release|x64
+		{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}.Release|x64.ActiveCfg = Release|x64
+		{6A39F302-72A8-4D0D-BB7D-4CE7E4623A6E}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

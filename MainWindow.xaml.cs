@@ -28,6 +28,7 @@ namespace AudioScript;
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
+    private readonly string _storePackageVersionText;
     internal enum TranscriptContextMenuScope
     {
         OtherCell,
@@ -148,6 +149,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _processLogService = processLogService;
         _whisperModelManager = whisperModelManager;
         _pyannoteCommunityModelManager = pyannoteCommunityModelManager;
+        _storePackageVersionText = ResolveStorePackageVersionText();
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Closing += OnMainWindowClosing;
@@ -157,7 +159,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Loaded += OnMainWindowLoaded;
     }
 
+    public string StorePackageVersionText => _storePackageVersionText;
+
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    private static string ResolveStorePackageVersionText()
+    {
+        string installedVersion = new AppVersionProvider().InstalledVersion;
+        if (!Version.TryParse(installedVersion, out Version? version))
+        {
+            return "0.0.0.0";
+        }
+
+        int major = Math.Max(0, version.Major);
+        int minor = Math.Max(0, version.Minor);
+        int build = Math.Max(0, version.Build);
+        return $"{major}.{minor}.{build}.0";
+    }
 
     public bool IsTranscribeAudioBatchTranscribing
     {
