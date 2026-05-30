@@ -501,7 +501,7 @@
                                     </Style>
                                 </ProgressBar.Style>
                             </ProgressBar>
-                            <TextBlock Text="© 2026 JustinTagarda. All rights reserved."
+                            <TextBlock Text="© 2026 JustinTagarda"
                                        Margin="0,0,8,0"
                                        FontSize="12"
                                        TextTrimming="CharacterEllipsis"
