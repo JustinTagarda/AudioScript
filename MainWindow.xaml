@@ -720,6 +720,7 @@
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                         <Border Grid.Row="0"
@@ -1023,9 +1024,280 @@
                             </Grid>
                         </Border>
 
-                        <Border Grid.Row="1"
+                        <Border x:Name="TranscribeAudioBatchOverlay"
+                                Grid.Row="1"
                                 MinHeight="100"
-                                Margin="0"
+                                Margin="0,8,0,0"
+                                Padding="10"
+                                CornerRadius="6"
+                                BorderThickness="0"
+                                BorderBrush="{x:Null}"
+                                Background="{x:Null}"
+                                IsHitTestVisible="True">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility"
+                                            Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShouldShowAudioTranscriptionPanel, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                     Value="True">
+                                            <Setter Property="Visibility"
+                                                    Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Border HorizontalAlignment="Stretch"
+                                        x:Name="TranscribeAudioBatchCard"
+                                        VerticalAlignment="Top"
+                                        Width="Auto"
+                                        Background="{x:Null}"
+                                        BorderBrush="{x:Null}"
+                                        BorderThickness="0"
+                                        CornerRadius="0"
+                                        Padding="0">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding TranscriptProcessingTitle, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding TranscriptProcessingDetail, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                   Margin="0,4,0,0"
+                                                   FontSize="11"
+                                                   Opacity="0.82"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+
+                                        <Border Margin="0,10,0,0"
+                                                Padding="10,8"
+                                                CornerRadius="6"
+                                                Background="{x:Null}"
+                                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                                BorderThickness="1">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Text="Source file"
+                                                               FontSize="11"
+                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                    <TextBlock Margin="0,4,0,0"
+                                                               FontSize="13"
+                                                               FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text"
+                                                                        Value="{Binding TranscriptProcessingSourceFileText, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding TranscriptProcessingSourceFileText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                                 Value="">
+                                                                        <Setter Property="Text"
+                                                                                Value="—"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1"
+                                                            Margin="16,0,0,0"
+                                                            HorizontalAlignment="Right"
+                                                            VerticalAlignment="Bottom">
+                                                    <TextBlock Text="File size"
+                                                               FontSize="11"
+                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                               TextAlignment="Right"/>
+                                                    <TextBlock Margin="0,4,0,0"
+                                                               FontSize="13"
+                                                               FontWeight="SemiBold"
+                                                               TextAlignment="Right">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text"
+                                                                        Value="{Binding TranscriptProcessingSourceFileSizeText, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding TranscriptProcessingSourceFileSizeText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                                 Value="">
+                                                                        <Setter Property="Text"
+                                                                                Value="—"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+
+                                        <Border Margin="0,8,0,0"
+                                                Padding="10,8"
+                                                CornerRadius="6"
+                                                Background="{x:Null}"
+                                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                                BorderThickness="1">
+                                            <StackPanel>
+                                                <TextBlock Text="Engine"
+                                                           FontSize="11"
+                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                <TextBlock Margin="0,4,0,0"
+                                                           FontSize="13"
+                                                           FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text"
+                                                                    Value="{Binding TranscriptProcessingEngineText, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding TranscriptProcessingEngineText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             Value="">
+                                                                    <Setter Property="Text"
+                                                                            Value="—"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border Margin="0,8,0,0"
+                                                Padding="10,8"
+                                                CornerRadius="6"
+                                                Background="{x:Null}"
+                                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                                BorderThickness="1">
+                                        <StackPanel>
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility"
+                                                            Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsTranscribeAudioBatchPendingStart, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                     Value="True">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <ProgressBar Height="8"
+                                                         HorizontalAlignment="Stretch"
+                                                         Minimum="0"
+                                                         Maximum="100"
+                                                         Value="{Binding TranscriptProcessingPercent, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
+                                                         IsIndeterminate="{Binding IsTranscriptProcessingIndeterminate, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                            <StackPanel Margin="0,10,0,0">
+                                                <TextBlock Text="{Binding TranscriptProcessingChunkText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                           FontSize="13"
+                                                           FontWeight="SemiBold"/>
+                                                <TextBlock Text="{Binding TranscriptProcessingAudioText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                           Margin="0,4,0,0"
+                                                           FontSize="12"
+                                                           Opacity="0.9"/>
+                                                <Grid Margin="0,4,0,0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0"
+                                                               Text="{Binding TranscriptProcessingElapsedText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               FontSize="11"
+                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                    <TextBlock Grid.Column="1"
+                                                               Text="{Binding TranscriptProcessingEtaText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               Margin="14,0,0,0"
+                                                               FontSize="11"
+                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                </Grid>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        </Border>
+
+                                        <DockPanel Margin="0,8,0,0"
+                                                   LastChildFill="False">
+                                            <StackPanel DockPanel.Dock="Left"
+                                                        Orientation="Horizontal"
+                                                        VerticalAlignment="Center">
+                                                <CheckBox Content="Mute"
+                                                          IsChecked="{Binding IsPlaybackMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          VerticalAlignment="Center"
+                                                          Margin="0,0,8,0">
+                                                    <CheckBox.Style>
+                                                        <Style TargetType="CheckBox"
+                                                               BasedOn="{StaticResource {x:Type CheckBox}}">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsTranscriptProcessingMuteAvailable, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             Value="False">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </CheckBox.Style>
+                                                </CheckBox>
+                                                <TextBlock Text="Processing…"
+                                                           FontSize="11"
+                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                           VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsTranscribeAudioBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             Value="True">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <Button x:Name="TranscribeAudioBatchStartButton"
+                                                    DockPanel.Dock="Right"
+                                                    Content="{Binding TranscriptProcessingStartButtonText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    Tag="&#xE768;"
+                                                    MinWidth="120"
+                                                    IsEnabled="{Binding IsTranscribeAudioBatchStartEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    Click="StartProcessing_Click">
+                                                <Button.Style>
+                                                    <Style TargetType="Button"
+                                                           BasedOn="{StaticResource ToolbarPrimaryButtonStyle}">
+                                                        <Setter Property="Visibility"
+                                                                Value="Visible"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsTranscribeAudioBatchPendingStart, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                         Value="False">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                            <Button x:Name="TranscribeAudioBatchCancelButton"
+                                                    DockPanel.Dock="Right"
+                                                    Content="{Binding TranscriptProcessingDismissButtonText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    Tag="&#xE711;"
+                                                    MinWidth="120"
+                                                    Margin="0,0,8,0"
+                                                    Style="{StaticResource ToolbarButtonStyle}"
+                                                    IsEnabled="{Binding IsTranscriptProcessingCancelEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    Click="CancelProcessing_Click"/>
+                                        </DockPanel>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="2"
+                                MinHeight="100"
+                                Margin="0,8,0,0"
                                 Padding="8"
                                 CornerRadius="6"
                                 BorderThickness="0"
@@ -1128,8 +1400,8 @@
                             </Grid>
                         </Border>
 
-                        <Border Grid.Row="2"
-                                Margin="0"
+                        <Border Grid.Row="3"
+                                Margin="0,8,0,0"
                                 Padding="8"
                                 CornerRadius="6"
                                 BorderThickness="0"
@@ -1251,212 +1523,6 @@
                 </Grid>
             </Grid>
         </DockPanel>
-
-        <Border x:Name="TranscribeAudioBatchOverlay"
-                Panel.ZIndex="100"
-                Background="Transparent"
-                Visibility="Collapsed"
-                IsHitTestVisible="False">
-            <Grid>
-                <Border HorizontalAlignment="Center"
-                        x:Name="TranscribeAudioBatchCard"
-                        VerticalAlignment="Center"
-                        Width="520"
-                        Background="{DynamicResource ControlFillColorDefaultBrush}"
-                        BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                        BorderThickness="1"
-                        CornerRadius="10"
-                        Padding="22,18">
-
-                    <StackPanel>
-                        <TextBlock Text="{Binding TranscriptProcessingTitle, RelativeSource={RelativeSource AncestorType=Window}}"
-                                   FontSize="18"
-                                   FontWeight="SemiBold"
-                                   HorizontalAlignment="Center"
-                                   TextAlignment="Center"/>
-                        <TextBlock Text="{Binding TranscriptProcessingDetail, RelativeSource={RelativeSource AncestorType=Window}}"
-                                   Margin="0,6,0,0"
-                                   FontSize="12"
-                                   Opacity="0.82"
-                                   HorizontalAlignment="Center"
-                                   TextAlignment="Center"/>
-                        <Border Margin="0,14,0,0"
-                                Padding="14,12"
-                                CornerRadius="8"
-                                Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="Source file"
-                                               FontSize="10.5"
-                                               Opacity="0.72"/>
-                                    <TextBlock Text="{Binding TranscriptProcessingSourceFileText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                               Margin="0,4,0,0"
-                                               FontSize="13"
-                                               FontWeight="SemiBold"
-                                               TextTrimming="CharacterEllipsis"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="1"
-                                            Margin="16,0,0,0"
-                                            HorizontalAlignment="Right"
-                                            VerticalAlignment="Bottom">
-                                    <TextBlock Text="File size"
-                                               FontSize="10.5"
-                                               Opacity="0.72"
-                                               TextAlignment="Right"/>
-                                    <TextBlock Text="{Binding TranscriptProcessingSourceFileSizeText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                               Margin="0,4,0,0"
-                                               FontSize="13"
-                                               FontWeight="SemiBold"
-                                               TextAlignment="Right"/>
-                                </StackPanel>
-                            </Grid>
-                        </Border>
-                        <Border Margin="0,8,0,0"
-                                Padding="14,10"
-                                CornerRadius="8"
-                                Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                BorderThickness="1">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0"
-                                           Text="Engine"
-                                           FontSize="10.5"
-                                           Opacity="0.72"
-                                           VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1"
-                                           Text="{Binding TranscriptProcessingEngineText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                           Margin="14,0,0,0"
-                                           FontSize="13"
-                                           FontWeight="SemiBold"
-                                           TextAlignment="Right"
-                                           TextTrimming="CharacterEllipsis"/>
-                            </Grid>
-                        </Border>
-                        <StackPanel Margin="0,14,0,0">
-                            <StackPanel.Style>
-                                <Style TargetType="StackPanel">
-                                    <Setter Property="Visibility"
-                                            Value="Visible"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsTranscribeAudioBatchPendingStart, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                     Value="True">
-                                            <Setter Property="Visibility"
-                                                    Value="Collapsed"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </StackPanel.Style>
-                            <ProgressBar Height="8"
-                                         Minimum="0"
-                                         Maximum="100"
-                                         Value="{Binding TranscriptProcessingPercent, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
-                                         IsIndeterminate="{Binding IsTranscriptProcessingIndeterminate, RelativeSource={RelativeSource AncestorType=Window}}"/>
-                            <Grid Margin="0,14,0,0">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Row="0"
-                                           Grid.ColumnSpan="2"
-                                           Text="{Binding TranscriptProcessingChunkText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                           FontSize="14"
-                                           FontWeight="SemiBold"
-                                           Opacity="0.82"
-                                           TextAlignment="Center"/>
-                                <TextBlock Grid.Row="1"
-                                           Grid.ColumnSpan="2"
-                                           Text="{Binding TranscriptProcessingAudioText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                           Margin="0,4,0,0"
-                                           FontSize="12"
-                                           Opacity="0.82"
-                                           TextAlignment="Center"/>
-                                <TextBlock Grid.Row="2"
-                                           Grid.Column="0"
-                                           Text="{Binding TranscriptProcessingElapsedText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                           Margin="0,4,8,0"
-                                           FontSize="11"
-                                           Opacity="0.82"
-                                           TextAlignment="Right"/>
-                                <TextBlock Grid.Row="2"
-                                           Grid.Column="1"
-                                           Text="{Binding TranscriptProcessingEtaText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                           Margin="8,4,0,0"
-                                           FontSize="11"
-                                           Opacity="0.82"
-                                           TextAlignment="Left"/>
-                            </Grid>
-                        </StackPanel>
-                        <DockPanel Margin="0,16,0,0"
-                                   LastChildFill="False">
-                            <CheckBox DockPanel.Dock="Left"
-                                      Content="Mute"
-                                      IsChecked="{Binding IsPlaybackMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                      VerticalAlignment="Center"
-                                      Margin="0,0,8,0">
-                                <CheckBox.Style>
-                                    <Style TargetType="CheckBox"
-                                           BasedOn="{StaticResource {x:Type CheckBox}}">
-                                        <Setter Property="Visibility"
-                                                Value="Visible"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsTranscriptProcessingMuteAvailable, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                         Value="False">
-                                                <Setter Property="Visibility"
-                                                        Value="Collapsed"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </CheckBox.Style>
-                            </CheckBox>
-                            <Button x:Name="TranscribeAudioBatchStartButton"
-                                    DockPanel.Dock="Right"
-                                    Content="{Binding TranscriptProcessingStartButtonText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    Tag="&#xE768;"
-                                    Margin="0,0,8,0"
-                                    IsEnabled="{Binding IsTranscribeAudioBatchStartEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    Click="StartProcessing_Click">
-                                <Button.Style>
-                                    <Style TargetType="Button"
-                                           BasedOn="{StaticResource ToolbarPrimaryButtonStyle}">
-                                        <Setter Property="Visibility"
-                                                Value="Visible"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsTranscribeAudioBatchPendingStart, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                         Value="False">
-                                                <Setter Property="Visibility"
-                                                        Value="Collapsed"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Button.Style>
-                            </Button>
-                            <Button x:Name="TranscribeAudioBatchCancelButton"
-                                    DockPanel.Dock="Right"
-                                    Content="{Binding TranscriptProcessingDismissButtonText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    Tag="&#xE711;"
-                                    Style="{StaticResource ToolbarButtonStyle}"
-                                    IsEnabled="{Binding IsTranscriptProcessingCancelEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    Click="CancelProcessing_Click"/>
-                        </DockPanel>
-                    </StackPanel>
-                </Border>
-            </Grid>
-        </Border>
 
         <Border x:Name="CopyToastHost"
                 Panel.ZIndex="20"

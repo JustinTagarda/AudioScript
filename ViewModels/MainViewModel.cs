@@ -397,6 +397,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             AudioStorageKinds.LiveRecordingManifest,
             StringComparison.OrdinalIgnoreCase);
 
+    public bool IsCurrentSessionAudioTranscriptionSession =>
+        _currentSessionDocument is not null
+        && string.Equals(
+            _currentSessionDocument.Audio.StorageKind,
+            AudioStorageKinds.ImportedFile,
+            StringComparison.OrdinalIgnoreCase);
+
     public bool HasPendingSessionSelection =>
         false;
 
@@ -3682,6 +3689,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(TranscriptEmptyStateTitle));
         NotifyPropertyChanged(nameof(TranscriptEmptyStateMessage));
         NotifyPropertyChanged(nameof(IsCurrentSessionLiveTranscriptionSession));
+        NotifyPropertyChanged(nameof(IsCurrentSessionAudioTranscriptionSession));
     }
 
     private void SaveAppPreferences()

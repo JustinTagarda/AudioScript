@@ -220,6 +220,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _isTranscribeAudioBatchTranscribing = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
             UpdateLivePrimaryActionButtonState();
             UpdateTranscriptionInteractionLockState();
         }
@@ -251,7 +252,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         DataContext is MainViewModel vm
         && !IsLiveTranscribing
         && !IsTranscribeAudioBatchTranscribing
+        && !vm.ShouldShowLiveTranscriptionPanel
+        && !ShouldShowAudioTranscriptionPanel
         && vm.IsAudioFileLoaded;
+
+    public bool ShouldShowAudioTranscriptionPanel =>
+        DataContext is MainViewModel vm
+        && vm.IsCurrentSessionAudioTranscriptionSession
+        && (vm.IsTranscriptDataEmpty || IsTranscribeAudioBatchPendingStart || IsTranscribeAudioBatchTranscribing);
 
     private void SetLiveTranscriptionStopping(bool isStopping)
     {
@@ -311,6 +319,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsTranscribeAudioBatchStartEnabled));
             OnPropertyChanged(nameof(TranscriptProcessingDismissButtonText));
+            OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
         }
     }
 
@@ -2379,6 +2388,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdateLiveControlState();
             UpdateLivePrimaryActionButtonState();
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
         }
         else
         {
@@ -2392,6 +2402,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             SetTranscriptRowActionsLine(null);
             UpdateLivePrimaryActionButtonState();
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
         }
     }
 
@@ -3248,6 +3259,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             EnforcePlaybackEditTranscriptionStop();
             UpdatePlaybackTimelineHighlight();
         }
+
+        if (e.PropertyName is nameof(MainViewModel.IsTranscriptDataEmpty)
+            or nameof(MainViewModel.IsCurrentSessionAudioTranscriptionSession))
+        {
+            OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
+        }
     }
 
     private void ApplyApplicationUpdateTaskbarProgress(MainViewModel vm)
@@ -3334,8 +3351,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             borderBrush.Freeze();
         }
 
-        TranscribeAudioBatchCard.Background = backgroundBrush;
-        TranscribeAudioBatchCard.BorderBrush = borderBrush;
+        TranscribeAudioBatchCard.Background = System.Windows.Media.Brushes.Transparent;
+        TranscribeAudioBatchCard.BorderBrush = null;
         CopyToastCard.Background = backgroundBrush;
         CopyToastCard.BorderBrush = borderBrush;
     }
@@ -3761,11 +3778,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ApplyTranscribeAudioBatchInteractionLock()
     {
-        TranscribeAudioBatchOverlay.Visibility = Visibility.Visible;
-        TranscribeAudioBatchOverlay.IsHitTestVisible = true;
         TranscribeAudioBatchOverlay.UpdateLayout();
-
-        MainContentHost.IsHitTestVisible = false;
 
         try
         {
@@ -3797,8 +3810,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void RestoreTranscribeAudioBatchInteractionLock()
     {
-        TranscribeAudioBatchOverlay.IsHitTestVisible = false;
-        TranscribeAudioBatchOverlay.Visibility = Visibility.Collapsed;
         IsTranscribeAudioBatchPendingStart = false;
         _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.None;
         IsTranscriptProcessingMuteAvailable = true;
@@ -3806,8 +3817,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         TranscriptProcessingSourceFileText = string.Empty;
         TranscriptProcessingSourceFileSizeText = string.Empty;
         TranscriptProcessingEngineText = string.Empty;
-
-        MainContentHost.IsHitTestVisible = true;
 
         _ = Dispatcher.BeginInvoke(new Action(() =>
         {
