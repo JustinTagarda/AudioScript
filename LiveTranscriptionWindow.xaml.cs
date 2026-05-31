@@ -20,7 +20,6 @@ public partial class LiveTranscriptionWindow : Window
     private readonly Func<Task> _stopTranscriptionAsync;
     private readonly Func<Task<bool>> _closeTranscriptionAsync;
     private readonly Func<Task>? _escalateCloseAsync;
-    private readonly Action<LiveAudioGainOptions>? _persistGainOptions;
     private bool _isTranscribing;
     private bool _isStopping;
     private bool _isOperationPending;
@@ -37,13 +36,11 @@ public partial class LiveTranscriptionWindow : Window
     private int _latestTranscribedChunks;
     private int _latestPendingChunks;
     private readonly DispatcherTimer _autoClosePollTimer;
-    private LiveAudioGainOptions _gainOptions = LiveAudioGainOptions.Default;
 
     public LiveTranscriptionWindow(
         IReadOnlyList<AudioInputDeviceOption> devices,
         Func<AudioInputDeviceOption, Task<bool>> startTranscriptionAsync,
         Func<Task> stopTranscriptionAsync,
-        Action<LiveAudioGainOptions>? persistGainOptions = null,
         Func<Task<bool>>? closeTranscriptionAsync = null,
         Func<Task>? escalateCloseAsync = null)
     {
@@ -51,7 +48,6 @@ public partial class LiveTranscriptionWindow : Window
         _stopTranscriptionAsync = stopTranscriptionAsync;
         _closeTranscriptionAsync = closeTranscriptionAsync ?? StopAndAllowCloseAsync;
         _escalateCloseAsync = escalateCloseAsync;
-        _persistGainOptions = persistGainOptions;
         _autoClosePollTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(500),
@@ -71,9 +67,6 @@ public partial class LiveTranscriptionWindow : Window
 
     public bool IsTranscribing => _isTranscribing;
 
-    public LiveAudioGainOptions CurrentGainOptions =>
-        _gainOptions;
-
     public void SelectPreferredDevice(LiveAudioSourceKind preferredKind, int preferredDeviceNumber)
     {
         AudioInputDeviceOption? preferred = DeviceComboBox.Items
@@ -88,19 +81,6 @@ public partial class LiveTranscriptionWindow : Window
         }
     }
 
-    public void SetGainOptions(LiveAudioGainOptions options)
-    {
-        _gainOptions = options.Validate();
-        if (AutomaticGainCheckBox is not null)
-        {
-            AutomaticGainCheckBox.IsChecked = _gainOptions.IsAutomaticGainEnabled;
-        }
-
-        _persistGainOptions?.Invoke(_gainOptions);
-        UpdateGainSummary(1, automaticGainApplied: _gainOptions.IsAutomaticGainEnabled);
-        UpdateControlState();
-    }
-
     public void SetAudioLevel(double peakLevel, double gainMultiplier = 1, bool automaticGainApplied = false)
     {
         if (_stageProgressMode != StageProgressMode.AudioLevel)
@@ -110,7 +90,8 @@ public partial class LiveTranscriptionWindow : Window
 
         double normalized = Math.Max(0, Math.Min(1, peakLevel));
         VolumeMeter.Value = normalized * 100;
-        UpdateGainSummary(gainMultiplier, automaticGainApplied);
+        _ = gainMultiplier;
+        _ = automaticGainApplied;
     }
 
     public void SetTranscribing(bool isTranscribing)
@@ -135,7 +116,6 @@ public partial class LiveTranscriptionWindow : Window
             {
                 VolumeMeter.IsIndeterminate = false;
                 VolumeMeter.Value = 0;
-                UpdateGainSummary(1, automaticGainApplied: false);
                 UpdateProgressMeterLabel();
             }
         }
@@ -364,19 +344,6 @@ public partial class LiveTranscriptionWindow : Window
         UpdateControlState();
     }
 
-    private void AutomaticGainCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        if (AutomaticGainCheckBox is null)
-        {
-            return;
-        }
-
-        bool isEnabled = AutomaticGainCheckBox.IsChecked == true;
-        _gainOptions = _gainOptions with { IsAutomaticGainEnabled = isEnabled };
-        _persistGainOptions?.Invoke(_gainOptions);
-        UpdateGainSummary(1, automaticGainApplied: isEnabled);
-    }
-
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
         if (_allowClose || !_isTranscribing)
@@ -589,14 +556,12 @@ public partial class LiveTranscriptionWindow : Window
     private void UpdateControlState()
     {
         if (DeviceComboBox is null
-            || StartStopButton is null
-            || AutomaticGainCheckBox is null)
+            || StartStopButton is null)
         {
             return;
         }
 
         DeviceComboBox.IsEnabled = !_isTranscribing && !_isOperationPending;
-        AutomaticGainCheckBox.IsEnabled = !_isTranscribing && !_isOperationPending;
         StartStopButton.IsEnabled = !_isOperationPending && !_isStopping && (SelectedDevice is not null || _isTranscribing);
         StartStopButton.Content = _isTranscribing
             ? (_isStopping ? "Finalizing... please wait" : "Stop")
@@ -633,12 +598,6 @@ public partial class LiveTranscriptionWindow : Window
 
         uint flags = MF_BYCOMMAND | (_isSystemCloseEnabled ? MF_ENABLED : MF_GRAYED);
         _ = EnableMenuItem(menu, SC_CLOSE, flags);
-    }
-
-    private void UpdateGainSummary(double activeGainMultiplier, bool automaticGainApplied = false)
-    {
-        _ = activeGainMultiplier;
-        _ = automaticGainApplied;
     }
 
     private void UpdateProgressMeterLabel()

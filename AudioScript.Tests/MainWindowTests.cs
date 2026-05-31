@@ -150,45 +150,56 @@ public sealed class MainWindowTests
     }
 
     [Fact]
-    public void LiveTranscriptionWindow_ContainsAutomaticGainCheckbox()
+    public void LiveTranscriptionWindow_DoesNotContainAutomaticGainCheckbox()
     {
         string xamlPath = FindRepoFile("LiveTranscriptionWindow.xaml");
         string xaml = File.ReadAllText(xamlPath);
 
-        Assert.Contains("Content=\"Automatic gain\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Content=\"Automatic gain\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("SourceDetailText", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("Automatic app gain", xaml, StringComparison.Ordinal);
     }
 
     [Fact]
-    public Task LiveTranscriptionWindow_PersistsAutomaticGainToggle()
+    public void ResolveLiveUiState_ReturnsPreparing_WhenStartIsPending()
     {
-        return RunInStaAsync(() =>
-        {
-            LiveAudioGainOptions? persisted = null;
-            var window = new LiveTranscriptionWindow(
-                new[]
-                {
-                    new AudioInputDeviceOption(
-                        LiveAudioSourceKind.DefaultPlayback,
-                        -1,
-                        "Default playback"),
-                },
-                _ => Task.FromResult(true),
-                () => Task.CompletedTask,
-                options => persisted = options);
+        MainWindow.LiveUiState state = MainWindow.ResolveLiveUiState(
+            isLiveTranscribing: false,
+            isPanelOperationPending: true,
+            isPanelStopping: false,
+            isCancelPendingMode: false,
+            selectedDeviceAvailable: true,
+            lastKnownState: MainWindow.LiveUiState.Idle);
 
-            window.SetGainOptions(new LiveAudioGainOptions(IsAutomaticGainEnabled: true, ManualGainLevel: 0.75));
+        Assert.Equal(MainWindow.LiveUiState.Preparing, state);
+    }
 
-            CheckBox automaticGainCheckBox = Assert.IsType<CheckBox>(window.FindName("AutomaticGainCheckBox"));
-            automaticGainCheckBox.IsChecked = false;
+    [Fact]
+    public void ResolveLiveUiState_ReturnsRunning_WhenLiveIsActive()
+    {
+        MainWindow.LiveUiState state = MainWindow.ResolveLiveUiState(
+            isLiveTranscribing: true,
+            isPanelOperationPending: false,
+            isPanelStopping: false,
+            isCancelPendingMode: false,
+            selectedDeviceAvailable: true,
+            lastKnownState: MainWindow.LiveUiState.Preparing);
 
-            Assert.NotNull(persisted);
-            Assert.False(persisted!.IsAutomaticGainEnabled);
-            Assert.Equal(0.75, persisted.ManualGainLevel, precision: 6);
+        Assert.Equal(MainWindow.LiveUiState.Running, state);
+    }
 
-            return Task.CompletedTask;
-        });
+    [Fact]
+    public void ResolveLiveUiState_ReturnsStoppingCancel_WhenCancelModeIsActive()
+    {
+        MainWindow.LiveUiState state = MainWindow.ResolveLiveUiState(
+            isLiveTranscribing: true,
+            isPanelOperationPending: true,
+            isPanelStopping: true,
+            isCancelPendingMode: true,
+            selectedDeviceAvailable: true,
+            lastKnownState: MainWindow.LiveUiState.Running);
+
+        Assert.Equal(MainWindow.LiveUiState.StoppingCancel, state);
     }
 
     [Theory]

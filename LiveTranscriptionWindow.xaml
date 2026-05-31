@@ -28,12 +28,6 @@
                       DisplayMemberPath="Name"
                       SelectedValuePath="DeviceNumber"
                       SelectionChanged="DeviceComboBox_SelectionChanged"/>
-            <CheckBox x:Name="AutomaticGainCheckBox"
-                      Content="Automatic gain"
-                      FontSize="12"
-                      Margin="0,8,0,0"
-                      Checked="AutomaticGainCheckBox_Changed"
-                      Unchecked="AutomaticGainCheckBox_Changed"/>
         </StackPanel>
 
         <StackPanel Grid.Row="1"

@@ -390,6 +390,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool HasCurrentSession => _currentSessionDocument is not null;
 
+    public bool IsCurrentSessionLiveTranscriptionSession =>
+        _currentSessionDocument is not null
+        && string.Equals(
+            _currentSessionDocument.Audio.StorageKind,
+            AudioStorageKinds.LiveRecordingManifest,
+            StringComparison.OrdinalIgnoreCase);
+
     public bool HasPendingSessionSelection =>
         false;
 
@@ -502,6 +509,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 return;
             }
+
+            NotifyPropertyChanged(nameof(ShouldShowLiveTranscriptionPanel));
         }
     }
 
@@ -533,6 +542,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool IsTranscriptEmptyStateVisible =>
         !HasCurrentTranscriptLines;
+
+    public bool IsTranscriptDataEmpty =>
+        !HasCurrentTranscriptLines
+        && string.IsNullOrWhiteSpace(FinalizedText);
+
+    public bool ShouldShowLiveTranscriptionPanel =>
+        IsCurrentSessionLiveTranscriptionSession
+        && (IsTranscriptDataEmpty || IsLiveTranscriptionRunning);
 
     public bool CanCopyTranscript =>
         HasCurrentTranscriptLines && !IsBusy;
@@ -3034,6 +3051,59 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return LoadSessionByIdAsync(session.SessionId);
     }
 
+    public bool PrepareOpenedLiveSessionForNewRecordingStart()
+    {
+        if (_currentSessionDocument is null
+            || !IsCurrentSessionLiveTranscriptionSession
+            || !IsTranscriptDataEmpty)
+        {
+            return false;
+        }
+
+        bool deletedAnyAudio = _sessionStore.ClearSessionStoredAudio(_currentSessionDocument.SessionId);
+        _currentSessionDocument.Audio.StoredRelativePath = string.Empty;
+        _currentSessionDocument.Audio.FileSizeBytes = 0;
+        _currentSessionDocument.Audio.DurationSeconds = null;
+        _currentSessionDocument.Audio.Sha256 = string.Empty;
+        _currentSessionDocument.UpdatedUtc = DateTimeOffset.UtcNow;
+
+        _audioPlaybackService.UnloadFile();
+        LoadedAudioFilePath = string.Empty;
+        IsAudioPlaying = false;
+        ResetAudioTimeline();
+        CurrentSessionAudioIssue = string.Empty;
+        IsCurrentSessionAudioMissing = false;
+        LoadRecentSessions(_currentSessionDocument.SessionId);
+
+        AppendLog(deletedAnyAudio
+            ? "Opened live session has empty transcript. Cleared previous recorded audio and prepared for new live start."
+            : "Opened live session has empty transcript. No stored audio found; prepared for new live start.");
+        return true;
+    }
+
+    public bool PruneCurrentLiveRecordingAudioAfterTime(double keepUntilSecondsInclusive)
+    {
+        if (_currentSessionDocument is null
+            || !string.Equals(
+                _currentSessionDocument.Audio.StorageKind,
+                AudioStorageKinds.LiveRecordingManifest,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        bool pruned = _sessionStore.PruneLiveRecordingAudioAfterTime(
+            _currentSessionDocument.SessionId,
+            keepUntilSecondsInclusive);
+        TranscriptSessionLoadResult refreshed = _sessionStore.LoadSession(_currentSessionDocument.SessionId);
+        _currentSessionDocument.Audio = TranscriptSessionStore.CloneAudioDocument(refreshed.Document.Audio);
+        _currentSessionDocument.UpdatedUtc = refreshed.Document.UpdatedUtc;
+        CurrentSessionAudioIssue = refreshed.AudioIssueMessage ?? string.Empty;
+        IsCurrentSessionAudioMissing = !refreshed.AudioAvailable && !string.IsNullOrWhiteSpace(CurrentSessionAudioIssue);
+        NotifyPropertyChanged(nameof(LoadedAudioFileName));
+        return pruned;
+    }
+
     private async Task DeleteSelectedSessionAsync()
     {
         string operationId = Guid.NewGuid().ToString("N")[..8];
@@ -3600,6 +3670,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(CurrentTranscriptLines));
         NotifyPropertyChanged(nameof(HasCurrentTranscriptLines));
         NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
+        NotifyPropertyChanged(nameof(IsTranscriptDataEmpty));
+        NotifyPropertyChanged(nameof(ShouldShowLiveTranscriptionPanel));
         NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
         NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
         NotifyPropertyChanged(nameof(CanCopyTranscript));
@@ -3609,6 +3681,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(HasSpeakerLabels));
         NotifyPropertyChanged(nameof(TranscriptEmptyStateTitle));
         NotifyPropertyChanged(nameof(TranscriptEmptyStateMessage));
+        NotifyPropertyChanged(nameof(IsCurrentSessionLiveTranscriptionSession));
     }
 
     private void SaveAppPreferences()
@@ -3888,6 +3961,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             ApplyTranscriptDocument(loadResult.Document.Transcript);
             ApplyEditingDocument(loadResult.Document.Editing);
+            NotifyCurrentTranscriptStateChanged();
 
             CurrentSessionAudioIssue = string.Empty;
             IsCurrentSessionAudioMissing = false;
@@ -3916,7 +3990,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             _suppressSessionAutosave = false;
         }
 
-        if (IsCurrentSessionAudioMissing && !string.IsNullOrWhiteSpace(CurrentSessionAudioIssue))
+        bool suppressMissingAudioToastForEmptyLiveSession =
+            IsCurrentSessionLiveTranscriptionSession
+            && IsTranscriptDataEmpty;
+
+        if (IsCurrentSessionAudioMissing
+            && !string.IsNullOrWhiteSpace(CurrentSessionAudioIssue)
+            && !suppressMissingAudioToastForEmptyLiveSession)
         {
             RaiseToast(
                 "Session audio unavailable",

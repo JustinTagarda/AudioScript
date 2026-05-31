@@ -543,6 +543,23 @@
 
                             <Grid Grid.Row="0"
                                   Margin="2">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="IsEnabled"
+                                                Value="True"/>
+                                        <Setter Property="Opacity"
+                                                Value="1"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsTranscriptionInteractionLocked, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                         Value="True">
+                                                <Setter Property="IsEnabled"
+                                                        Value="False"/>
+                                                <Setter Property="Opacity"
+                                                        Value="0.5"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
@@ -563,7 +580,6 @@
                                             Margin="2,0,0,0"
                                             Padding="8,0"
                                             Tag="&#xE720;"
-                                            IsEnabled="{Binding CanRunLivePrimaryAction}"
                                             Style="{StaticResource ToolbarPrimaryButtonStyle}"
                                             Click="LiveTranscriptionPrimaryAction_Click"/>
                                     <Button Grid.Column="2"
@@ -581,6 +597,23 @@
                             </Grid>
 
                             <Grid Grid.Row="1">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="IsEnabled"
+                                                Value="True"/>
+                                        <Setter Property="Opacity"
+                                                Value="1"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsTranscriptionInteractionLocked, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                         Value="True">
+                                                <Setter Property="IsEnabled"
+                                                        Value="False"/>
+                                                <Setter Property="Opacity"
+                                                        Value="0.5"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
                                 <ListBox ItemsSource="{Binding RecentSessions}"
                                          SelectedItem="{Binding SelectedRecentSession, Mode=TwoWay}"
                                          Margin="2,0"
@@ -700,6 +733,23 @@
                                 </Grid.RowDefinitions>
                                 <Grid Grid.Row="0"
                                       Margin="2">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="IsEnabled"
+                                                    Value="True"/>
+                                            <Setter Property="Opacity"
+                                                    Value="1"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsTranscriptionInteractionLocked, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                             Value="True">
+                                                    <Setter Property="IsEnabled"
+                                                            Value="False"/>
+                                                    <Setter Property="Opacity"
+                                                            Value="0.5"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
                                     <StackPanel Orientation="Horizontal"
                                                 HorizontalAlignment="Left">
                                         <Button x:Name="TranscribeAudioPrimaryActionButton"
@@ -760,6 +810,7 @@
                                         <DataGrid x:Name="FinalizedTranscriptGrid"
                                                   ItemsSource="{Binding CurrentTranscriptLines}"
                                                   Style="{StaticResource FluentDataGridStyle}"
+                                                  IsReadOnly="{Binding IsTranscriptionInteractionLocked, RelativeSource={RelativeSource AncestorType=Window}}"
                                                   BorderThickness="0,0,0,1"
                                                   AutoGenerateColumns="False"
                                                   CanUserAddRows="False"
@@ -977,9 +1028,104 @@
                                 Margin="0"
                                 Padding="8"
                                 CornerRadius="6"
-                                BorderThickness="1"
-                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="0"
+                                BorderBrush="{x:Null}"
                                 Background="{x:Null}">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility"
+                                            Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShouldShowLiveTranscriptionPanel}"
+                                                     Value="True">
+                                            <Setter Property="Visibility"
+                                                    Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Grid.Row="0">
+                                    <TextBlock Text="Live audio source"
+                                               FontSize="11"
+                                               Margin="0,0,0,4"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                    <ComboBox x:Name="DeviceComboBox"
+                                              FontSize="13"
+                                              DisplayMemberPath="Name"
+                                              SelectedValuePath="DeviceNumber"
+                                              SelectionChanged="DeviceComboBox_SelectionChanged"/>
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="1"
+                                            Margin="0,10,0,0">
+                                    <TextBlock x:Name="ProgressMeterLabel"
+                                               Text="Processed input level"
+                                               FontSize="11"
+                                               Margin="0,0,0,4"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                    <ProgressBar x:Name="VolumeMeter"
+                                                 Height="8"
+                                                 Minimum="0"
+                                                 Maximum="100"
+                                                 Value="0"/>
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="2"
+                                            Margin="0,10,0,0"/>
+
+                                <StackPanel Grid.Row="3"
+                                            Margin="0,12,0,0">
+                                    <TextBlock Text="Current activity"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                    <TextBlock x:Name="ActivitySummaryText"
+                                               Margin="0,6,0,0"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap"
+                                               Text="Ready. Start live transcription to begin recording and speech processing."/>
+                                    <TextBlock x:Name="RecordingActivityText"
+                                               Margin="0,8,0,0"
+                                               FontSize="12"
+                                               TextWrapping="Wrap"
+                                               Text="Recorder: idle"/>
+                                    <TextBlock x:Name="TranscriptionActivityText"
+                                               Margin="0,4,0,0"
+                                               FontSize="12"
+                                               TextWrapping="Wrap"
+                                               Text="Transcriber: idle"/>
+                                    <TextBlock x:Name="ChunkActivityText"
+                                               Margin="0,4,0,0"
+                                               FontSize="12"
+                                               TextWrapping="Wrap"
+                                               Text="Chunks: waiting to start"/>
+                                    <TextBlock x:Name="LatestActivityText"
+                                               Margin="0,8,0,0"
+                                               FontSize="11"
+                                               TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Text="Latest event: waiting to start"/>
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="4"
+                                            Margin="0,12,0,0"
+                                            Orientation="Horizontal"
+                                            HorizontalAlignment="Right">
+                                    <Button x:Name="StartStopButton"
+                                            Content="Start"
+                                            MinWidth="120"
+                                            Click="LiveTranscriptionStartStop_Click"/>
+                                </StackPanel>
+                            </Grid>
                         </Border>
 
                         <Border Grid.Row="2"
@@ -989,6 +1135,19 @@
                                 BorderThickness="0"
                                 BorderBrush="{x:Null}"
                                 Background="{x:Null}">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility"
+                                            Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShouldShowMediaPlayerPanel, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                     Value="True">
+                                            <Setter Property="Visibility"
+                                                    Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -1015,6 +1174,21 @@
                                 <Grid Grid.Row="1"
                                       Grid.ColumnSpan="2"
                                       Margin="0,8,0,0">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="IsEnabled"
+                                                    Value="True"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsTranscriptionInteractionLocked, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                             Value="True">
+                                                    <Setter Property="IsEnabled"
+                                                            Value="False"/>
+                                                    <Setter Property="Opacity"
+                                                            Value="0.5"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>

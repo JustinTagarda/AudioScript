@@ -359,6 +359,106 @@ public sealed class TranscriptSessionStore {
         Log($"DeleteSession completed. sessionId='{sessionId}', directory='{sessionDirectoryPath}'.");
     }
 
+    public bool ClearSessionStoredAudio(string sessionId) {
+        Log($"ClearSessionStoredAudio started. sessionId='{sessionId}'.");
+        if (string.IsNullOrWhiteSpace(sessionId)) {
+            throw new ArgumentException("Session id is required.", nameof(sessionId));
+        }
+
+        TranscriptSessionLoadResult loadResult = LoadSessionWithoutAudioValidation(sessionId);
+        TranscriptSessionDocument document = loadResult.Document;
+
+        string? storedAudioPath = ResolveStoredAudioPath(document);
+        bool deletedAnyAudio = false;
+        if (!string.IsNullOrWhiteSpace(storedAudioPath)) {
+            if (File.Exists(storedAudioPath)) {
+                File.Delete(storedAudioPath);
+                deletedAnyAudio = true;
+            }
+
+            string? audioDirectoryPath = Path.GetDirectoryName(storedAudioPath);
+            if (!string.IsNullOrWhiteSpace(audioDirectoryPath) && Directory.Exists(audioDirectoryPath)) {
+                Directory.Delete(audioDirectoryPath, recursive: true);
+                deletedAnyAudio = true;
+            }
+        }
+
+        document.Audio.StoredRelativePath = string.Empty;
+        document.Audio.FileSizeBytes = 0;
+        document.Audio.DurationSeconds = null;
+        document.Audio.Sha256 = string.Empty;
+        document.UpdatedUtc = DateTimeOffset.UtcNow;
+        Save(document);
+
+        Log($"ClearSessionStoredAudio completed. sessionId='{sessionId}', deletedAnyAudio={deletedAnyAudio}.");
+        return deletedAnyAudio;
+    }
+
+    public bool PruneLiveRecordingAudioAfterTime(string sessionId, double keepUntilSecondsInclusive) {
+        Log($"PruneLiveRecordingAudioAfterTime started. sessionId='{sessionId}', keepUntilSecondsInclusive={keepUntilSecondsInclusive:N3}.");
+        if (string.IsNullOrWhiteSpace(sessionId)) {
+            throw new ArgumentException("Session id is required.", nameof(sessionId));
+        }
+
+        TranscriptSessionLoadResult loadResult = LoadSessionWithoutAudioValidation(sessionId);
+        TranscriptSessionDocument document = loadResult.Document;
+        if (!IsLiveRecordingManifest(document) || string.IsNullOrWhiteSpace(document.Audio.StoredRelativePath)) {
+            Log($"PruneLiveRecordingAudioAfterTime skipped. sessionId='{sessionId}', liveManifestNotConfigured=true.");
+            return false;
+        }
+
+        string manifestPath = Path.Combine(GetSessionDirectoryPath(sessionId), document.Audio.StoredRelativePath);
+        if (!File.Exists(manifestPath)) {
+            Log($"PruneLiveRecordingAudioAfterTime skipped. sessionId='{sessionId}', manifestMissing=true.");
+            return false;
+        }
+
+        double cutoff = Math.Max(0, keepUntilSecondsInclusive);
+        const double epsilon = 0.000001d;
+        LiveRecordingManifest manifest = LoadLiveRecordingManifest(manifestPath);
+        string sessionDirectoryPath = GetSessionDirectoryPath(sessionId);
+
+        List<LiveRecordingSegmentManifest> keptSegments = manifest.Segments
+            .Where(segment => (segment.StartSeconds + segment.DurationSeconds) <= cutoff + epsilon)
+            .OrderBy(segment => segment.StartSeconds)
+            .ToList();
+        HashSet<string> keptRelativePaths = keptSegments
+            .Where(segment => !string.IsNullOrWhiteSpace(segment.RelativePath))
+            .Select(segment => NormalizeRelativePath(segment.RelativePath))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        bool removedAny = false;
+        foreach (LiveRecordingSegmentManifest segment in manifest.Segments) {
+            string relativePath = NormalizeRelativePath(segment.RelativePath ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(relativePath) || keptRelativePaths.Contains(relativePath)) {
+                continue;
+            }
+
+            string segmentPath = Path.Combine(sessionDirectoryPath, relativePath);
+            if (File.Exists(segmentPath)) {
+                File.Delete(segmentPath);
+            }
+
+            removedAny = true;
+        }
+
+        manifest.Segments = keptSegments;
+        manifest.TotalDurationSeconds = keptSegments.Sum(segment => Math.Max(0, segment.DurationSeconds));
+        manifest.TotalFileSizeBytes = keptSegments.Sum(segment => Math.Max(0, segment.FileSizeBytes));
+        WriteAllTextAtomic(manifestPath, JsonSerializer.Serialize(manifest, JsonOptions));
+
+        document.Audio.FileSizeBytes = manifest.TotalFileSizeBytes;
+        document.Audio.DurationSeconds = manifest.TotalDurationSeconds > 0 ? manifest.TotalDurationSeconds : null;
+        document.Audio.Sha256 = string.Empty;
+        document.UpdatedUtc = DateTimeOffset.UtcNow;
+        Save(document);
+
+        Log(
+            $"PruneLiveRecordingAudioAfterTime completed. sessionId='{sessionId}', removedAny={removedAny}, " +
+            $"keptSegments={keptSegments.Count:N0}, totalDurationSeconds={manifest.TotalDurationSeconds:N3}.");
+        return removedAny;
+    }
+
     public string? ResolveStoredAudioPathForPlayback(TranscriptSessionDocument document) {
         return ResolveStoredAudioPath(document);
     }
