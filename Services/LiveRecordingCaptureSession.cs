@@ -25,6 +25,7 @@ public sealed class LiveRecordingCaptureSession : IAsyncDisposable
     }
 
     public event EventHandler<PlaybackAudioLevelChangedEventArgs>? AudioLevelChanged;
+    public event EventHandler<LoopbackAudioFrameEventArgs>? AudioFrameAvailable;
     public event EventHandler<Exception>? Faulted;
 
     public string SessionId { get; } = Guid.NewGuid().ToString("N");
@@ -144,6 +145,7 @@ public sealed class LiveRecordingCaptureSession : IAsyncDisposable
         }
 
         _recordingSession.WriteFrame(e);
+        AudioFrameAvailable?.Invoke(this, e);
         AudioLevelChanged?.Invoke(
             this,
             new PlaybackAudioLevelChangedEventArgs(

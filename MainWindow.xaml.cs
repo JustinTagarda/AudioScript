@@ -50,7 +50,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const double ToastTopMargin = 48;
     private const double ToastRightMargin = 48;
     private const double ToastHiddenOffsetY = -14;
-    private static readonly TimeSpan LiveRecordingSegmentDuration = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan LiveRecordingSegmentDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan RowFileTranscriptionHeadSilencePadding = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RowFileTranscriptionTailMargin = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RowFileTranscriptionContextTailMargin = TimeSpan.FromMilliseconds(500);
@@ -124,6 +124,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _liveChunksFailed;
     private LiveRecordingCaptureSession? _liveRecordingCaptureSession;
     private LiveSegmentTranscriptionSession? _liveSegmentTranscriptionSession;
+    private LiveInterimTranscriptionSession? _liveInterimTranscriptionSession;
     private LiveRecordingSession? _liveRecordingSession;
     private LiveTranscriptionWindow? _liveTranscriptionWindow;
     private bool _isLiveSegmentTranscriptionDrainScheduled;
@@ -356,6 +357,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (!vm.CanUseSpeakerDiarization)
         {
+            if (!vm.IsSpeakerDiarizationRuntimeAvailable)
+            {
+                ShowBlockingMessage(
+                    "Speaker detection unavailable",
+                    vm.SpeakerDiarizationRuntimeStatusMessage);
+                return;
+            }
+
             if (vm.IsDevelopmentUnpackagedMode)
             {
                 ShowBlockingMessage(
@@ -905,12 +914,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             recordingSession,
             audioTranscriptionService,
             processLogService);
+        var interimTranscriptionSession = new LiveInterimTranscriptionSession(
+            audioTranscriptionService,
+            processLogService);
         _liveRecordingCaptureSession = captureSession;
         _liveSegmentTranscriptionSession = segmentTranscriptionSession;
+        _liveInterimTranscriptionSession = interimTranscriptionSession;
         _liveRecordingSession = recordingSession;
         ResetLiveChunkCounts();
+        captureSession.AudioFrameAvailable += OnLiveAudioFrameAvailable;
         captureSession.AudioLevelChanged += OnLiveAudioLevelChanged;
         captureSession.Faulted += OnLiveTranscriptionFaulted;
+        interimTranscriptionSession.InterimUpdated += OnLiveInterimTranscriptionUpdated;
+        interimTranscriptionSession.Faulted += OnLiveInterimTranscriptionFaulted;
         segmentTranscriptionSession.SegmentTranscriptionQueued += OnLiveSegmentTranscriptionQueued;
         segmentTranscriptionSession.SegmentTranscriptionStarted += OnLiveSegmentTranscriptionStarted;
         segmentTranscriptionSession.SegmentTranscriptionCompleted += OnLiveSegmentTranscriptionCompleted;
@@ -926,6 +942,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             vm.SetGenerationRunning(isRunning: true, isLiveTranscriptionRunning: true);
             LogLiveTranscription(
                 $"Live transcription started source='{selectedDevice.Name}', kind={selectedDevice.Kind}, deviceNumber={selectedDevice.DeviceNumber}, model='{model}'.");
+            interimTranscriptionSession.Start(model);
             segmentTranscriptionSession.Start(model);
             captureSession.Start();
             _liveTranscriptionWindow?.SetTranscribing(true);
@@ -937,13 +954,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             DetachLiveRecordingCaptureSession(captureSession);
             DetachLiveSegmentTranscriptionSession(segmentTranscriptionSession);
+            DetachLiveInterimTranscriptionSession(interimTranscriptionSession);
             recordingSession.Faulted -= OnLiveRecordingFaulted;
             _liveRecordingCaptureSession = null;
             _liveSegmentTranscriptionSession = null;
+            _liveInterimTranscriptionSession = null;
             _liveRecordingSession = null;
             IsLiveTranscribing = false;
             vm.SetGenerationRunning(isRunning: false);
             await recordingSession.InterruptAsync(ex.Message);
+            await DisposeLiveInterimTranscriptionSessionAsync(interimTranscriptionSession);
             await DisposeLiveSegmentTranscriptionSessionAsync(segmentTranscriptionSession);
             await DisposeLiveRecordingCaptureSessionAsync(captureSession);
             vm.LogHandledException("live transcription start", ex);
@@ -993,6 +1013,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         LiveRecordingCaptureSession? captureSession = _liveRecordingCaptureSession;
         LiveSegmentTranscriptionSession? segmentTranscriptionSession = _liveSegmentTranscriptionSession;
+        LiveInterimTranscriptionSession? interimTranscriptionSession = _liveInterimTranscriptionSession;
         LiveRecordingSession? recordingSession = _liveRecordingSession;
         if (captureSession is null)
         {
@@ -1047,7 +1068,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 }
             }
 
+            if (interimTranscriptionSession is not null)
+            {
+                await interimTranscriptionSession.StopAsync();
+            }
+
             DrainPendingLiveSegmentTranscriptionResults();
+            vm.ClearLiveInterimTranscriptionBlock();
             vm.SaveLiveTranscriptSession();
             LogLiveTranscription("Live transcription stopped.");
             _liveTranscriptionWindow?.SetStoppedActivity(recordingSession?.IsFaulted == true);
@@ -1091,6 +1118,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 DetachLiveSegmentTranscriptionSession(segmentTranscriptionSession);
             }
+            if (interimTranscriptionSession is not null)
+            {
+                DetachLiveInterimTranscriptionSession(interimTranscriptionSession);
+            }
             if (recordingSession is not null)
             {
                 recordingSession.Faulted -= OnLiveRecordingFaulted;
@@ -1098,6 +1129,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             _liveRecordingCaptureSession = null;
             _liveSegmentTranscriptionSession = null;
+            _liveInterimTranscriptionSession = null;
             _liveRecordingSession = null;
             IsLiveTranscribing = false;
             vm.SetGenerationRunning(isRunning: false);
@@ -1105,6 +1137,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (segmentTranscriptionSession is not null)
             {
                 await DisposeLiveSegmentTranscriptionSessionAsync(segmentTranscriptionSession);
+            }
+            if (interimTranscriptionSession is not null)
+            {
+                await DisposeLiveInterimTranscriptionSessionAsync(interimTranscriptionSession);
             }
             await DisposeLiveRecordingCaptureSessionAsync(captureSession);
         }
@@ -1267,6 +1303,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 e.GainMultiplier,
                 e.AutomaticGainApplied)),
             DispatcherPriority.Background);
+    }
+
+    private void OnLiveAudioFrameAvailable(object? sender, LoopbackAudioFrameEventArgs e)
+    {
+        LiveInterimTranscriptionSession? session = _liveInterimTranscriptionSession;
+        if (session is null)
+        {
+            return;
+        }
+
+        try
+        {
+            session.AddAudioFrame(e.Buffer, e.WaveFormat);
+        }
+        catch (Exception ex)
+        {
+            _boundViewModel?.LogHandledException("live interim frame", ex);
+        }
+    }
+
+    private void OnLiveInterimTranscriptionUpdated(object? sender, LiveInterimTranscriptionUpdatedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (DataContext is not MainViewModel vm || _isLiveTranscriptionStopping)
+            {
+                return;
+            }
+
+            vm.UpsertLiveInterimTranscriptionBlock(e.Text, e.SequenceIndex, e.StartOffset, e.EndOffset);
+            _liveTranscriptionWindow?.SetInterimTranscriptionActivity(BuildLogPreview(e.Text));
+        }), DispatcherPriority.Background);
+    }
+
+    private void OnLiveInterimTranscriptionFaulted(object? sender, Exception ex)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _boundViewModel?.LogHandledException("live interim transcription", ex);
+        }), DispatcherPriority.Background);
     }
 
     private void OnLiveSegmentTranscriptionQueued(object? sender, LiveSegmentTranscriptionQueuedEventArgs e)
@@ -1466,6 +1542,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void DetachLiveRecordingCaptureSession(LiveRecordingCaptureSession session)
     {
+        session.AudioFrameAvailable -= OnLiveAudioFrameAvailable;
         session.AudioLevelChanged -= OnLiveAudioLevelChanged;
         session.Faulted -= OnLiveTranscriptionFaulted;
     }
@@ -1476,6 +1553,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         session.SegmentTranscriptionStarted -= OnLiveSegmentTranscriptionStarted;
         session.SegmentTranscriptionCompleted -= OnLiveSegmentTranscriptionCompleted;
         session.SegmentTranscriptionFailed -= OnLiveSegmentTranscriptionFailed;
+    }
+
+    private void DetachLiveInterimTranscriptionSession(LiveInterimTranscriptionSession session)
+    {
+        session.InterimUpdated -= OnLiveInterimTranscriptionUpdated;
+        session.Faulted -= OnLiveInterimTranscriptionFaulted;
     }
 
     private void OnLiveTranscriptionWindowClosed(object? sender, EventArgs e)
@@ -2255,6 +2338,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return "Speaker diarization requires an x64 AudioScript build.";
         }
 
+        if (combinedMessages.Contains("torchcodec", StringComparison.OrdinalIgnoreCase)
+            || combinedMessages.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Speaker detection runtime is installed but audio decoding dependencies are not compatible yet. The app will continue with fallback speaker labeling.";
+        }
+
+        if (combinedMessages.Contains("DiarizeOutput", StringComparison.OrdinalIgnoreCase)
+            || combinedMessages.Contains("itertracks", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Speaker detection runtime is installed but the diarization runtime API changed. The app will continue with fallback speaker labeling.";
+        }
+
         if (combinedMessages.Contains("pyannote", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("model", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("asset", StringComparison.OrdinalIgnoreCase))
@@ -2807,6 +2902,37 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         UpdateTranscriptGridPresentation();
         UpdatePlaybackTimelineHighlight();
         UpdateTranscriptRowActionsVisibility();
+
+        if ((_isLiveTranscribing || _isLiveTranscriptionStopping)
+            && e.Action == NotifyCollectionChangedAction.Add
+            && e.NewItems is { Count: > 0 })
+        {
+            Dispatcher.BeginInvoke(new Action(ScrollTranscriptGridToLastRow), DispatcherPriority.Background);
+        }
+    }
+
+    private void ScrollTranscriptGridToLastRow()
+    {
+        if (FinalizedTranscriptGrid.Items.Count == 0)
+        {
+            return;
+        }
+
+        object? lastItem = FinalizedTranscriptGrid.Items[FinalizedTranscriptGrid.Items.Count - 1];
+        if (lastItem is null)
+        {
+            return;
+        }
+
+        DataGridColumn? anchorColumn = TranscriptTextColumn
+            ?? TimelineTranscriptColumn
+            ?? FinalizedTranscriptGrid.Columns.FirstOrDefault();
+        if (anchorColumn is null)
+        {
+            return;
+        }
+
+        FinalizedTranscriptGrid.ScrollIntoView(lastItem, anchorColumn);
     }
 
     private void FinalizedTranscriptGrid_CurrentCellChanged(object sender, EventArgs e)
@@ -6751,6 +6877,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     private static async Task DisposeLiveSegmentTranscriptionSessionAsync(LiveSegmentTranscriptionSession session)
+    {
+        try
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
+    }
+
+    private static async Task DisposeLiveInterimTranscriptionSessionAsync(LiveInterimTranscriptionSession session)
     {
         try
         {

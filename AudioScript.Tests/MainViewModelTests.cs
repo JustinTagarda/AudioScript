@@ -2042,6 +2042,846 @@ public sealed class MainViewModelTests
         });
     }
 
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_MergesSplitSentenceWithinIncomingChunk()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int added = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "access to the platform",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromMilliseconds(200),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine("access to", TimeSpan.FromMilliseconds(0), TimeSpan.FromMilliseconds(80), false),
+                            new TranscriptionTimedLine("the platform", TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(180), false),
+                        }));
+
+                    Assert.Equal(1, added);
+                    FinalizedTranscriptLineViewModel line = Assert.Single(viewModel.FinalizedTranscriptLines);
+                    Assert.Equal("access to the platform", line.Text);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_MergesAcrossAppendBoundary()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int firstAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "access to",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromMilliseconds(200),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine("access to", TimeSpan.FromMilliseconds(0), TimeSpan.FromMilliseconds(90), false),
+                        }));
+                    int secondAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "the platform",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromMilliseconds(300),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine("the platform", TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(200), false),
+                        }));
+
+                    Assert.Equal(1, firstAdded);
+                    Assert.Equal(1, secondAdded);
+                    Assert.Equal(new[] { "access to", "the platform" }, viewModel.FinalizedTranscriptLines.Select(line => line.Text).ToArray());
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_DoesNotMergeAfterTerminalPunctuation()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int added = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "done now",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromMilliseconds(220),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine("Done.", TimeSpan.FromMilliseconds(0), TimeSpan.FromMilliseconds(90), false),
+                            new TranscriptionTimedLine("Now", TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(200), false),
+                        }));
+
+                    Assert.Equal(2, added);
+                    Assert.Equal(new[] { "Done.", "Now" }, viewModel.FinalizedTranscriptLines.Select(line => line.Text).ToArray());
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_SkipsContainedBoundaryDuplicateFragment()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int firstAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "teams impacted",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromMilliseconds(500),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "The teams impacted include Windows, Microsoft 365, Outlook teams and Surface engineers.",
+                                TimeSpan.FromMilliseconds(1000),
+                                TimeSpan.FromMilliseconds(1100),
+                                false),
+                        }));
+                    int secondAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "outlook teams and surface engineers",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromMilliseconds(550),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "Outlook teams and Surface engineers.",
+                                TimeSpan.FromMilliseconds(1100),
+                                TimeSpan.FromMilliseconds(1180),
+                                false),
+                        }));
+
+                    Assert.Equal(1, firstAdded);
+                    Assert.Equal(0, secondAdded);
+                    FinalizedTranscriptLineViewModel line = Assert.Single(viewModel.FinalizedTranscriptLines);
+                    Assert.Contains("Outlook teams and Surface engineers.", line.Text, StringComparison.Ordinal);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_DoesNotRunawayMergeAcrossManyRows()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int added = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "multi row",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(26),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine("watch them love it", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(15), false),
+                            new TranscriptionTimedLine("and use it every day", TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(20), false),
+                            new TranscriptionTimedLine("and then cancelled licenses", TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(25), false),
+                            new TranscriptionTimedLine("and this decision was surprising", TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(30), false),
+                            new TranscriptionTimedLine("and costly for teams", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(35), false),
+                        }));
+
+                    Assert.True(added >= 2);
+                    Assert.True(viewModel.FinalizedTranscriptLines.Count >= 2);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_MergeRemovesOverlappedBoundaryWords()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int added = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "overlap merge",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(10),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine("watch them love it and use it every day", TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(10), false),
+                            new TranscriptionTimedLine("and use it every day and then cancelled most licenses", TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(15), false),
+                        }));
+
+                    Assert.Equal(1, added);
+                    FinalizedTranscriptLineViewModel line = Assert.Single(viewModel.FinalizedTranscriptLines);
+                    Assert.Equal(
+                        "watch them love it and use it every day and then cancelled most licenses",
+                        line.Text);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_SkipsBoundaryMostlyOverlappingPrefixFragment()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    int firstAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "row one",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(1),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "And if Microsoft's pulling back, maybe the rest of the industry should probably pay attention.",
+                                TimeSpan.FromSeconds(26),
+                                TimeSpan.FromSeconds(30),
+                                false),
+                        }));
+                    int secondAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "row two",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(1),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "you should probably pay attention.",
+                                TimeSpan.FromSeconds(30),
+                                TimeSpan.FromSeconds(32),
+                                false),
+                        }));
+
+                    Assert.Equal(1, firstAdded);
+                    Assert.Equal(0, secondAdded);
+                    Assert.Single(viewModel.FinalizedTranscriptLines);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_TrimsBoundaryPrefixOverlapBeforeAppend()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    _ = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "first",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(1),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "Watch them love it and use it every day.",
+                                TimeSpan.FromSeconds(8),
+                                TimeSpan.FromSeconds(10),
+                                false),
+                        }));
+
+                    int secondAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "second",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(1),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "it every day and then cancelled most of the licenses.",
+                                TimeSpan.FromSeconds(10),
+                                TimeSpan.FromSeconds(16),
+                                false),
+                        }));
+
+                    Assert.Equal(1, secondAdded);
+                    Assert.Equal(2, viewModel.FinalizedTranscriptLines.Count);
+                    Assert.Equal(
+                        "and then cancelled most of the licenses.",
+                        viewModel.FinalizedTranscriptLines[1].Text);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task UpsertLiveInterimTranscriptionBlock_ReplacesProvisionalBlockWithMultipleRows()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    viewModel.UpsertLiveInterimTranscriptionBlock(
+                        "first draft\nsecond draft",
+                        sequenceIndex: 1,
+                        TimeSpan.FromSeconds(1),
+                        TimeSpan.FromSeconds(3));
+                    viewModel.UpsertLiveInterimTranscriptionBlock(
+                        "third draft\nfourth draft",
+                        sequenceIndex: 2,
+                        TimeSpan.FromSeconds(2),
+                        TimeSpan.FromSeconds(4));
+
+                    FinalizedTranscriptLineViewModel[] rows = viewModel.FinalizedTranscriptLines.ToArray();
+                    Assert.Equal(2, rows.Length);
+                    Assert.All(rows, row => Assert.True(row.IsProvisional));
+                    Assert.Equal("third draft", rows[0].Text);
+                    Assert.Equal("fourth draft", rows[1].Text);
+                    Assert.Equal(TimeSpan.FromSeconds(2), rows[0].StartOffset);
+                    Assert.Equal(TimeSpan.FromSeconds(4), rows[1].EndOffset);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task UpsertLiveInterimTranscriptionBlock_IgnoresStaleSequence()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    viewModel.UpsertLiveInterimTranscriptionBlock(
+                        "newer interim",
+                        sequenceIndex: 4,
+                        TimeSpan.FromSeconds(3),
+                        TimeSpan.FromSeconds(5));
+                    viewModel.UpsertLiveInterimTranscriptionBlock(
+                        "older interim should be ignored",
+                        sequenceIndex: 3,
+                        TimeSpan.FromSeconds(1),
+                        TimeSpan.FromSeconds(2));
+
+                    FinalizedTranscriptLineViewModel line = Assert.Single(viewModel.FinalizedTranscriptLines);
+                    Assert.Equal("newer interim", line.Text);
+                    Assert.Equal(TimeSpan.FromSeconds(3), line.StartOffset);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task UpsertLiveInterimTranscriptionBlock_SplitsLongSingleLineIntoMultipleRows()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    viewModel.UpsertLiveInterimTranscriptionBlock(
+                        "this is a long single line interim transcription update that should be split into multiple provisional rows",
+                        sequenceIndex: 1,
+                        TimeSpan.FromSeconds(10),
+                        TimeSpan.FromSeconds(14));
+
+                    Assert.True(viewModel.FinalizedTranscriptLines.Count >= 2);
+                    Assert.All(viewModel.FinalizedTranscriptLines, row => Assert.True(row.IsProvisional));
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task SaveLiveTranscriptSession_DoesNotPersistProvisionalRows()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.True(viewModel.EnsureLiveTranscriptSession("test source"));
+                    viewModel.UpsertLiveInterimTranscriptionBlock(
+                        "live interim text\nline 2",
+                        sequenceIndex: 1,
+                        TimeSpan.FromSeconds(1),
+                        TimeSpan.FromSeconds(3));
+                    viewModel.SaveLiveTranscriptSession();
+
+                    TranscriptSessionSummary summary = Assert.Single(sessionStore.ListRecentSessions());
+                    TranscriptSessionLoadResult loaded = sessionStore.LoadSession(summary.SessionId);
+                    Assert.Empty(loaded.Document.Transcript.Lines);
+                    Assert.True(string.IsNullOrWhiteSpace(loaded.Document.Transcript.FinalText));
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
     private static Task RunInStaAsync(Func<Task> action)
     {
         var completionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

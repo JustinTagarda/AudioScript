@@ -69,6 +69,17 @@ public partial class App : System.Windows.Application
         var startupProvisioningCoordinator = new StartupAssetProvisioningCoordinator(
             assetProvisioningService,
             processLogService);
+        var pyannoteCommunityModelManager = new PyannoteCommunityModelManager(
+            assetProvisioningService,
+            appDataPathProvider);
+        var pythonDependencyRepairService = new PythonDependencyRepairService(
+            pyannoteCommunityModelManager,
+            processLogService);
+        var startupDependencyHealthCoordinator = new StartupDependencyHealthCoordinator(
+            startupProvisioningCoordinator,
+            assetProvisioningService,
+            pythonDependencyRepairService,
+            processLogService);
 
         var appDataMigrationService = new AppDataMigrationService(appDataPathProvider, processLogService);
         var appVersionProvider = new AppVersionProvider();
@@ -116,7 +127,11 @@ public partial class App : System.Windows.Application
         _appThemeService.Apply(appPreferencesSnapshot.ThemePreference);
 
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        if (!RunStartupProvisioningIfRequired(startupProvisioningCoordinator, processLogService))
+        StartupDependencyHealthResult startupDependencyHealthResult = RunStartupDependencyHealthCheck(
+            startupProvisioningCoordinator,
+            startupDependencyHealthCoordinator,
+            processLogService);
+        if (!startupDependencyHealthResult.Succeeded && !startupDependencyHealthResult.Degraded)
         {
             processLogService.UpdateCrashContext("app.startup.provisioning.aborted");
             Shutdown();
@@ -149,9 +164,6 @@ public partial class App : System.Windows.Application
             audioChunkingService,
             whisperTranscriptionService,
             processLogService);
-        var pyannoteCommunityModelManager = new PyannoteCommunityModelManager(
-            assetProvisioningService,
-            appDataPathProvider);
         var pyannoteCommunityDiarizationEngine = new PyannoteCommunityDiarizationEngine(
             audioStandardizer,
             pyannoteCommunityModelManager,
@@ -184,7 +196,12 @@ public partial class App : System.Windows.Application
             appPreferencesSnapshot,
             appUpdateService: _appUpdateService,
             entitlementService: entitlementService,
-            () => whisperModelManager.GetSelectableTranscriptionModels());
+            () => whisperModelManager.GetSelectableTranscriptionModels(),
+            isSpeakerDiarizationRuntimeAvailable: !startupDependencyHealthResult.FailedItems.Any(item =>
+                item.Category == DependencyHealthCategory.PythonModule
+                || string.Equals(item.Id, PyannoteCommunityModelManager.PyannoteModelAssetId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(item.Id, PyannoteCommunityModelManager.PyannotePythonX64AssetId, StringComparison.OrdinalIgnoreCase)),
+            speakerDiarizationRuntimeStatusMessage: BuildSpeakerDiarizationDependencyMessage(startupDependencyHealthResult));
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
@@ -232,22 +249,24 @@ public partial class App : System.Windows.Application
         processLogService.UpdateCrashContext("app.idle.ready");
     }
 
-    private bool RunStartupProvisioningIfRequired(
+    private StartupDependencyHealthResult RunStartupDependencyHealthCheck(
         StartupAssetProvisioningCoordinator startupProvisioningCoordinator,
+        IStartupDependencyHealthCoordinator startupDependencyHealthCoordinator,
         ProcessLogService processLogService)
     {
         IReadOnlyList<ProvisionedAssetDescriptor> requiredAssetsForDisplay = startupProvisioningCoordinator.GetRequiredAssetsForStartupDisplay();
-        IReadOnlyList<ProvisionedAssetDescriptor> requiredAssetsNeedingInstall = startupProvisioningCoordinator.GetRequiredAssetsNeedingInstall();
-        if (requiredAssetsNeedingInstall.Count == 0)
-        {
-            processLogService.Log(
-                nameof(StartupAssetProvisioningCoordinator),
-                "startup_provisioning skipped; all required assets are already installed.");
-            return true;
-        }
-
         var startupWindow = new StartupProvisioningWindow();
-        var viewModel = new StartupProvisioningWindowViewModel(requiredAssetsForDisplay);
+        var pythonDependencies = new (string Id, string DisplayName)[]
+        {
+            ("torch", "torch"),
+            ("torchaudio", "torchaudio"),
+            ("pyannote.audio", "pyannote.audio"),
+        };
+        var dependencyDisplayItems = requiredAssetsForDisplay
+            .Select(asset => (asset.Id, asset.DisplayName))
+            .Concat(pythonDependencies)
+            .ToArray();
+        var viewModel = new StartupProvisioningWindowViewModel(dependencyDisplayItems);
         foreach (ProvisionedAssetDescriptor asset in requiredAssetsForDisplay)
         {
             AssetProvisioningStatus status = startupProvisioningCoordinator.GetAssetStatus(asset.Id);
@@ -262,24 +281,24 @@ public partial class App : System.Windows.Application
         }
 
         startupWindow.DataContext = viewModel;
-        processLogService.Log("StartupProvisioning", "Startup provisioning dialog opened modally.");
+        processLogService.Log("StartupProvisioning", "Startup dependency check dialog opened modally.");
 
-        StartupProvisioningResult? provisioningResult = null;
+        StartupDependencyHealthResult? healthResult = null;
         var cancellationTokenSource = new CancellationTokenSource();
         startupWindow.CancellationTokenSource = cancellationTokenSource;
         startupWindow.ContentRendered += async (_, _) =>
         {
             try
             {
-                var progress = new Progress<AssetProvisioningProgress>(assetProgress =>
+                var progress = new Progress<StartupDependencyHealthProgress>(dependencyProgress =>
                 {
-                    viewModel.UpdateProgress(assetProgress);
+                    viewModel.UpdateProgress(dependencyProgress);
                 });
 
-                StartupProvisioningResult result = await startupProvisioningCoordinator
-                    .ProvisionRequiredAssetsAsync(progress, cancellationTokenSource.Token)
+                StartupDependencyHealthResult result = await startupDependencyHealthCoordinator
+                    .RunAsync(progress, cancellationTokenSource.Token)
                     .ConfigureAwait(true);
-                provisioningResult = result;
+                healthResult = result;
 
                 if (result.Succeeded)
                 {
@@ -287,10 +306,10 @@ public partial class App : System.Windows.Application
                 }
                 else
                 {
-                    viewModel.MarkFailed("One or more startup assets failed to install.");
+                    viewModel.MarkFailed("Startup dependency check finished with unresolved items. AudioScript will continue in degraded mode.");
                 }
 
-                startupWindow.CloseWithResult(result.Succeeded);
+                startupWindow.CloseWithResult(true);
             }
             catch (OperationCanceledException)
             {
@@ -299,21 +318,23 @@ public partial class App : System.Windows.Application
             }
             catch (Exception ex)
             {
-                processLogService.LogException(
-                    nameof(StartupAssetProvisioningCoordinator),
-                    "Startup asset provisioning failed.",
-                    ex);
-                viewModel.MarkFailed("Startup asset installation failed.");
-                provisioningResult = new StartupProvisioningResult(
-                    RequiredAssetCount: requiredAssetsNeedingInstall.Count,
-                    InstalledAssetCount: 0,
-                    FailedAssetCount: requiredAssetsNeedingInstall.Count,
-                    WasCanceled: false,
-                    Failures: requiredAssetsNeedingInstall.Select(asset => new StartupProvisioningAssetFailure(
-                        asset.Id,
-                        asset.DisplayName,
-                        "Startup asset installation failed.",
-                        ex.Message)).ToArray());
+                processLogService.LogException("StartupDependency", "Startup dependency check failed.", ex);
+                viewModel.MarkFailed("Startup dependency check failed unexpectedly. AudioScript will continue with degraded functionality where possible.");
+                healthResult = new StartupDependencyHealthResult(
+                    Succeeded: false,
+                    Degraded: true,
+                    FailedItems:
+                    [
+                        new DependencyHealthItem(
+                            "startup-dependency-check",
+                            "Startup dependency health check",
+                            DependencyHealthCategory.Asset,
+                            DependencyHealthStatus.Failed,
+                            ex.Message,
+                            "Some features may be unavailable.",
+                            [])
+                    ],
+                    AttemptedRepairs: []);
                 startupWindow.CloseWithResult(false);
             }
         };
@@ -321,50 +342,72 @@ public partial class App : System.Windows.Application
         bool? dialogResult = startupWindow.ShowDialog();
         cancellationTokenSource.Dispose();
 
-        if (provisioningResult is not null && provisioningResult.FailedAssetCount > 0)
+        if (dialogResult != true)
         {
-            ShowStartupProvisioningFailureSummary(provisioningResult.Failures);
-            ShowStartupProvisioningFailureExitReason(provisioningResult.Failures.Count);
-            return false;
+            return new StartupDependencyHealthResult(
+                Succeeded: false,
+                Degraded: false,
+                FailedItems:
+                [
+                    new DependencyHealthItem(
+                        "startup-canceled",
+                        "Startup initialization",
+                        DependencyHealthCategory.Asset,
+                        DependencyHealthStatus.Failed,
+                        "Startup dependency initialization was canceled.",
+                        "Application startup was canceled.",
+                        [])
+                ],
+                AttemptedRepairs: []);
         }
 
-        return dialogResult == true;
+        if (healthResult is not null && healthResult.FailedItems.Count > 0)
+        {
+            ShowStartupDependencyFailureSummary(healthResult.FailedItems);
+        }
+
+        return healthResult ?? new StartupDependencyHealthResult(true, false, [], []);
     }
 
-    private static void ShowStartupProvisioningFailureSummary(
-        IReadOnlyList<StartupProvisioningAssetFailure> failures)
+    private static void ShowStartupDependencyFailureSummary(
+        IReadOnlyList<DependencyHealthItem> failures)
     {
         var builder = new StringBuilder();
         builder.AppendLine("One or more required startup dependencies could not be installed:");
         builder.AppendLine();
 
-        foreach (StartupProvisioningAssetFailure failure in failures)
+        foreach (DependencyHealthItem failure in failures)
         {
-            builder.AppendLine($"- {failure.DisplayName} ({failure.AssetId})");
-            builder.AppendLine($"  Reason: {failure.Reason}");
-            if (!string.IsNullOrWhiteSpace(failure.LimitationOrBlocker))
+            builder.AppendLine($"- {failure.DisplayName} ({failure.Id})");
+            builder.AppendLine($"  Reason: {failure.Message}");
+            if (!string.IsNullOrWhiteSpace(failure.Impact))
             {
-                builder.AppendLine($"  Limitation/Blocker: {failure.LimitationOrBlocker}");
+                builder.AppendLine($"  Impact: {failure.Impact}");
             }
 
             builder.AppendLine();
         }
 
         var dialog = new ErrorDialogWindow(builder.ToString().TrimEnd());
-        dialog.Title = "Startup dependency installation results";
+        dialog.Title = "Startup dependency check results";
         _ = dialog.ShowDialog();
     }
 
-    private static void ShowStartupProvisioningFailureExitReason(int failedAssetCount)
+    private static string BuildSpeakerDiarizationDependencyMessage(StartupDependencyHealthResult result)
     {
-        string message =
-            $"AudioScript cannot continue because {failedAssetCount} required startup dependency " +
-            "failed to install. Resolve the dependency issue and start the app again.";
-        _ = System.Windows.MessageBox.Show(
-            message,
-            "Startup dependencies unavailable",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
+        DependencyHealthItem[] diarizationFailures = result.FailedItems
+            .Where(item => item.Category == DependencyHealthCategory.PythonModule
+                || string.Equals(item.Id, PyannoteCommunityModelManager.PyannoteModelAssetId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(item.Id, PyannoteCommunityModelManager.PyannotePythonX64AssetId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (diarizationFailures.Length == 0)
+        {
+            return "Speaker diarization dependencies are available.";
+        }
+
+        string joined = string.Join(", ", diarizationFailures.Select(item => item.DisplayName));
+        return $"Speaker diarization dependencies are unavailable ({joined}). Audio transcription remains available, but real speaker diarization will use fallback labels.";
     }
 
     private static IAudioLoopbackCaptureService CreateLiveCaptureService(

@@ -9,8 +9,8 @@ namespace AudioScript.ViewModels;
 public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
 {
     private string _headerText = "Initializing... please wait";
-    private string _currentAssetText = "Checking required startup assets...";
-    private string _currentActivityText = "Downloading and installing required startup assets.";
+    private string _currentAssetText = "Checking required startup dependencies...";
+    private string _currentActivityText = "Downloading and installing required startup dependencies.";
     private bool _showCancelButton = true;
     private bool _wasCanceled;
 
@@ -18,6 +18,12 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
     {
         Assets = new ObservableCollection<StartupProvisioningAssetViewModel>(
             assets.Select(asset => new StartupProvisioningAssetViewModel(asset.Id, asset.DisplayName)));
+    }
+
+    public StartupProvisioningWindowViewModel(IEnumerable<(string Id, string DisplayName)> dependencies)
+    {
+        Assets = new ObservableCollection<StartupProvisioningAssetViewModel>(
+            dependencies.Select(dependency => new StartupProvisioningAssetViewModel(dependency.Id, dependency.DisplayName)));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -68,6 +74,21 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
         WasCanceled = false;
     }
 
+    public void UpdateProgress(StartupDependencyHealthProgress progress)
+    {
+        string statusText = progress.Status.ToString();
+        if (progress.Attempt > 0 && progress.MaxAttempts > 0)
+        {
+            statusText = $"{statusText} ({progress.Attempt}/{progress.MaxAttempts})";
+        }
+
+        SetAssetStatus(progress.DependencyId, statusText, progress.Percent);
+        CurrentAssetText = progress.DisplayName;
+        CurrentActivityText = progress.Message;
+        ShowCancelButton = true;
+        WasCanceled = false;
+    }
+
     public void SetAssetStatus(string assetId, string statusText, double percent)
     {
         if (Assets.FirstOrDefault(asset => string.Equals(asset.AssetId, assetId, StringComparison.OrdinalIgnoreCase)) is { } asset)
@@ -80,7 +101,7 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
     {
         HeaderText = "Initialization complete.";
         CurrentAssetText = "Initialization complete.";
-        CurrentActivityText = "All required startup assets are ready.";
+        CurrentActivityText = "All required startup dependencies are ready.";
         ShowCancelButton = false;
         WasCanceled = false;
 
@@ -92,8 +113,8 @@ public sealed class StartupProvisioningWindowViewModel : INotifyPropertyChanged
 
     public void MarkFailed(string message)
     {
-        HeaderText = "Startup asset installation failed.";
-        CurrentAssetText = "Startup asset installation failed.";
+        HeaderText = "Startup dependency check completed with issues.";
+        CurrentAssetText = "Startup dependency check completed with issues.";
         CurrentActivityText = message;
         ShowCancelButton = false;
         WasCanceled = false;

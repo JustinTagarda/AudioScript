@@ -18,6 +18,7 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
     private string _speakerLabelSource;
     private int? _diarizationRevision;
     private int? _lastDiarizedChunkIndex;
+    private bool _isProvisional;
 
     public FinalizedTranscriptLineViewModel(
         TimeSpan? startOffset,
@@ -29,7 +30,8 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         bool isTranscriptionPartial = false,
         string speakerLabelSource = "",
         int? diarizationRevision = null,
-        int? lastDiarizedChunkIndex = null) {
+        int? lastDiarizedChunkIndex = null,
+        bool isProvisional = false) {
         _startOffset = startOffset;
         _endOffset = endOffset;
         IsTimestampEstimated = isTimestampEstimated;
@@ -40,6 +42,7 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
         _speakerLabelSource = speakerLabelSource?.Trim() ?? string.Empty;
         _diarizationRevision = diarizationRevision;
         _lastDiarizedChunkIndex = lastDiarizedChunkIndex;
+        _isProvisional = isProvisional;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -226,6 +229,18 @@ public sealed class FinalizedTranscriptLineViewModel : INotifyPropertyChanged {
             }
 
             _lastDiarizedChunkIndex = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsProvisional {
+        get => _isProvisional;
+        set {
+            if (_isProvisional == value) {
+                return;
+            }
+
+            _isProvisional = value;
             OnPropertyChanged();
         }
     }

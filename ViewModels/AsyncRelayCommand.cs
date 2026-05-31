@@ -1,4 +1,5 @@
 using System.Windows.Input;
+using System.Diagnostics;
 
 namespace AudioScript.ViewModels;
 
@@ -27,6 +28,9 @@ public sealed class AsyncRelayCommand : ICommand {
             _isExecuting = true;
             RaiseCanExecuteChanged();
             await _executeAsync();
+        }
+        catch (Exception ex) {
+            Trace.TraceError($"AsyncRelayCommand execution failed: {ex}");
         }
         finally {
             _isExecuting = false;

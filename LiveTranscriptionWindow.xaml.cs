@@ -2,6 +2,7 @@ using System.Windows;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using AudioScript.Audio;
 
 namespace AudioScript;
@@ -24,6 +25,7 @@ public partial class LiveTranscriptionWindow : Window
     private bool _isStopping;
     private bool _isOperationPending;
     private bool _allowClose;
+    private bool _autoCloseAfterStop;
     private bool _closeRequestedWhileStopping;
     private bool _closeEscalationRequested;
     private bool _recordingSavedForClose;
@@ -33,6 +35,8 @@ public partial class LiveTranscriptionWindow : Window
     private int _drainCompletedChunks;
     private int _latestGeneratedChunks;
     private int _latestTranscribedChunks;
+    private int _latestPendingChunks;
+    private readonly DispatcherTimer _autoClosePollTimer;
     private LiveAudioGainOptions _gainOptions = LiveAudioGainOptions.Default;
 
     public LiveTranscriptionWindow(
@@ -48,6 +52,11 @@ public partial class LiveTranscriptionWindow : Window
         _closeTranscriptionAsync = closeTranscriptionAsync ?? StopAndAllowCloseAsync;
         _escalateCloseAsync = escalateCloseAsync;
         _persistGainOptions = persistGainOptions;
+        _autoClosePollTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(500),
+        };
+        _autoClosePollTimer.Tick += AutoClosePollTimer_Tick;
         InitializeComponent();
         DeviceComboBox.ItemsSource = devices;
         DeviceComboBox.SelectedIndex = devices.Count > 0 ? 0 : -1;
@@ -115,6 +124,7 @@ public partial class LiveTranscriptionWindow : Window
             _drainCompletedChunks = 0;
             _latestGeneratedChunks = 0;
             _latestTranscribedChunks = 0;
+            _latestPendingChunks = 0;
             VolumeMeter.IsIndeterminate = false;
             VolumeMeter.Value = 0;
             UpdateProgressMeterLabel();
@@ -249,6 +259,7 @@ public partial class LiveTranscriptionWindow : Window
     public void SetRecordingSavedForClose()
     {
         _recordingSavedForClose = true;
+        TryAutoCloseAfterDrainCompletion();
         UpdateControlState();
     }
 
@@ -273,6 +284,7 @@ public partial class LiveTranscriptionWindow : Window
         _latestGeneratedChunks = Math.Max(0, generated);
         _latestTranscribedChunks = Math.Max(0, transcribed);
         int pending = Math.Max(0, queued) + Math.Max(0, processing);
+        _latestPendingChunks = pending;
         string text =
             $"Chunks: generated {Math.Max(0, generated):N0} | in queue {Math.Max(0, queued):N0} | " +
             $"processing {Math.Max(0, processing):N0} | transcribed {Math.Max(0, transcribed):N0} | " +
@@ -307,6 +319,10 @@ public partial class LiveTranscriptionWindow : Window
             LatestActivityText.Text = pending > 0
                 ? $"Latest event: pending chunk transcription remaining {pending:N0}"
                 : "Latest event: pending chunk transcription completed";
+            if (pending == 0)
+            {
+                TryAutoCloseAfterDrainCompletion();
+            }
         }
     }
 
@@ -341,11 +357,6 @@ public partial class LiveTranscriptionWindow : Window
             _isOperationPending = false;
             UpdateControlState();
         }
-    }
-
-    private void Close_Click(object sender, RoutedEventArgs e)
-    {
-        Close();
     }
 
     private void DeviceComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -398,6 +409,8 @@ public partial class LiveTranscriptionWindow : Window
 
     private void OnWindowClosed(object? sender, EventArgs e)
     {
+        StopAutoClosePolling();
+        _autoClosePollTimer.Tick -= AutoClosePollTimer_Tick;
         SourceInitialized -= OnSourceInitialized;
         Closing -= OnWindowClosing;
         Closed -= OnWindowClosed;
@@ -410,12 +423,14 @@ public partial class LiveTranscriptionWindow : Window
 
     private async Task StopTranscriptionAsync()
     {
+        bool shouldAutoClose = false;
         _isOperationPending = true;
         UpdateControlState();
         try
         {
             await _stopTranscriptionAsync();
             SetTranscribing(false);
+            shouldAutoClose = _autoCloseAfterStop && !_isTranscribing;
         }
         finally
         {
@@ -423,6 +438,14 @@ public partial class LiveTranscriptionWindow : Window
             _isStopping = false;
             UpdateControlState();
             CloseIfDeferredAndSafe();
+        }
+
+        if (shouldAutoClose)
+        {
+            _autoCloseAfterStop = false;
+            StopAutoClosePolling();
+            _allowClose = true;
+            Close();
         }
     }
 
@@ -465,9 +488,69 @@ public partial class LiveTranscriptionWindow : Window
             return;
         }
 
+        _autoCloseAfterStop = true;
+        StartAutoClosePolling();
         _isStopping = true;
         UpdateControlState();
         _ = StopTranscriptionAsync();
+    }
+
+    private void TryAutoCloseAfterDrainCompletion()
+    {
+        if (!_autoCloseAfterStop
+            || !_isStopping
+            || _stageProgressMode != StageProgressMode.DrainPendingChunks)
+        {
+            return;
+        }
+
+        if (_latestPendingChunks > 0)
+        {
+            return;
+        }
+
+        bool canCloseNow = _recordingSavedForClose || _drainInitialPendingChunks == 0;
+        if (!canCloseNow)
+        {
+            return;
+        }
+
+        _autoCloseAfterStop = false;
+        StopAutoClosePolling();
+        _allowClose = true;
+        Close();
+    }
+
+    private void StartAutoClosePolling()
+    {
+        if (_autoClosePollTimer.IsEnabled)
+        {
+            return;
+        }
+
+        _autoClosePollTimer.Start();
+    }
+
+    private void StopAutoClosePolling()
+    {
+        if (_autoClosePollTimer.IsEnabled)
+        {
+            _autoClosePollTimer.Stop();
+        }
+    }
+
+    private void AutoClosePollTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!_autoCloseAfterStop || !_isStopping)
+        {
+            StopAutoClosePolling();
+            return;
+        }
+
+        if (_latestPendingChunks == 0)
+        {
+            TryAutoCloseAfterDrainCompletion();
+        }
     }
 
     private void CloseIfDeferredAndSafe()
@@ -507,7 +590,6 @@ public partial class LiveTranscriptionWindow : Window
     {
         if (DeviceComboBox is null
             || StartStopButton is null
-            || CloseButton is null
             || AutomaticGainCheckBox is null)
         {
             return;
@@ -517,11 +599,10 @@ public partial class LiveTranscriptionWindow : Window
         AutomaticGainCheckBox.IsEnabled = !_isTranscribing && !_isOperationPending;
         StartStopButton.IsEnabled = !_isOperationPending && !_isStopping && (SelectedDevice is not null || _isTranscribing);
         StartStopButton.Content = _isTranscribing
-            ? (_isStopping ? "Stopping" : "Stop")
+            ? (_isStopping ? "Finalizing... please wait" : "Stop")
             : "Start";
         bool isCloseEnabled = (!_isTranscribing && !_isOperationPending)
             || (_isStopping && _recordingSavedForClose);
-        CloseButton.IsEnabled = isCloseEnabled;
         SetSystemCloseEnabled(isCloseEnabled);
     }
 

@@ -7,6 +7,7 @@
         MinWidth="460"
         MinHeight="320"
         WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
         ResizeMode="NoResize">
     <Grid Margin="16">
         <Grid.RowDefinitions>
@@ -92,14 +93,9 @@
                     HorizontalAlignment="Right">
             <Button x:Name="StartStopButton"
                     Content="Start"
-                    MinWidth="84"
-                    Margin="0,0,8,0"
+                    MinWidth="120"
                     IsDefault="True"
                     Click="StartStop_Click"/>
-            <Button x:Name="CloseButton"
-                    Content="Close"
-                    MinWidth="84"
-                    Click="Close_Click"/>
         </StackPanel>
     </Grid>
 </Window>

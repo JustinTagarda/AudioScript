@@ -20,6 +20,11 @@ public sealed record PremiumUpsellRequest(
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
+    private const bool EnableLiveRowMerging = true;
+    private const bool EnableLiveAcrossAppendBoundaryMerging = false;
+    private static readonly TimeSpan LiveMergeMaxGap = TimeSpan.FromMilliseconds(800);
+    private static readonly TimeSpan LiveMergeMaxDuration = TimeSpan.FromSeconds(10);
+    private const int LiveMergeMaxWords = 24;
     private const int BasicSessionLimit = 10;
     private const string SessionLimitUpsellMessage = "Basic is limited to 10 sessions. Delete sessions or upgrade to Premium to add more.";
     private const string AudioFileDialogFilter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*";
@@ -84,11 +89,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool _pendingTranscribeAudioResume;
     private bool _pendingSpeakerDiarizationResume;
     private bool _suppressSessionAutosave;
+    private int _activeLiveInterimSequenceIndex = -1;
     private AppUpdateSnapshot _appUpdateSnapshot;
     private AppEntitlementSnapshot _entitlementSnapshot;
     private int _selectedTranscriptViewIndex;
     private string _pendingImportedAudioFilePath = string.Empty;
     private string _transcriptExportDirectory = string.Empty;
+    private readonly bool _isSpeakerDiarizationRuntimeAvailable;
+    private readonly string _speakerDiarizationRuntimeStatusMessage;
 
     public MainViewModel(
         IEnumerable<TranscriptionModelOption> models,
@@ -102,7 +110,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppPreferencesSnapshot appPreferencesSnapshot,
         IAppUpdateService? appUpdateService = null,
         IEntitlementService? entitlementService = null,
-        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null)
+        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null,
+        bool isSpeakerDiarizationRuntimeAvailable = true,
+        string? speakerDiarizationRuntimeStatusMessage = null)
     {
         _audioTranscriptionService = audioTranscriptionService;
         _speakerDiarizationService = speakerDiarizationService;
@@ -119,6 +129,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _entitlementSnapshot = entitlementService?.CurrentSnapshot
             ?? AppEntitlementSnapshot.Development("AudioScript Premium");
         _availableModelsProvider = availableModelsProvider ?? (() => models.ToArray());
+        _isSpeakerDiarizationRuntimeAvailable = isSpeakerDiarizationRuntimeAvailable;
+        _speakerDiarizationRuntimeStatusMessage = string.IsNullOrWhiteSpace(speakerDiarizationRuntimeStatusMessage)
+            ? "Speaker diarization dependencies are unavailable."
+            : speakerDiarizationRuntimeStatusMessage.Trim();
 
         _autoPlayTimelineSelection = appPreferencesSnapshot.AutoPlayTimelineSelection;
         _selectedThemePreference = appPreferencesSnapshot.ThemePreference;
@@ -204,7 +218,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         AppPreferencesSnapshot appPreferencesSnapshot,
         IAppUpdateService? appUpdateService = null,
         IEntitlementService? entitlementService = null,
-        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null)
+        Func<IReadOnlyList<TranscriptionModelOption>>? availableModelsProvider = null,
+        bool isSpeakerDiarizationRuntimeAvailable = true,
+        string? speakerDiarizationRuntimeStatusMessage = null)
         : this(
             models,
             new PassThroughChunkedAudioTranscriptionService(audioTranscriptionService),
@@ -217,7 +233,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             appPreferencesSnapshot,
             appUpdateService,
             entitlementService,
-            availableModelsProvider)
+            availableModelsProvider,
+            isSpeakerDiarizationRuntimeAvailable,
+            speakerDiarizationRuntimeStatusMessage)
     {
     }
 
@@ -446,8 +464,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         || AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, HasPremium);
 
     public bool CanUseSpeakerDiarization =>
-        IsDevelopmentUnpackagedMode
-        || AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, HasPremium);
+        _isSpeakerDiarizationRuntimeAvailable
+        && (IsDevelopmentUnpackagedMode
+        || AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, HasPremium));
+    
+    public bool IsSpeakerDiarizationRuntimeAvailable =>
+        _isSpeakerDiarizationRuntimeAvailable;
+
+    public string SpeakerDiarizationRuntimeStatusMessage =>
+        _speakerDiarizationRuntimeStatusMessage;
 
     public bool IsTranscribeAudioTranscriptionEnabled =>
         SelectedEngine is not null
@@ -689,7 +714,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public double ApplicationUpdateProgressPercent => _appUpdateSnapshot.ProgressValue * 100;
 
     public bool IsApplicationUpdateActive =>
-        _appUpdateSnapshot.State is AppUpdateState.Checking or AppUpdateState.Downloading or AppUpdateState.Installing;
+        _appUpdateSnapshot.State is AppUpdateState.Downloading or AppUpdateState.Installing;
 
     public bool IsUpdateButtonVisible =>
         _appUpdateSnapshot.State == AppUpdateState.UpdateAvailable
@@ -1129,6 +1154,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public int AppendLiveTranscriptionResult(TranscriptionResult result)
     {
+        ClearLiveInterimTranscriptionBlock();
         IReadOnlyList<TranscriptionTimedLine> timedLines = result.TimedLines
             ?.Where(line => !string.IsNullOrWhiteSpace(line.Text))
             .OrderBy(line => line.StartOffset)
@@ -1144,24 +1170,40 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         int addedCount = 0;
         try
         {
-            foreach (TranscriptionTimedLine timedLine in timedLines)
+            IReadOnlyList<TranscriptionTimedLine> mergedIncoming = EnableLiveRowMerging
+                ? MergeLiveTimedLinesWithinChunk(timedLines)
+                : timedLines;
+            int appendedStartIndex = FinalizedTranscriptLines.Count;
+
+            foreach (TranscriptionTimedLine timedLine in mergedIncoming)
             {
-                if (IsDuplicateLiveSegmentBoundaryLine(timedLine))
+                TranscriptionTimedLine adjustedLine = TrimBoundaryOverlapWithPreviousLine(timedLine);
+                if (string.IsNullOrWhiteSpace(adjustedLine.Text))
+                {
+                    continue;
+                }
+
+                if (IsDuplicateLiveSegmentBoundaryLine(adjustedLine))
                 {
                     AppendLog(
-                        $"Skipped duplicate live segment transcript row at {FormatOffset(timedLine.StartOffset)}: " +
-                        $"'{BuildPreview(timedLine.Text)}'.");
+                        $"Skipped duplicate live segment transcript row at {FormatOffset(adjustedLine.StartOffset)}: " +
+                        $"'{BuildPreview(adjustedLine.Text)}'.");
                     continue;
                 }
 
                 var line = new FinalizedTranscriptLineViewModel(
-                    startOffset: timedLine.StartOffset,
-                    endOffset: timedLine.EndOffset,
-                    isTimestampEstimated: timedLine.IsTimestampEstimated,
-                    text: timedLine.Text.Trim());
+                    startOffset: adjustedLine.StartOffset,
+                    endOffset: adjustedLine.EndOffset,
+                    isTimestampEstimated: adjustedLine.IsTimestampEstimated,
+                    text: adjustedLine.Text.Trim());
                 line.PropertyChanged += OnFinalizedLinePropertyChanged;
                 FinalizedTranscriptLines.Add(line);
                 addedCount++;
+            }
+
+            if (EnableLiveRowMerging && EnableLiveAcrossAppendBoundaryMerging && addedCount > 0)
+            {
+                addedCount -= MergeLiveRowsAcrossAppendBoundary(appendedStartIndex);
             }
 
             if (addedCount == 0)
@@ -1183,6 +1225,486 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return addedCount;
     }
 
+    private IReadOnlyList<TranscriptionTimedLine> MergeLiveTimedLinesWithinChunk(
+        IReadOnlyList<TranscriptionTimedLine> source)
+    {
+        if (source.Count <= 1)
+        {
+            return source;
+        }
+
+        var output = new List<TranscriptionTimedLine>(source.Count);
+        TranscriptionTimedLine current = source[0];
+        for (int index = 1; index < source.Count; index++)
+        {
+            TranscriptionTimedLine next = source[index];
+            if (ShouldMergeLiveSentence(
+                    current.Text,
+                    current.StartOffset,
+                    current.EndOffset,
+                    next.Text,
+                    next.StartOffset,
+                    next.EndOffset))
+            {
+                current = MergeLiveTimedLines(current, next);
+            }
+            else
+            {
+                output.Add(current);
+                current = next;
+            }
+        }
+
+        output.Add(current);
+        return output;
+    }
+
+    private int MergeLiveRowsAcrossAppendBoundary(int appendedStartIndex)
+    {
+        if (FinalizedTranscriptLines.Count <= 1 || appendedStartIndex <= 0 || appendedStartIndex >= FinalizedTranscriptLines.Count)
+        {
+            return 0;
+        }
+
+        int removedCount = 0;
+        int leftIndex = Math.Max(0, appendedStartIndex - 1);
+
+        while (leftIndex >= 0 && leftIndex + 1 < FinalizedTranscriptLines.Count)
+        {
+            FinalizedTranscriptLineViewModel left = FinalizedTranscriptLines[leftIndex];
+            FinalizedTranscriptLineViewModel right = FinalizedTranscriptLines[leftIndex + 1];
+            if (!ShouldMergeLiveSentence(
+                    left.Text,
+                    left.StartOffset,
+                    left.EndOffset,
+                    right.Text,
+                    right.StartOffset,
+                    right.EndOffset))
+            {
+                break;
+            }
+
+            left.Text = ConcatenateLiveRowText(left.Text, right.Text);
+            TimeSpan? mergedEnd = right.EndOffset ?? right.StartOffset ?? left.EndOffset;
+            left.SetTimelineOffsets(left.StartOffset, mergedEnd);
+            right.PropertyChanged -= OnFinalizedLinePropertyChanged;
+            FinalizedTranscriptLines.RemoveAt(leftIndex + 1);
+            removedCount++;
+        }
+
+        return removedCount;
+    }
+
+    private static TranscriptionTimedLine MergeLiveTimedLines(
+        TranscriptionTimedLine left,
+        TranscriptionTimedLine right)
+    {
+        TimeSpan mergedStart = left.StartOffset <= right.StartOffset
+            ? left.StartOffset
+            : right.StartOffset;
+        TimeSpan? mergedEnd = ResolveMergedEndOffset(
+            left.EndOffset,
+            left.StartOffset,
+            right.EndOffset,
+            right.StartOffset);
+
+        return new TranscriptionTimedLine(
+            ConcatenateLiveRowText(left.Text, right.Text),
+            mergedStart,
+            mergedEnd,
+            left.IsTimestampEstimated || right.IsTimestampEstimated);
+    }
+
+    private static TimeSpan? ResolveMergedEndOffset(
+        TimeSpan? leftEnd,
+        TimeSpan leftStart,
+        TimeSpan? rightEnd,
+        TimeSpan rightStart)
+    {
+        TimeSpan leftResolved = leftEnd is TimeSpan leftValue && leftValue > leftStart
+            ? leftValue
+            : leftStart;
+        TimeSpan rightResolved = rightEnd is TimeSpan rightValue && rightValue > rightStart
+            ? rightValue
+            : rightStart;
+        TimeSpan resolved = rightResolved >= leftResolved
+            ? rightResolved
+            : leftResolved;
+        return resolved;
+    }
+
+    private static bool ShouldMergeLiveSentence(
+        string? leftText,
+        TimeSpan? leftStart,
+        TimeSpan? leftEnd,
+        string? rightText,
+        TimeSpan? rightStart,
+        TimeSpan? rightEnd)
+    {
+        string leftTrimmed = leftText?.Trim() ?? string.Empty;
+        string rightTrimmed = rightText?.Trim() ?? string.Empty;
+        if (leftTrimmed.Length == 0 || rightTrimmed.Length == 0)
+        {
+            return false;
+        }
+
+        string normalizedLeft = NormalizeLiveSegmentText(leftTrimmed);
+        string normalizedRight = NormalizeLiveSegmentText(rightTrimmed);
+        if (string.Equals(normalizedLeft, normalizedRight, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (ContainsWholeNormalizedPhrase(normalizedLeft, normalizedRight))
+        {
+            return false;
+        }
+
+        if (HasTerminalSentencePunctuation(leftTrimmed))
+        {
+            return false;
+        }
+
+        bool hasContinuationCue = HasContinuationCue(leftTrimmed, rightTrimmed);
+        bool startsLowercaseContinuation = StartsWithLowercaseWord(rightTrimmed);
+        if (!hasContinuationCue && !startsLowercaseContinuation)
+        {
+            return false;
+        }
+
+        TimeSpan gap = ResolveLiveGap(leftEnd, rightStart);
+        if (gap > LiveMergeMaxGap)
+        {
+            return false;
+        }
+
+        TimeSpan mergedDuration = ResolveMergedDuration(leftStart, leftEnd, rightStart, rightEnd);
+        if (mergedDuration > LiveMergeMaxDuration)
+        {
+            return false;
+        }
+
+        int mergedWords = CountWords(leftTrimmed) + CountWords(rightTrimmed);
+        if (mergedWords > LiveMergeMaxWords)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static TimeSpan ResolveMergedDuration(
+        TimeSpan? leftStart,
+        TimeSpan? leftEnd,
+        TimeSpan? rightStart,
+        TimeSpan? rightEnd)
+    {
+        if (leftStart is not TimeSpan resolvedLeftStart || rightStart is not TimeSpan resolvedRightStart)
+        {
+            return TimeSpan.Zero;
+        }
+
+        TimeSpan start = resolvedLeftStart <= resolvedRightStart
+            ? resolvedLeftStart
+            : resolvedRightStart;
+        TimeSpan resolvedLeftEnd = leftEnd is TimeSpan leftValue && leftValue > resolvedLeftStart
+            ? leftValue
+            : resolvedLeftStart;
+        TimeSpan resolvedRightEnd = rightEnd is TimeSpan rightValue && rightValue > resolvedRightStart
+            ? rightValue
+            : resolvedRightStart;
+        TimeSpan end = resolvedLeftEnd >= resolvedRightEnd
+            ? resolvedLeftEnd
+            : resolvedRightEnd;
+        TimeSpan duration = end - start;
+        return duration < TimeSpan.Zero ? TimeSpan.Zero : duration;
+    }
+
+    private static TimeSpan ResolveLiveGap(TimeSpan? leftEnd, TimeSpan? rightStart)
+    {
+        if (leftEnd is not TimeSpan left || rightStart is not TimeSpan right)
+        {
+            return TimeSpan.Zero;
+        }
+
+        TimeSpan gap = right - left;
+        return gap < TimeSpan.Zero ? TimeSpan.Zero : gap;
+    }
+
+    private static bool HasTerminalSentencePunctuation(string text)
+    {
+        for (int index = text.Length - 1; index >= 0; index--)
+        {
+            char value = text[index];
+            if (char.IsWhiteSpace(value))
+            {
+                continue;
+            }
+
+            return value is '.' or '!' or '?' or '…';
+        }
+
+        return false;
+    }
+
+    private static bool HasContinuationCue(string left, string right)
+    {
+        string[] connectorWords =
+        [
+            "a", "an", "and", "as", "at", "because", "but", "by", "for", "from", "if", "in", "into", "of", "on", "or", "so", "that", "the", "then", "to", "when", "while", "with",
+        ];
+        string lastWord = left
+            .TrimEnd()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .LastOrDefault()?
+            .Trim()
+            .TrimEnd(',', ';', ':', '-')?
+            .ToLowerInvariant() ?? string.Empty;
+        if (connectorWords.Contains(lastWord))
+        {
+            return true;
+        }
+
+        char last = left.TrimEnd().LastOrDefault();
+        if (last is ',' or ';' or ':' or '-')
+        {
+            return true;
+        }
+
+        string firstWord = right
+            .TrimStart()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault()?
+            .Trim()
+            .TrimStart('\"', '\'')
+            .ToLowerInvariant() ?? string.Empty;
+        return connectorWords.Contains(firstWord);
+    }
+
+    private static bool StartsWithLowercaseWord(string text)
+    {
+        foreach (char value in text.TrimStart())
+        {
+            if (!char.IsLetter(value))
+            {
+                continue;
+            }
+
+            return char.IsLower(value);
+        }
+
+        return false;
+    }
+
+    private static string ConcatenateLiveRowText(string? left, string? right)
+    {
+        string leftNormalized = left?.TrimEnd() ?? string.Empty;
+        string rightNormalized = right?.TrimStart() ?? string.Empty;
+        if (leftNormalized.Length == 0)
+        {
+            return rightNormalized;
+        }
+
+        if (rightNormalized.Length == 0)
+        {
+            return leftNormalized;
+        }
+
+        string deduplicatedRight = TrimLeadingWordOverlap(leftNormalized, rightNormalized);
+        if (deduplicatedRight.Length == 0)
+        {
+            return leftNormalized;
+        }
+
+        return $"{leftNormalized} {deduplicatedRight}";
+    }
+
+    private static string TrimLeadingWordOverlap(string left, string right)
+    {
+        string[] leftWords = left.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[] rightWords = right.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (leftWords.Length == 0 || rightWords.Length == 0)
+        {
+            return right;
+        }
+
+        int maxOverlap = Math.Min(leftWords.Length, rightWords.Length);
+        int bestOverlap = 0;
+        for (int size = maxOverlap; size >= 1; size--)
+        {
+            bool match = true;
+            for (int index = 0; index < size; index++)
+            {
+                string leftToken = NormalizeLiveToken(leftWords[leftWords.Length - size + index]);
+                string rightToken = NormalizeLiveToken(rightWords[index]);
+                if (leftToken.Length == 0 || rightToken.Length == 0 || !string.Equals(leftToken, rightToken, StringComparison.Ordinal))
+                {
+                    match = false;
+                    break;
+                }
+            }
+
+            if (match)
+            {
+                bestOverlap = size;
+                break;
+            }
+        }
+
+        if (bestOverlap == 0)
+        {
+            return right;
+        }
+
+        string remaining = string.Join(" ", rightWords.Skip(bestOverlap)).Trim();
+        return remaining;
+    }
+
+    private static string NormalizeLiveToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(token.Length);
+        foreach (char value in token.ToLowerInvariant())
+        {
+            if (char.IsPunctuation(value) || char.IsSymbol(value) || char.IsWhiteSpace(value))
+            {
+                continue;
+            }
+
+            builder.Append(value);
+        }
+
+        return builder.ToString();
+    }
+
+    public void UpsertLiveInterimTranscriptionBlock(
+        string text,
+        int sequenceIndex,
+        TimeSpan startOffset,
+        TimeSpan endOffset)
+    {
+        if (sequenceIndex < _activeLiveInterimSequenceIndex)
+        {
+            return;
+        }
+
+        string normalized = text?.Trim() ?? string.Empty;
+        if (normalized.Length == 0)
+        {
+            return;
+        }
+
+        ClearLiveInterimTranscriptionBlock();
+
+        string[] lines = SplitLiveInterimRows(normalized);
+        if (lines.Length == 0)
+        {
+            return;
+        }
+
+        TimeSpan safeEnd = endOffset >= startOffset
+            ? endOffset
+            : startOffset;
+        TimeSpan total = safeEnd - startOffset;
+        TimeSpan perRow = lines.Length > 0
+            ? TimeSpan.FromTicks(total.Ticks / lines.Length)
+            : TimeSpan.Zero;
+
+        for (int index = 0; index < lines.Length; index++)
+        {
+            TimeSpan rowStart = startOffset + TimeSpan.FromTicks(perRow.Ticks * index);
+            TimeSpan rowEnd = index == lines.Length - 1
+                ? safeEnd
+                : rowStart + perRow;
+
+            var line = new FinalizedTranscriptLineViewModel(
+                rowStart,
+                rowEnd,
+                isTimestampEstimated: true,
+                text: lines[index],
+                isTranscriptionPartial: true,
+                isProvisional: true);
+            line.PropertyChanged += OnFinalizedLinePropertyChanged;
+            FinalizedTranscriptLines.Add(line);
+        }
+
+        _activeLiveInterimSequenceIndex = sequenceIndex;
+        RebuildFinalizedTextFromLines();
+        SelectedTranscriptViewIndex = 0;
+        NotifyCurrentTranscriptStateChanged();
+    }
+
+    public void ClearLiveInterimTranscriptionBlock()
+    {
+        List<FinalizedTranscriptLineViewModel> provisional = FinalizedTranscriptLines
+            .Where(line => line.IsProvisional)
+            .ToList();
+        foreach (FinalizedTranscriptLineViewModel line in provisional)
+        {
+            line.PropertyChanged -= OnFinalizedLinePropertyChanged;
+            _ = FinalizedTranscriptLines.Remove(line);
+        }
+
+        _activeLiveInterimSequenceIndex = -1;
+        RebuildFinalizedTextFromLines();
+        NotifyCurrentTranscriptStateChanged();
+    }
+
+    private static string[] SplitLiveInterimRows(string text)
+    {
+        string[] rawLines = text
+            .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => value.Trim())
+            .Where(value => value.Length > 0)
+            .ToArray();
+        if (rawLines.Length == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var output = new List<string>();
+        foreach (string rawLine in rawLines)
+        {
+            string[] sentencePieces = rawLine
+                .Split(['.', '!', '?'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(piece => piece.Trim())
+                .Where(piece => piece.Length > 0)
+                .ToArray();
+
+            if (sentencePieces.Length > 1)
+            {
+                output.AddRange(sentencePieces);
+                continue;
+            }
+
+            string[] words = rawLine
+                .Split([' '], StringSplitOptions.RemoveEmptyEntries)
+                .ToArray();
+            const int minWordsForChunking = 14;
+            if (words.Length <= minWordsForChunking)
+            {
+                output.Add(rawLine);
+                continue;
+            }
+
+            const int wordsPerChunk = 10;
+            for (int index = 0; index < words.Length; index += wordsPerChunk)
+            {
+                string chunk = string.Join(" ", words.Skip(index).Take(wordsPerChunk)).Trim();
+                if (chunk.Length > 0)
+                {
+                    output.Add(chunk);
+                }
+            }
+        }
+
+        return output.ToArray();
+    }
+
     private bool IsDuplicateLiveSegmentBoundaryLine(TranscriptionTimedLine candidate)
     {
         string candidateText = NormalizeLiveSegmentText(candidate.Text);
@@ -1201,13 +1723,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         string existingText = NormalizeLiveSegmentText(existing.Text);
-        if (!string.Equals(existingText, candidateText, StringComparison.Ordinal))
+        TimeSpan existingEnd = ResolveLiveSegmentEnd(existingStart, existing.EndOffset);
+        bool overlapsOrTouches = RangesOverlapOrTouch(existingStart, existingEnd, candidateStart, candidateEnd);
+        if (!overlapsOrTouches)
         {
             return false;
         }
 
-        TimeSpan existingEnd = ResolveLiveSegmentEnd(existingStart, existing.EndOffset);
-        return RangesOverlapOrTouch(existingStart, existingEnd, candidateStart, candidateEnd);
+        if (string.Equals(existingText, candidateText, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        bool containedFragment = ContainsWholeNormalizedPhrase(existingText, candidateText)
+            && CountWords(candidateText) <= 10;
+        if (containedFragment)
+        {
+            return true;
+        }
+
+        int candidateWordCount = CountWords(candidateText);
+        int suffixPrefixOverlap = CountSuffixPrefixTokenOverlap(existingText, candidateText);
+        int suffixPrefixOverlapWithoutLeadingFiller = CountSuffixPrefixTokenOverlapWithoutLeadingFiller(existingText, candidateText);
+        int bestOverlap = Math.Max(suffixPrefixOverlap, suffixPrefixOverlapWithoutLeadingFiller);
+        bool isMostlyOverlapFragment = candidateWordCount > 0
+            && bestOverlap >= 3
+            && bestOverlap * 10 >= candidateWordCount * 7;
+        return isMostlyOverlapFragment;
     }
 
     private static bool RangesOverlapOrTouch(
@@ -3152,6 +3694,157 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return IsAudioFileLoaded && IsAudioPlaying;
     }
 
+    private static bool ContainsWholeNormalizedPhrase(string haystack, string needle)
+    {
+        if (needle.Length == 0 || haystack.Length == 0 || needle.Length > haystack.Length)
+        {
+            return false;
+        }
+
+        int index = haystack.IndexOf(needle, StringComparison.Ordinal);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        bool startsAtWordBoundary = index == 0 || haystack[index - 1] == ' ';
+        int end = index + needle.Length;
+        bool endsAtWordBoundary = end == haystack.Length || haystack[end] == ' ';
+        return startsAtWordBoundary && endsAtWordBoundary;
+    }
+
+    private static int CountWords(string text)
+    {
+        return text
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Length;
+    }
+
+    private static int CountSuffixPrefixTokenOverlap(string leftNormalizedText, string rightNormalizedText)
+    {
+        string[] leftTokens = leftNormalizedText
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[] rightTokens = rightNormalizedText
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (leftTokens.Length == 0 || rightTokens.Length == 0)
+        {
+            return 0;
+        }
+
+        int maxWindow = Math.Min(leftTokens.Length, rightTokens.Length);
+        for (int size = maxWindow; size >= 1; size--)
+        {
+            bool matches = true;
+            for (int index = 0; index < size; index++)
+            {
+                if (!string.Equals(
+                        leftTokens[leftTokens.Length - size + index],
+                        rightTokens[index],
+                        StringComparison.Ordinal))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+            {
+                return size;
+            }
+        }
+
+        return 0;
+    }
+
+    private TranscriptionTimedLine TrimBoundaryOverlapWithPreviousLine(TranscriptionTimedLine candidate)
+    {
+        if (FinalizedTranscriptLines.Count == 0 || string.IsNullOrWhiteSpace(candidate.Text))
+        {
+            return candidate;
+        }
+
+        FinalizedTranscriptLineViewModel? previous = FinalizedTranscriptLines
+            .LastOrDefault(line => !line.IsProvisional && !string.IsNullOrWhiteSpace(line.Text));
+        if (previous is null)
+        {
+            return candidate;
+        }
+
+        string[] previousTokens = previous.Text
+            .Trim()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[] candidateTokens = candidate.Text
+            .Trim()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (previousTokens.Length == 0 || candidateTokens.Length == 0)
+        {
+            return candidate;
+        }
+
+        int maxOverlap = Math.Min(previousTokens.Length, candidateTokens.Length);
+        int bestOverlap = 0;
+        for (int size = maxOverlap; size >= 2; size--)
+        {
+            bool matches = true;
+            for (int index = 0; index < size; index++)
+            {
+                string leftToken = NormalizeLiveToken(previousTokens[previousTokens.Length - size + index]);
+                string rightToken = NormalizeLiveToken(candidateTokens[index]);
+                if (leftToken.Length == 0 || rightToken.Length == 0 || !string.Equals(leftToken, rightToken, StringComparison.Ordinal))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+            {
+                bestOverlap = size;
+                break;
+            }
+        }
+
+        if (bestOverlap == 0)
+        {
+            return candidate;
+        }
+
+        string trimmedText = string.Join(" ", candidateTokens.Skip(bestOverlap)).Trim();
+        if (trimmedText.Length == 0)
+        {
+            return candidate;
+        }
+
+        AppendLog(
+            $"Trimmed {bestOverlap} overlapped boundary words at {FormatOffset(candidate.StartOffset)}: '{BuildPreview(trimmedText)}'.");
+        return new TranscriptionTimedLine(
+            trimmedText,
+            candidate.StartOffset,
+            candidate.EndOffset,
+            candidate.IsTimestampEstimated);
+    }
+
+    private static int CountSuffixPrefixTokenOverlapWithoutLeadingFiller(
+        string leftNormalizedText,
+        string rightNormalizedText)
+    {
+        string[] rightTokens = rightNormalizedText
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (rightTokens.Length < 2)
+        {
+            return 0;
+        }
+
+        string first = rightTokens[0];
+        if (first is not ("you" or "we" or "they" or "it" or "this" or "that"))
+        {
+            return 0;
+        }
+
+        string shiftedRight = string.Join(" ", rightTokens.Skip(1));
+        return CountSuffixPrefixTokenOverlap(leftNormalizedText, shiftedRight);
+    }
+
     private bool CanRequestUpgradeToPremium()
     {
         return !HasPremium
@@ -4619,6 +5312,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         List<TranscriptSessionLineDocument> segmentLines = FinalizedTranscriptLines
+            .Where(line => !line.IsProvisional)
             .Select(line => new TranscriptSessionLineDocument
             {
                 Text = line.Text,
@@ -4764,6 +5458,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return string.Join(
             Environment.NewLine,
             FinalizedTranscriptLines
+                .Where(line => !line.IsProvisional)
                 .Select(line =>
                 {
                     string speakerLabel = line.SpeakerLabel?.Trim() ?? string.Empty;
