@@ -1189,12 +1189,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             VolumeMeter.Value = 0;
             UpdateLiveProgressMeterLabel();
         }
-        else if (_liveStageProgressMode == LiveStageProgressMode.AudioLevel)
+        else
         {
-            _liveUiState = LiveUiState.Stopped;
-            VolumeMeter.IsIndeterminate = false;
-            VolumeMeter.Value = 0;
-            UpdateLiveProgressMeterLabel();
+            // Ensure stop/finalize lock is cleared once live mode is no longer transcribing.
+            SetLiveTranscriptionStopping(false);
+            if (_liveStageProgressMode == LiveStageProgressMode.AudioLevel)
+            {
+                _liveUiState = LiveUiState.Stopped;
+                VolumeMeter.IsIndeterminate = false;
+                VolumeMeter.Value = 0;
+                UpdateLiveProgressMeterLabel();
+            }
         }
 
         UpdateLiveControlState();
