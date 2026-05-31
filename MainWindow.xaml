@@ -686,6 +686,7 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                         <Border Grid.Row="0"
@@ -972,6 +973,16 @@
                         </Border>
 
                         <Border Grid.Row="1"
+                                MinHeight="100"
+                                Margin="0"
+                                Padding="8"
+                                CornerRadius="6"
+                                BorderThickness="1"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                Background="{x:Null}">
+                        </Border>
+
+                        <Border Grid.Row="2"
                                 Margin="0"
                                 Padding="8"
                                 CornerRadius="6"
