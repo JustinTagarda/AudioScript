@@ -301,6 +301,30 @@
                                         Property="BorderBrush"
                                         Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
                             </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver"
+                                               Value="True"/>
+                                    <Condition Property="Tag"
+                                               Value="&#xE711;"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="#FFFF0000"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="#FFFF0000"/>
+                                <Setter Property="Foreground"
+                                        Value="#FFFFFFFF"/>
+                                <Setter Property="FontWeight"
+                                        Value="Bold"/>
+                                <Setter TargetName="IconText"
+                                        Property="Foreground"
+                                        Value="#FFFFFFFF"/>
+                                <Setter TargetName="IconText"
+                                        Property="FontWeight"
+                                        Value="Bold"/>
+                            </MultiTrigger>
                             <Trigger Property="IsPressed"
                                      Value="True">
                                 <Setter TargetName="Chrome"
@@ -350,6 +374,83 @@
                             <Trigger Property="Tag"
                                      Value="{x:Null}">
                                 <Setter TargetName="IconText"
+                                        Property="Visibility"
+                                        Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver"
+                                     Value="True">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed"
+                                     Value="True">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled"
+                                     Value="False">
+                                <Setter Property="Opacity"
+                                        Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="CompactToolbarButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource ToolbarButtonStyle}">
+            <Setter Property="MinHeight"
+                    Value="0"/>
+            <Setter Property="MinWidth"
+                    Value="0"/>
+            <Setter Property="Padding"
+                    Value="4"/>
+            <Setter Property="FontSize"
+                    Value="10"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Margin="{TemplateBinding Padding}">
+                                <TextBlock x:Name="IconText"
+                                           Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                           Text="{TemplateBinding Tag}"
+                                           FontSize="10.8"
+                                           Margin="0,0,5,0"/>
+                                <ContentPresenter x:Name="ContentPresenter"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Tag"
+                                     Value="{x:Null}">
+                                <Setter TargetName="IconText"
+                                        Property="Visibility"
+                                        Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="Content"
+                                     Value="{x:Null}">
+                                <Setter TargetName="IconText"
+                                        Property="Margin"
+                                        Value="0"/>
+                                <Setter TargetName="ContentPresenter"
                                         Property="Visibility"
                                         Value="Collapsed"/>
                             </Trigger>
@@ -744,27 +845,48 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <Button Grid.Column="0"
-                                            Content="Open Audio"
                                             Margin="0"
                                             VerticalAlignment="Center"
                                             Padding="8,0"
-                                            Tag="&#xE838;"
+                                            Tag="&#xE710;"
                                             Style="{StaticResource ToolbarButtonStyle}"
-                                            Command="{Binding OpenAudioFileCommand}"/>
+                                            Click="NewButton_Click">
+                                        <Button.Content>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="New"/>
+                                                <TextBlock Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                                           Text="&#xE70D;"
+                                                           Margin="6,0,0,0"
+                                                           FontSize="12"/>
+                                            </StackPanel>
+                                        </Button.Content>
+                                        <Button.ContextMenu>
+                                            <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                                <MenuItem Header="Audio Transcription"
+                                                          Command="{Binding OpenAudioFileForTranscriptionCommand}">
+                                                    <MenuItem.Icon>
+                                                        <TextBlock Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                                                   Text="&#xE7F0;"
+                                                                   FontSize="14"/>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem x:Name="LiveTranscriptionPrimaryActionButton"
+                                                          Header="Live Transcription"
+                                                          Click="LiveTranscriptionPrimaryAction_Click">
+                                                    <MenuItem.Icon>
+                                                        <TextBlock Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                                                   Text="&#xE720;"
+                                                                   FontSize="14"/>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                            </ContextMenu>
+                                        </Button.ContextMenu>
+                                    </Button>
                                     <Button Grid.Column="1"
-                                            x:Name="LiveTranscriptionPrimaryActionButton"
-                                            Content="Live Transcription"
+                                            Content="Settings"
                                             Margin="2,0,0,0"
+                                            VerticalAlignment="Center"
                                             Padding="8,0"
-                                            Tag="&#xE720;"
-                                            Style="{StaticResource ToolbarPrimaryButtonStyle}"
-                                            Click="LiveTranscriptionPrimaryAction_Click"/>
-                                    <Button Grid.Column="2"
-                                            Content="{x:Null}"
-                                            Margin="2,0,0,0"
-                                            Height="32"
-                                            HorizontalAlignment="Stretch"
-                                            Padding="0"
                                             ToolTip="Settings"
                                             AutomationProperties.Name="Settings"
                                             Tag="&#xE713;"
@@ -930,17 +1052,9 @@
                                     </Grid.Style>
                                     <StackPanel Orientation="Horizontal"
                                                 HorizontalAlignment="Left">
-                                        <Button x:Name="TranscribeAudioPrimaryActionButton"
-                                                Content="Transcribe Audio"
-                                                Margin="0"
-                                                Padding="8,0"
-                                                Tag="&#xE7F0;"
-                                                IsEnabled="{Binding CanRunTranscribeAudioPrimaryAction}"
-                                                Style="{StaticResource TranscribeAudioButtonStyle}"
-                                                Click="TranscribeAudioPrimaryAction_Click"/>
                                         <Button x:Name="DetectSpeakerPrimaryActionButton"
                                                 Content="Detect Speaker"
-                                                Margin="2,0,0,0"
+                                                Margin="0"
                                                 Padding="8,0"
                                                 Tag="&#xE716;"
                                                 IsEnabled="{Binding CanRunDetectSpeakerPrimaryAction}"
@@ -1126,76 +1240,9 @@
                                                 Padding="12"
                                                 Margin="0"
                                                 VerticalAlignment="Stretch"
-                                                MaxWidth="360">
-                                            <Border.Style>
-                                                <Style TargetType="Border">
-                                                    <Setter Property="Visibility"
-                                                            Value="Collapsed"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsTranscriptEmptyStateVisible}"
-                                                                     Value="True">
-                                                            <Setter Property="Visibility"
-                                                                    Value="Visible"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Border.Style>
-                                            <StackPanel HorizontalAlignment="Center"
-                                                        VerticalAlignment="Center"
-                                                        MaxWidth="320">
-                                                <TextBlock Text="{Binding TranscriptEmptyStateTitle}"
-                                                           FontSize="15"
-                                                           FontWeight="SemiBold"
-                                                           TextAlignment="Center"/>
-                                                <TextBlock Text="{Binding TranscriptEmptyStateMessage}"
-                                                           Margin="0,8,0,0"
-                                                           FontSize="11"
-                                                           TextAlignment="Center"
-                                                           TextWrapping="Wrap"/>
-                                                <Button Content="Open Audio"
-                                                        Margin="0,12,0,0"
-                                                        HorizontalAlignment="Center"
-                                                        Tag="&#xE838;"
-                                                        Command="{Binding OpenAudioFileCommand}">
-                                                    <Button.Style>
-                                                        <Style TargetType="Button"
-                                                               BasedOn="{StaticResource ToolbarButtonStyle}">
-                                                            <Setter Property="Visibility"
-                                                                    Value="Collapsed"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding ShouldShowTranscriptChooseFileAction}"
-                                                                             Value="True">
-                                                                    <Setter Property="Visibility"
-                                                                            Value="Visible"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Button.Style>
-                                                </Button>
-                                                <Button Content="Transcribe Audio"
-                                                        Margin="0,12,0,0"
-                                                        HorizontalAlignment="Center"
-                                                        Padding="10,0"
-                                                        Tag="&#xE7F0;"
-                                                        IsEnabled="{Binding CanRunTranscribeAudioPrimaryAction}"
-                                                        Click="TranscribeAudioPrimaryAction_Click">
-                                                    <Button.Style>
-                                                        <Style TargetType="Button"
-                                                               BasedOn="{StaticResource TranscribeAudioButtonStyle}">
-                                                            <Setter Property="Visibility"
-                                                                    Value="Collapsed"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding ShouldShowTranscriptTranscribeAudioAction}"
-                                                                             Value="True">
-                                                                    <Setter Property="Visibility"
-                                                                            Value="Visible"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Button.Style>
-                                                </Button>
-                                            </StackPanel>
-                                        </Border>
+                                                MaxWidth="360"
+                                                Visibility="Collapsed"
+                                                IsHitTestVisible="False"/>
                                     </Grid>
                                 </Border>
                             </Grid>
@@ -1205,7 +1252,7 @@
                                 Grid.Row="1"
                                 MinHeight="100"
                                 Margin="0,8,0,0"
-                                Padding="10"
+                                Padding="6"
                                 CornerRadius="6"
                                 BorderThickness="0"
                                 BorderBrush="{x:Null}"
@@ -1291,9 +1338,14 @@
                                             </Grid>
                                         </Border>
 
-                                        <Border Margin="0,10,0,0"
+                                        <Border Margin="0,6,0,0"
                                                 Style="{StaticResource SessionPanelRootBorderStyle}">
-                                            <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
                                                 <TextBlock Text="Engine"
                                                            Style="{StaticResource SessionSectionLabelTextStyle}"/>
                                                 <TextBlock Margin="0,4,0,0"
@@ -1310,13 +1362,21 @@
                                                                             Value="—"/>
                                                                 </DataTrigger>
                                                             </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
-                                            </StackPanel>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <Button Grid.Column="1"
+                                                        Margin="6,0,0,0"
+                                                        VerticalAlignment="Bottom"
+                                                        Content="Change"
+                                                        Tag="&#xE713;"
+                                                        Style="{StaticResource CompactToolbarButtonStyle}"
+                                                        Click="Settings_Click"/>
+                                            </Grid>
                                         </Border>
 
-                                        <Border Margin="0,10,0,0"
+                                        <Border Margin="0,6,0,0"
                                                 Style="{StaticResource SessionPanelRootBorderStyle}">
                                         <StackPanel>
                                             
@@ -1349,7 +1409,7 @@
                                         </StackPanel>
                                         </Border>
 
-                                        <Grid Margin="0,12,0,0">
+                                        <Grid Margin="0,6,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
@@ -1368,6 +1428,25 @@
                                             <StackPanel Grid.Column="1"
                                                         Orientation="Horizontal"
                                                         HorizontalAlignment="Right">
+                                                <Button Content="Restart"
+                                                        Tag="&#xE711;"
+                                                        Margin="0,0,8,0"
+                                                        Click="TranscribeAudioRestart_Click">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button"
+                                                               BasedOn="{StaticResource SessionActionSecondaryButtonStyle}">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsTranscribeAudioRestartVisible, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             Value="True">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
                                                 <Button x:Name="TranscribeAudioBatchStartStopButton"
                                                         Content="Start"
                                                         Tag="&#xE768;"
@@ -1383,7 +1462,7 @@
                         <Border Grid.Row="2"
                                 MinHeight="100"
                                 Margin="0,8,0,0"
-                                Padding="10"
+                                Padding="6"
                                 CornerRadius="6"
                                 BorderThickness="0"
                                 BorderBrush="{x:Null}"
@@ -1410,45 +1489,93 @@
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
-                                <StackPanel Grid.Row="0">
-                                    <TextBlock Text="Live audio source"
-                                               Style="{StaticResource SessionSectionLabelTextStyle}"/>
-                                    <ComboBox x:Name="DeviceComboBox"
-                                              FontSize="13"
-                                              DisplayMemberPath="Name"
-                                              SelectedValuePath="DeviceNumber"
-                                              SelectionChanged="DeviceComboBox_SelectionChanged"/>
-                                </StackPanel>
-
-                                <Border Grid.Row="1"
-                                        Margin="0,12,0,0"
+                                <Border Grid.Row="0"
                                         Style="{StaticResource SessionPanelRootBorderStyle}">
                                     <StackPanel>
-                                    <TextBlock x:Name="ProgressMeterLabel"
-                                               Text="Processed input level"
-                                               Style="{StaticResource SessionSectionLabelTextStyle}"/>
-                                    <ProgressBar x:Name="VolumeMeter"
-                                                 Minimum="0"
-                                                 Maximum="100"
-                                                 Style="{StaticResource SessionProgressBarStyle}"
-                                                 Value="0"/>
+                                        <TextBlock Text="Live audio source"
+                                                   Style="{StaticResource SessionSectionLabelTextStyle}"/>
+                                        <ComboBox x:Name="DeviceComboBox"
+                                                  FontSize="13"
+                                                  DisplayMemberPath="Name"
+                                                  SelectedValuePath="DeviceNumber"
+                                                  SelectionChanged="DeviceComboBox_SelectionChanged"/>
                                     </StackPanel>
+                                </Border>
+
+                                <Border Grid.Row="1"
+                                        Margin="0,6,0,0"
+                                        Style="{StaticResource SessionPanelRootBorderStyle}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="Engine"
+                                                       Style="{StaticResource SessionSectionLabelTextStyle}"/>
+                                            <TextBlock Margin="0,4,0,0"
+                                                       TextTrimming="CharacterEllipsis">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock"
+                                                           BasedOn="{StaticResource SessionPrimaryValueTextStyle}">
+                                                        <Setter Property="Text"
+                                                                Value="{Binding SelectedEngine.DisplayName}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SelectedEngine.DisplayName}"
+                                                                         Value="">
+                                                                <Setter Property="Text"
+                                                                        Value="—"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding SelectedEngine}"
+                                                                         Value="{x:Null}">
+                                                                <Setter Property="Text"
+                                                                        Value="—"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Margin="6,0,0,0"
+                                                VerticalAlignment="Bottom"
+                                                Content="Change"
+                                                Tag="&#xE713;"
+                                                Style="{StaticResource CompactToolbarButtonStyle}"
+                                                Click="Settings_Click"/>
+                                    </Grid>
                                 </Border>
 
                                 <StackPanel Grid.Row="2"
                                             Margin="0,0,0,0"/>
 
                                 <Border Grid.Row="3"
-                                        Margin="0,12,0,0"
+                                        Margin="0,6,0,0"
                                         Style="{StaticResource SessionPanelRootBorderStyle}">
                                     <StackPanel>
-                                        <TextBlock Text="Current activity"
-                                                   Style="{StaticResource SessionSectionLabelTextStyle}"/>
-                                        <TextBlock x:Name="ActivitySummaryText"
-                                                   Margin="0,6,0,0"
-                                                   Style="{StaticResource SessionPrimaryValueTextStyle}"
-                                                   TextWrapping="Wrap"
-                                                   Text="Ready. Start live transcription to begin recording and speech processing."/>
+                                        <ProgressBar x:Name="VolumeMeter"
+                                                     Minimum="0"
+                                                     Maximum="100"
+                                                     Style="{StaticResource SessionProgressBarStyle}"
+                                                     Value="0"/>
+                                        <Grid Margin="0,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="ActivitySummaryText"
+                                                       Grid.Column="0"
+                                                       Margin="0,0,12,0"
+                                                       Style="{StaticResource SessionPrimaryValueTextStyle}"
+                                                       TextWrapping="Wrap"
+                                                       Text="Ready. Start live transcription to begin recording and speech processing."/>
+                                            <TextBlock x:Name="LiveElapsedText"
+                                                       Grid.Column="1"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       Style="{StaticResource SessionPrimaryValueTextStyle}"
+                                                       Text="00:00:00"/>
+                                        </Grid>
                                         <TextBlock x:Name="RecordingActivityText"
                                                    Margin="0,8,0,0"
                                                    Style="{StaticResource SessionBodyTextStyle}"
@@ -1473,7 +1600,7 @@
                                 </Border>
 
                                 <Grid Grid.Row="4"
-                                      Margin="0,12,0,0">
+                                      Margin="0,6,0,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>

@@ -18,6 +18,16 @@ public sealed record PremiumUpsellRequest(
     string FeatureName,
     string Message);
 
+public sealed record TranscriptProcessingPanelSessionSnapshot(
+    string SourceFileName,
+    long SourceFileSizeBytes,
+    TimeSpan? TotalAudioDuration,
+    string EngineId,
+    bool ResumeAvailable,
+    double ProgressPercent,
+    TimeSpan? Elapsed,
+    TimeSpan? EstimatedRemaining);
+
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
     private const int BasicSessionLimit = 10;
@@ -92,6 +102,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private string _transcriptExportDirectory = string.Empty;
     private readonly bool _isSpeakerDiarizationRuntimeAvailable;
     private readonly string _speakerDiarizationRuntimeStatusMessage;
+    private int _isHandlingAudioSelection;
 
     public MainViewModel(
         IEnumerable<TranscriptionModelOption> models,
@@ -152,6 +163,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         CloseCommand = new AsyncRelayCommand(CloseAsync, CanClose);
         OpenAudioFileCommand = new AsyncRelayCommand(OpenAudioFileAsync, CanOpenAudioFile);
+        OpenAudioFileForTranscriptionCommand = new AsyncRelayCommand(OpenAudioFileForTranscriptionAsync, CanOpenAudioFile);
         DeleteSelectedSessionCommand = new AsyncRelayCommand(DeleteSelectedSessionAsync, CanDeleteSelectedSession);
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
@@ -252,6 +264,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public AsyncRelayCommand CloseCommand { get; }
     public AsyncRelayCommand OpenAudioFileCommand { get; }
+    public AsyncRelayCommand OpenAudioFileForTranscriptionCommand { get; }
     public AsyncRelayCommand DeleteSelectedSessionCommand { get; }
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
@@ -1539,7 +1552,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
-    public bool TryPrepareTranscribeAudioWorkflow()
+    public bool TryPrepareTranscribeAudioWorkflow(bool forceRestart = false)
     {
         if (!IsAudioFileLoaded)
         {
@@ -1569,7 +1582,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return true;
         }
 
-        if (TryConfirmTranscribeAudioResumeChoice(sourcePath, out bool shouldResume))
+        if (!forceRestart && TryConfirmTranscribeAudioResumeChoice(sourcePath, out bool shouldResume))
         {
             _pendingTranscribeAudioResume = shouldResume;
             if (shouldResume)
@@ -1929,6 +1942,74 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool IsPreparedTranscribeAudioResumeRequested => _transcribeAudioWorkflow?.ResumeRequested == true;
 
+    public TranscriptProcessingPanelSessionSnapshot GetTranscriptProcessingPanelSessionSnapshot()
+    {
+        TranscriptSessionDocument? document = _currentSessionDocument;
+        if (document is null)
+        {
+            return new TranscriptProcessingPanelSessionSnapshot(
+                SourceFileName: LoadedAudioFileName,
+                SourceFileSizeBytes: 0,
+                TotalAudioDuration: null,
+                EngineId: SelectedEngineId,
+                ResumeAvailable: false,
+                ProgressPercent: 0,
+                Elapsed: null,
+                EstimatedRemaining: null);
+        }
+
+        TranscriptionJobDocument job = document.Transcript?.TranscriptionJob ?? new TranscriptionJobDocument();
+        string sourceFileName = string.IsNullOrWhiteSpace(document.Audio?.OriginalFileName)
+            ? LoadedAudioFileName
+            : document.Audio.OriginalFileName;
+        long sourceFileSizeBytes = Math.Max(0, document.Audio?.FileSizeBytes ?? 0);
+        TimeSpan? totalAudioDuration = document.Audio?.DurationSeconds is double durationSeconds && durationSeconds > 0
+            ? TimeSpan.FromSeconds(durationSeconds)
+            : null;
+        string engineId = string.IsNullOrWhiteSpace(job.Engine)
+            ? string.IsNullOrWhiteSpace(document.Transcript?.ModelId)
+                ? SelectedEngineId
+                : document.Transcript.ModelId
+            : job.Engine;
+
+        double progressPercent = 0;
+        if (job.TotalChunks > 0 && job.LastCompletedChunkIndex >= 0)
+        {
+            progressPercent = Math.Clamp(((double)job.LastCompletedChunkIndex + 1) / job.TotalChunks * 100d, 0d, 100d);
+        }
+
+        TimeSpan? elapsed = null;
+        if (job.StartedUtc is DateTimeOffset startedUtc)
+        {
+            DateTimeOffset endUtc = job.LastUpdatedUtc ?? job.CompletedUtc ?? DateTimeOffset.UtcNow;
+            TimeSpan computedElapsed = endUtc - startedUtc;
+            elapsed = computedElapsed < TimeSpan.Zero ? TimeSpan.Zero : computedElapsed;
+        }
+
+        TimeSpan? estimatedRemaining = null;
+        if (elapsed is TimeSpan elapsedValue && progressPercent > 0.01d && progressPercent < 100d)
+        {
+            double remainingFactor = (100d - progressPercent) / progressPercent;
+            estimatedRemaining = TimeSpan.FromTicks((long)(elapsedValue.Ticks * remainingFactor));
+        }
+
+        bool resumeAvailable = IsTranscriptionResumeEligible(
+            job,
+            SelectedEngineId,
+            BuildTranscriptionAudioFingerprint(document),
+            LoadedAudioFilePath);
+
+        return new TranscriptProcessingPanelSessionSnapshot(
+            SourceFileName: sourceFileName,
+            SourceFileSizeBytes: sourceFileSizeBytes,
+            TotalAudioDuration: totalAudioDuration,
+            EngineId: engineId,
+            ResumeAvailable: resumeAvailable,
+            ProgressPercent: progressPercent,
+            Elapsed: elapsed,
+            EstimatedRemaining: estimatedRemaining);
+    }
+
     private bool TryConfirmTranscribeAudioResumeChoice(string sourcePath, out bool shouldResume)
     {
         shouldResume = false;
@@ -1943,42 +2024,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return false;
         }
 
-        EventHandler<ConfirmationRequest>? handler = ConfirmationRequested;
-        if (handler is null)
-        {
-            shouldResume = true;
-            AppendLog("Transcribe Audio will resume an incomplete transcription job.");
-            return true;
-        }
-
-        var request = new ConfirmationRequest(
-            title: "Resume transcription?",
-            message: "This session has an incomplete transcription job. Resume from the last saved checkpoint or restart transcription from the beginning.",
-            confirmButtonText: "Resume",
-            cancelButtonText: "Restart");
-
-        try
-        {
-            if (SynchronizationContext.Current == _uiContext)
-            {
-                handler(this, request);
-            }
-            else
-            {
-                _uiContext.Send(_ => handler(this, request), null);
-            }
-        }
-        catch (Exception ex)
-        {
-            RaiseError($"Unable to confirm transcription resume: {ex.Message}");
-            AppendLog($"Transcribe Audio canceled: resume confirmation failed: {ex.Message}");
-            return false;
-        }
-
-        shouldResume = request.IsConfirmed;
-        AppendLog(shouldResume
-            ? "Transcription resume confirmed by user."
-            : "Transcription restart selected by user.");
+        shouldResume = true;
+        AppendLog("Transcribe Audio will resume an incomplete transcription job.");
         return true;
     }
 
@@ -3010,6 +3057,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private Task OpenAudioFileAsync()
     {
+        return OpenAudioFileWithIntentAsync(AudioFileSelectionIntent.OpenOnly);
+    }
+
+    private Task OpenAudioFileForTranscriptionAsync()
+    {
+        return OpenAudioFileWithIntentAsync(AudioFileSelectionIntent.OpenForTranscribe);
+    }
+
+    private Task OpenAudioFileWithIntentAsync(AudioFileSelectionIntent intent)
+    {
         AppendLog("Command requested: Open Audio Preview File.");
         AppendLog("Opening file picker for audio preview.");
 
@@ -3028,7 +3085,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return Task.CompletedTask;
         }
 
-        HandleSelectedAudioFile(selectedFilePath);
+        HandleSelectedAudioFile(selectedFilePath, intent);
         return Task.CompletedTask;
     }
 
@@ -3049,7 +3106,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         AppendLog($"Audio file dropped: {Path.GetFileName(filePath)}");
-        return HandleSelectedAudioFile(filePath);
+        return HandleSelectedAudioFile(filePath, AudioFileSelectionIntent.OpenForTranscribe);
     }
 
     public Task LoadRecentSessionAsync(TranscriptSessionSummary session)
@@ -3614,6 +3671,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         CloseCommand.RaiseCanExecuteChanged();
         OpenAudioFileCommand.RaiseCanExecuteChanged();
+        OpenAudioFileForTranscriptionCommand.RaiseCanExecuteChanged();
         DeleteSelectedSessionCommand.RaiseCanExecuteChanged();
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
@@ -3825,8 +3883,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
-    private bool HandleSelectedAudioFile(string sourceFilePath)
+    private bool HandleSelectedAudioFile(string sourceFilePath, AudioFileSelectionIntent intent)
     {
+        if (Interlocked.Exchange(ref _isHandlingAudioSelection, 1) == 1)
+        {
+            AppendLog("Audio selection ignored: another selection is already being processed.");
+            return false;
+        }
+
         try
         {
             _sessionAutosaveTimer.Stop();
@@ -3842,6 +3906,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 LoadSessionResult(loadResult, showAudioIssueDialog: true);
                 LoadRecentSessions(loadResult.Document.SessionId);
                 AppendLog("Selected audio matched an existing session and was loaded.");
+
+                if (intent == AudioFileSelectionIntent.OpenForTranscribe)
+                {
+                    bool resumeAvailable = GetTranscriptProcessingPanelSessionSnapshot().ResumeAvailable;
+                    if (IsTranscriptDataEmpty || resumeAvailable)
+                    {
+                        _uiContext.Post(_ => NewAudioFileStagedForTranscribeAudio?.Invoke(this, EventArgs.Empty), null);
+                    }
+                    else
+                    {
+                        RaiseToast(
+                            "Existing session opened",
+                            "A transcript already exists for this audio. Session opened without starting a new Transcribe Audio flow.",
+                            ToastNotificationType.Info);
+                    }
+                }
+
                 return true;
             }
 
@@ -3849,6 +3930,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 AppendLog("Audio selection blocked: Basic session limit reached.");
                 return false;
+            }
+
+            if (intent == AudioFileSelectionIntent.OpenForTranscribe)
+            {
+                TranscriptSessionLoadResult importedLoadResult = _sessionStore.ImportAudioFile(sourceFilePath);
+                LoadSessionResult(importedLoadResult, showAudioIssueDialog: true);
+                LoadRecentSessions(importedLoadResult.Document.SessionId, pinSelectedToTop: true);
+                ClearPendingImportedAudioSelection();
+                AppendLog("Selected audio does not have an existing session. Created and loaded a new session, ready for Transcribe Audio.");
+                _uiContext.Post(_ => NewAudioFileStagedForTranscribeAudio?.Invoke(this, EventArgs.Empty), null);
+                return true;
             }
 
             ClearOutputCore(unloadAudioPreview: true, clearSessionContext: true);
@@ -3861,13 +3953,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             _pendingImportedAudioFilePath = sourceFilePath;
             AppendLog("Selected audio does not have an existing session. Preview loaded and session creation is deferred until Generate is clicked.");
-            _uiContext.Post(_ => NewAudioFileStagedForTranscribeAudio?.Invoke(this, EventArgs.Empty), null);
             return true;
         }
         catch (Exception ex)
         {
             RaiseError($"Unable to process selected audio file: {ex.Message}");
             return false;
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isHandlingAudioSelection, 0);
         }
     }
 
@@ -5541,6 +5636,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         public string? CreatedSessionId { get; set; }
 
         public bool HasStarted { get; set; }
+    }
+
+    private enum AudioFileSelectionIntent
+    {
+        OpenOnly,
+        OpenForTranscribe,
     }
 
     private enum TranscribeAudioWorkflowKind

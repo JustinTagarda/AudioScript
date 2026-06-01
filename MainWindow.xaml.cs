@@ -140,7 +140,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _liveChunksFailed;
     private LiveRecordingCaptureSession? _liveRecordingCaptureSession;
     private LiveSegmentTranscriptionSession? _liveSegmentTranscriptionSession;
-    private LiveInterimTranscriptionSession? _liveInterimTranscriptionSession;
     private LiveRecordingSession? _liveRecordingSession;
     private LiveStageProgressMode _liveStageProgressMode = LiveStageProgressMode.AudioLevel;
     private bool _livePanelIsOperationPending;
@@ -149,7 +148,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _livePanelInitialized;
     private bool _isLiveSegmentTranscriptionDrainScheduled;
     private bool _isClosingAfterLiveTranscriptionStop;
-    private bool _isClosingAfterDeferredUpdateInstall;
     private bool _forceCancelLiveChunkTranscriptions;
     private bool _isLiveTranscriptionStopping;
     private bool _isTranscriptionInteractionLocked;
@@ -158,6 +156,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _hasConfirmedCloseWithActiveTranscription;
     private LiveUiState _liveUiState = LiveUiState.Idle;
     private DeferredUpdateInstallWindow? _updateProgressWindow;
+    private readonly DispatcherTimer _liveElapsedTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private DateTimeOffset? _liveElapsedStartedUtc;
 
     public MainWindow(
         Func<PlaybackTranscriptionSession>? playbackTranscriptionSessionFactory = null,
@@ -185,6 +185,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         PreviewMouseDown += OnWindowMouseDismissToast;
         PreviewMouseWheel += OnWindowMouseWheelDismissToast;
         Loaded += OnMainWindowLoaded;
+        _liveElapsedTimer.Tick += OnLiveElapsedTimerTick;
+        ResetLiveElapsedTime();
     }
 
     public string StorePackageVersionText => _storePackageVersionText;
@@ -219,6 +221,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
+            OnPropertyChanged(nameof(IsTranscribeAudioProcessingUiBusy));
+            OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
             UpdateLivePrimaryActionButtonState();
             UpdateTranscribeAudioBatchControlState();
             UpdateTranscriptionInteractionLockState();
@@ -258,7 +262,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool ShouldShowAudioTranscriptionPanel =>
         DataContext is MainViewModel vm
         && vm.IsCurrentSessionAudioTranscriptionSession
-        && (vm.IsTranscriptDataEmpty || IsTranscribeAudioBatchPendingStart || IsTranscribeAudioBatchTranscribing);
+        && (vm.IsTranscriptDataEmpty
+            || IsTranscribeAudioBatchPendingStart
+            || IsTranscribeAudioBatchTranscribing
+            || vm.GetTranscriptProcessingPanelSessionSnapshot().ResumeAvailable);
 
     private void SetLiveTranscriptionStopping(bool isStopping)
     {
@@ -319,11 +326,29 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(IsTranscribeAudioBatchStartEnabled));
             OnPropertyChanged(nameof(TranscriptProcessingDismissButtonText));
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
+            OnPropertyChanged(nameof(IsTranscribeAudioProcessingUiBusy));
+            OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
             UpdateTranscribeAudioBatchControlState();
         }
     }
 
     public bool IsTranscribeAudioBatchStartEnabled => IsTranscribeAudioBatchPendingStart && !IsTranscribeAudioBatchTranscribing;
+    public bool IsTranscribeAudioProcessingUiBusy =>
+        IsTranscribeAudioBatchPendingStart
+        || IsTranscribeAudioBatchTranscribing
+        || IsTranscriptProcessingCanceling;
+    public bool CanPrimeTranscribeAudioFromCurrentSession =>
+        DataContext is MainViewModel vm
+        && !IsTranscribeAudioProcessingUiBusy
+        && vm.IsCurrentSessionAudioTranscriptionSession
+        && (!vm.HasCurrentTranscriptLines || vm.GetTranscriptProcessingPanelSessionSnapshot().ResumeAvailable)
+        && vm.CanRunTranscribeAudioPrimaryAction;
+    public bool IsTranscribeAudioRestartVisible =>
+        DataContext is MainViewModel vm
+        && !IsTranscribeAudioBatchTranscribing
+        && vm.IsCurrentSessionAudioTranscriptionSession
+        && vm.GetTranscriptProcessingPanelSessionSnapshot().ResumeAvailable
+        && vm.HasCurrentTranscriptLines;
 
     public string TranscriptProcessingDismissButtonText => IsTranscribeAudioBatchPendingStart
         ? "Close"
@@ -392,6 +417,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Effects = _boundViewModel.TryImportAudioFileFromPath(filePath)
             ? System.Windows.DragDropEffects.Copy
             : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void NewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button || button.ContextMenu is not System.Windows.Controls.ContextMenu menu)
+        {
+            return;
+        }
+
+        menu.PlacementTarget = button;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
         e.Handled = true;
     }
 
@@ -490,14 +528,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OpenDetectSpeakersDialog(vm);
     }
 
-    private void OpenTranscribeAudioBatchDialog(MainViewModel vm)
+    private void OpenTranscribeAudioBatchDialog(MainViewModel vm, bool forceRestart = false)
     {
         if (!EnsureSelectedEngineReady(vm, "Transcribe Audio"))
         {
             return;
         }
 
-        if (!vm.TryPrepareTranscribeAudioWorkflow())
+        if (!vm.TryPrepareTranscribeAudioWorkflow(forceRestart))
         {
             return;
         }
@@ -727,6 +765,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsTranscriptProcessingCancelEnabled));
             OnPropertyChanged(nameof(IsTranscriptProcessingMuteEnabled));
+            OnPropertyChanged(nameof(IsTranscribeAudioProcessingUiBusy));
+            OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
             UpdateTranscribeAudioBatchControlState();
         }
     }
@@ -983,20 +1023,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             recordingSession,
             audioTranscriptionService,
             processLogService);
-        var interimTranscriptionSession = new LiveInterimTranscriptionSession(
-            audioTranscriptionService,
-            processLogService);
         _liveRecordingCaptureSession = captureSession;
         _liveSegmentTranscriptionSession = segmentTranscriptionSession;
-        _liveInterimTranscriptionSession = interimTranscriptionSession;
         _liveRecordingSession = recordingSession;
         _lastFullyTranscribedLiveSegmentEndSeconds = 0;
         ResetLiveChunkCounts();
-        captureSession.AudioFrameAvailable += OnLiveAudioFrameAvailable;
         captureSession.AudioLevelChanged += OnLiveAudioLevelChanged;
         captureSession.Faulted += OnLiveTranscriptionFaulted;
-        interimTranscriptionSession.InterimUpdated += OnLiveInterimTranscriptionUpdated;
-        interimTranscriptionSession.Faulted += OnLiveInterimTranscriptionFaulted;
         segmentTranscriptionSession.SegmentTranscriptionQueued += OnLiveSegmentTranscriptionQueued;
         segmentTranscriptionSession.SegmentTranscriptionStarted += OnLiveSegmentTranscriptionStarted;
         segmentTranscriptionSession.SegmentTranscriptionCompleted += OnLiveSegmentTranscriptionCompleted;
@@ -1013,7 +1046,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             vm.SetGenerationRunning(isRunning: true, isLiveTranscriptionRunning: true);
             LogLiveTranscription(
                 $"Live transcription started source='{selectedDevice.Name}', kind={selectedDevice.Kind}, deviceNumber={selectedDevice.DeviceNumber}, model='{model}'.");
-            interimTranscriptionSession.Start(model);
             segmentTranscriptionSession.Start(model);
             captureSession.Start();
             SetLiveTranscribing(true);
@@ -1025,16 +1057,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             DetachLiveRecordingCaptureSession(captureSession);
             DetachLiveSegmentTranscriptionSession(segmentTranscriptionSession);
-            DetachLiveInterimTranscriptionSession(interimTranscriptionSession);
             recordingSession.Faulted -= OnLiveRecordingFaulted;
             _liveRecordingCaptureSession = null;
             _liveSegmentTranscriptionSession = null;
-            _liveInterimTranscriptionSession = null;
             _liveRecordingSession = null;
             IsLiveTranscribing = false;
             vm.SetGenerationRunning(isRunning: false);
             await recordingSession.InterruptAsync(ex.Message);
-            await DisposeLiveInterimTranscriptionSessionAsync(interimTranscriptionSession);
             await DisposeLiveSegmentTranscriptionSessionAsync(segmentTranscriptionSession);
             await DisposeLiveRecordingCaptureSessionAsync(captureSession);
             vm.LogHandledException("live transcription start", ex);
@@ -1160,7 +1189,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _liveDrainInitialPendingChunks = 0;
             VolumeMeter.IsIndeterminate = false;
             VolumeMeter.Value = 0;
-            UpdateLiveProgressMeterLabel();
         }
         else
         {
@@ -1171,7 +1199,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 _liveUiState = LiveUiState.Stopped;
                 VolumeMeter.IsIndeterminate = false;
                 VolumeMeter.Value = 0;
-                UpdateLiveProgressMeterLabel();
             }
         }
 
@@ -1181,6 +1208,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SetLiveIdleActivity()
     {
         _liveUiState = LiveUiState.Idle;
+        ResetLiveElapsedTime();
         ActivitySummaryText.Text = "Ready. Start live transcription to begin recording and speech processing.";
         RecordingActivityText.Text = "Recorder: idle";
         TranscriptionActivityText.Text = "Transcriber: idle";
@@ -1191,6 +1219,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SetLiveSessionReadyToStartActivity()
     {
         _liveUiState = LiveUiState.Idle;
+        ResetLiveElapsedTime();
         ActivitySummaryText.Text = "Session ready. Select an audio source, then click Start.";
         RecordingActivityText.Text = "Recorder: session initialized and idle";
         TranscriptionActivityText.Text = "Transcriber: waiting for Start";
@@ -1201,6 +1230,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SetLiveStartingActivity(string sourceName)
     {
         _liveUiState = LiveUiState.Preparing;
+        ResetLiveElapsedTime();
         ActivitySummaryText.Text = "Preparing live capture, recording, and the transcription pipeline.";
         RecordingActivityText.Text = "Recorder: preparing manifest and output segment path";
         TranscriptionActivityText.Text = "Transcriber: validating engine and opening capture source";
@@ -1211,25 +1241,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SetLiveListeningActivity(string modelDisplayName)
     {
         _liveUiState = LiveUiState.Running;
+        StartLiveElapsedTime();
         ActivitySummaryText.Text = "Live recording and transcription are active.";
         RecordingActivityText.Text = "Recorder: writing standardized PCM audio into rotating WAV segments";
         TranscriptionActivityText.Text = $"Transcriber: listening for speech with {modelDisplayName}";
         LatestActivityText.Text = "Latest event: capture started and waiting for speech";
-    }
-
-    private void SetLiveInterimTranscriptionActivity(string preview)
-    {
-        if (_liveStageProgressMode != LiveStageProgressMode.AudioLevel)
-        {
-            return;
-        }
-
-        ActivitySummaryText.Text = "Speech detected. Interim text is being updated.";
-        RecordingActivityText.Text = "Recorder: appending audio frames to the active segment";
-        TranscriptionActivityText.Text = "Transcriber: processing the current live speech chunk";
-        LatestActivityText.Text = string.IsNullOrWhiteSpace(preview)
-            ? "Latest event: interim transcription update received"
-            : $"Latest event: interim update '{preview}'";
     }
 
     private void SetLiveFinalTranscriptionActivity(string preview)
@@ -1249,6 +1265,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void SetLiveStoppingActivity()
     {
+        StopLiveElapsedTime();
         ActivitySummaryText.Text = "Stopped listening and recording. Completing pending chunk transcription.";
         RecordingActivityText.Text = "Recorder: finalizing the current WAV segment";
         TranscriptionActivityText.Text = "Transcriber: preparing pending chunk drain";
@@ -1264,7 +1281,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         VolumeMeter.Minimum = 0;
         VolumeMeter.Maximum = Math.Max(1, _liveChunksGenerated);
         VolumeMeter.Value = Math.Max(0, Math.Min(_liveChunksGenerated, _liveChunksTranscribed));
-        UpdateLiveProgressMeterLabel();
         TranscriptionActivityText.Text = _liveDrainInitialPendingChunks == 0
             ? "Transcriber: no pending chunks to transcribe"
             : $"Transcriber: transcribing pending chunks 0/{_liveDrainInitialPendingChunks:N0}";
@@ -1279,7 +1295,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _liveStageProgressMode = LiveStageProgressMode.CancelPendingChunks;
         _liveDrainInitialPendingChunks = 0;
         VolumeMeter.IsIndeterminate = true;
-        UpdateLiveProgressMeterLabel();
         TranscriptionActivityText.Text = "Transcriber: canceling pending and active chunk transcription";
         LatestActivityText.Text = "Latest event: canceling live chunk transcription work";
     }
@@ -1287,13 +1302,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SetLiveStoppedActivity(bool recordingInterrupted)
     {
         _liveUiState = LiveUiState.Stopped;
+        StopLiveElapsedTime();
         if (_liveStageProgressMode == LiveStageProgressMode.DrainPendingChunks)
         {
             VolumeMeter.IsIndeterminate = false;
             VolumeMeter.Minimum = 0;
             VolumeMeter.Maximum = Math.Max(1, _liveChunksGenerated);
             VolumeMeter.Value = Math.Max(0, Math.Min(_liveChunksGenerated, _liveChunksTranscribed));
-            UpdateLiveProgressMeterLabel();
         }
 
         ActivitySummaryText.Text = recordingInterrupted
@@ -1324,10 +1339,53 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SetLiveFailureActivity(string detail)
     {
         _liveUiState = LiveUiState.Failed;
+        StopLiveElapsedTime();
         ActivitySummaryText.Text = "Live transcription encountered a failure.";
         RecordingActivityText.Text = "Recorder: stopped";
         TranscriptionActivityText.Text = "Transcriber: stopped";
         LatestActivityText.Text = $"Latest event: {detail}";
+    }
+
+    private void StartLiveElapsedTime()
+    {
+        _liveElapsedStartedUtc = DateTimeOffset.UtcNow;
+        UpdateLiveElapsedText();
+        _liveElapsedTimer.Start();
+    }
+
+    private void StopLiveElapsedTime()
+    {
+        _liveElapsedTimer.Stop();
+    }
+
+    private void ResetLiveElapsedTime()
+    {
+        StopLiveElapsedTime();
+        _liveElapsedStartedUtc = null;
+        LiveElapsedText.Text = "00:00:00";
+    }
+
+    private void OnLiveElapsedTimerTick(object? sender, EventArgs e)
+    {
+        UpdateLiveElapsedText();
+    }
+
+    private void UpdateLiveElapsedText()
+    {
+        if (_liveElapsedStartedUtc is not DateTimeOffset startedUtc)
+        {
+            LiveElapsedText.Text = "00:00:00";
+            return;
+        }
+
+        TimeSpan elapsed = DateTimeOffset.UtcNow - startedUtc;
+        if (elapsed < TimeSpan.Zero)
+        {
+            elapsed = TimeSpan.Zero;
+        }
+
+        int totalHours = (int)elapsed.TotalHours;
+        LiveElapsedText.Text = $"{totalHours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}";
     }
 
     private void SetLiveChunkCounts(int generated, int queued, int processing, int transcribed, int failed)
@@ -1352,7 +1410,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             VolumeMeter.Minimum = 0;
             VolumeMeter.Maximum = Math.Max(1, safeGenerated);
             VolumeMeter.Value = Math.Max(0, Math.Min(safeGenerated, safeTranscribed));
-            UpdateLiveProgressMeterLabel();
             if (_liveDrainInitialPendingChunks > 0)
             {
                 int completed = Math.Max(0, Math.Min(_liveDrainInitialPendingChunks, _liveDrainInitialPendingChunks - pending));
@@ -1413,6 +1470,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _ => "Start",
         };
         bool isStopState = effectiveState == LiveUiState.Running;
+        StartStopButton.Tag = isStopState ? "\uE711" : "\uE768";
         if (isStopState)
         {
             StartStopButton.Background = System.Windows.Media.Brushes.Red;
@@ -1462,18 +1520,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : LiveUiState.Stopped;
     }
 
-    private void UpdateLiveProgressMeterLabel()
-    {
-        ProgressMeterLabel.Text = _liveStageProgressMode switch
-        {
-            LiveStageProgressMode.DrainPendingChunks =>
-                $"Chunk transcription progress (transcribed/generated: {_liveChunksTranscribed:N0}/{_liveChunksGenerated:N0})",
-            LiveStageProgressMode.CancelPendingChunks =>
-                "Chunk transcription progress (canceling pending tasks)",
-            _ => "Processed input level",
-        };
-    }
-
     private async Task StopLiveTranscriptionAsync(
         MainViewModel vm,
         bool showToast,
@@ -1482,7 +1528,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         LiveRecordingCaptureSession? captureSession = _liveRecordingCaptureSession;
         LiveSegmentTranscriptionSession? segmentTranscriptionSession = _liveSegmentTranscriptionSession;
-        LiveInterimTranscriptionSession? interimTranscriptionSession = _liveInterimTranscriptionSession;
         LiveRecordingSession? recordingSession = _liveRecordingSession;
         if (captureSession is null)
         {
@@ -1552,11 +1597,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 }
             }
 
-            if (interimTranscriptionSession is not null)
-            {
-                await interimTranscriptionSession.StopAsync();
-            }
-
             DrainPendingLiveSegmentTranscriptionResults();
             TryCompleteLiveStopIfDrained();
             vm.ClearLiveInterimTranscriptionBlock();
@@ -1603,10 +1643,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 DetachLiveSegmentTranscriptionSession(segmentTranscriptionSession);
             }
-            if (interimTranscriptionSession is not null)
-            {
-                DetachLiveInterimTranscriptionSession(interimTranscriptionSession);
-            }
             if (recordingSession is not null)
             {
                 recordingSession.Faulted -= OnLiveRecordingFaulted;
@@ -1614,7 +1650,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             _liveRecordingCaptureSession = null;
             _liveSegmentTranscriptionSession = null;
-            _liveInterimTranscriptionSession = null;
             _liveRecordingSession = null;
             IsLiveTranscribing = false;
             if (GetLivePendingChunkCount() == 0)
@@ -1631,10 +1666,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (segmentTranscriptionSession is not null)
             {
                 await DisposeLiveSegmentTranscriptionSessionAsync(segmentTranscriptionSession);
-            }
-            if (interimTranscriptionSession is not null)
-            {
-                await DisposeLiveInterimTranscriptionSessionAsync(interimTranscriptionSession);
             }
             await DisposeLiveRecordingCaptureSessionAsync(captureSession);
             TryCompleteLiveStopIfDrained();
@@ -1756,46 +1787,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             DispatcherPriority.Background);
     }
 
-    private void OnLiveAudioFrameAvailable(object? sender, LoopbackAudioFrameEventArgs e)
-    {
-        LiveInterimTranscriptionSession? session = _liveInterimTranscriptionSession;
-        if (session is null)
-        {
-            return;
-        }
-
-        try
-        {
-            session.AddAudioFrame(e.Buffer, e.WaveFormat);
-        }
-        catch (Exception ex)
-        {
-            _boundViewModel?.LogHandledException("live interim frame", ex);
-        }
-    }
-
-    private void OnLiveInterimTranscriptionUpdated(object? sender, LiveInterimTranscriptionUpdatedEventArgs e)
-    {
-        Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (DataContext is not MainViewModel vm || _isLiveTranscriptionStopping)
-            {
-                return;
-            }
-
-            vm.UpsertLiveInterimTranscriptionBlock(e.Text, e.SequenceIndex, e.StartOffset, e.EndOffset);
-            SetLiveInterimTranscriptionActivity(BuildLogPreview(e.Text));
-        }), DispatcherPriority.Background);
-    }
-
-    private void OnLiveInterimTranscriptionFaulted(object? sender, Exception ex)
-    {
-        Dispatcher.BeginInvoke(new Action(() =>
-        {
-            _boundViewModel?.LogHandledException("live interim transcription", ex);
-        }), DispatcherPriority.Background);
-    }
-
     private void OnLiveSegmentTranscriptionQueued(object? sender, LiveSegmentTranscriptionQueuedEventArgs e)
     {
         lock (_liveSegmentTranscriptionSync)
@@ -1828,7 +1819,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     $"Transcribing live recording segment starting at {start:mm\\:ss}.");
                 if (!_isLiveTranscriptionStopping)
                 {
-                    SetLiveInterimTranscriptionActivity("Processing recorded segment");
+                    ActivitySummaryText.Text = "A recorded segment is being transcribed.";
+                    RecordingActivityText.Text = "Recorder: appending audio frames to the active segment";
+                    TranscriptionActivityText.Text = "Transcriber: processing recorded segment";
+                    LatestActivityText.Text = "Latest event: processing recorded segment";
                 }
             }),
             DispatcherPriority.Background);
@@ -1998,7 +1992,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void DetachLiveRecordingCaptureSession(LiveRecordingCaptureSession session)
     {
-        session.AudioFrameAvailable -= OnLiveAudioFrameAvailable;
         session.AudioLevelChanged -= OnLiveAudioLevelChanged;
         session.Faulted -= OnLiveTranscriptionFaulted;
     }
@@ -2009,12 +2002,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         session.SegmentTranscriptionStarted -= OnLiveSegmentTranscriptionStarted;
         session.SegmentTranscriptionCompleted -= OnLiveSegmentTranscriptionCompleted;
         session.SegmentTranscriptionFailed -= OnLiveSegmentTranscriptionFailed;
-    }
-
-    private void DetachLiveInterimTranscriptionSession(LiveInterimTranscriptionSession session)
-    {
-        session.InterimUpdated -= OnLiveInterimTranscriptionUpdated;
-        session.Faulted -= OnLiveInterimTranscriptionFaulted;
     }
 
     private void CancelProcessing_Click(object sender, RoutedEventArgs e)
@@ -2093,12 +2080,40 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (!IsTranscribeAudioBatchPendingStart)
         {
-            return;
+            if (!CanPrimeTranscribeAudioFromCurrentSession)
+            {
+                return;
+            }
+
+            OpenTranscribeAudioBatchDialog(vm);
+            if (!IsTranscribeAudioBatchPendingStart)
+            {
+                return;
+            }
         }
 
         if (_activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.DetectSpeakers)
         {
             await RunDetectSpeakersAsync(vm);
+            return;
+        }
+
+        await RunTranscribeAudioAsync(vm);
+    }
+
+    private async void TranscribeAudioRestart_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm
+            || IsTranscribeAudioBatchTranscribing
+            || IsTranscriptProcessingCanceling
+            || !vm.IsCurrentSessionAudioTranscriptionSession)
+        {
+            return;
+        }
+
+        OpenTranscribeAudioBatchDialog(vm, forceRestart: true);
+        if (!IsTranscribeAudioBatchPendingStart)
+        {
             return;
         }
 
@@ -2386,8 +2401,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             SetLiveIdleActivity();
             UpdateLiveControlState();
             UpdateLivePrimaryActionButtonState();
+            SyncTranscriptProcessingPanelFromSession(vm);
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
+            OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
+            OnPropertyChanged(nameof(IsTranscribeAudioRestartVisible));
         }
         else
         {
@@ -2402,6 +2420,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdateLivePrimaryActionButtonState();
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
+            OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
+            OnPropertyChanged(nameof(IsTranscribeAudioRestartVisible));
         }
     }
 
@@ -2493,11 +2513,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void OnMainWindowClosing(object? sender, CancelEventArgs e)
     {
-        if (_isClosingAfterDeferredUpdateInstall)
-        {
-            return;
-        }
-
         bool resumingAfterLiveTranscriptionStop = _isClosingAfterLiveTranscriptionStop;
         bool hasActiveTranscription =
             _liveRecordingCaptureSession is not null
@@ -2723,6 +2738,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         Closing -= OnMainWindowClosing;
         Loaded -= OnMainWindowLoaded;
+        _liveElapsedTimer.Tick -= OnLiveElapsedTimerTick;
+        _liveElapsedTimer.Stop();
         CancelCopyToast();
         PreviewMouseDown -= OnWindowMouseDismissToast;
         PreviewMouseWheel -= OnWindowMouseWheelDismissToast;
@@ -2761,9 +2778,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void OnNewAudioFileStagedForTranscribeAudio(object? sender, EventArgs e)
     {
-        if (sender is not MainViewModel vm || IsTranscribeAudioBatchTranscribing || IsTranscribeAudioBatchPendingStart)
+        if (sender is not MainViewModel vm || IsTranscribeAudioBatchTranscribing)
         {
             return;
+        }
+
+        if (IsTranscribeAudioBatchPendingStart)
+        {
+            // Replace any pending workflow with the newly selected file route.
+            vm.ClosePendingTranscribeAudioWorkflow();
+            RestoreTranscribeAudioBatchInteractionLock();
         }
 
         OpenTranscribeAudioBatchDialog(vm);
@@ -3240,6 +3264,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             or nameof(MainViewModel.IsAudioFileLoaded))
         {
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
+            OnPropertyChanged(nameof(IsTranscribeAudioRestartVisible));
+            UpdateTranscribeAudioBatchControlState();
             if (_boundViewModel is not null && !_boundViewModel.IsAudioFileLoaded)
             {
                 StopActivePlaybackEditTranscription(
@@ -3260,6 +3287,32 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             or nameof(MainViewModel.IsCurrentSessionAudioTranscriptionSession))
         {
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
+            OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
+            OnPropertyChanged(nameof(IsTranscribeAudioRestartVisible));
+            UpdateTranscribeAudioBatchControlState();
+        }
+
+        if (e.PropertyName is nameof(MainViewModel.HasCurrentTranscriptLines)
+            or nameof(MainViewModel.CanRunTranscribeAudioPrimaryAction)
+            or nameof(MainViewModel.IsGenerationRunning))
+        {
+            OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
+            OnPropertyChanged(nameof(IsTranscribeAudioRestartVisible));
+            UpdateTranscribeAudioBatchControlState();
+        }
+
+        if (sender is MainViewModel vmForPanel
+            && e.PropertyName is nameof(MainViewModel.LoadedAudioFilePath)
+                or nameof(MainViewModel.LoadedAudioFileName)
+                or nameof(MainViewModel.SelectedEngine)
+                or nameof(MainViewModel.SelectedEngineId)
+                or nameof(MainViewModel.IsTranscriptDataEmpty)
+                or nameof(MainViewModel.IsCurrentSessionAudioTranscriptionSession)
+                or nameof(MainViewModel.CurrentSessionDisplayName)
+                or nameof(MainViewModel.IsCurrentSessionAudioMissing))
+        {
+            SyncTranscriptProcessingPanelFromSession(vmForPanel);
+            UpdateTranscribeAudioBatchControlState();
         }
     }
 
@@ -3800,9 +3853,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IsTranscribeAudioBatchPendingStart = false;
         _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.None;
         IsTranscriptProcessingMuteAvailable = true;
-        TranscriptProcessingSourceFileText = string.Empty;
-        TranscriptProcessingSourceFileSizeText = string.Empty;
-        TranscriptProcessingEngineText = string.Empty;
+        IsTranscriptProcessingCanceling = false;
+        if (DataContext is MainViewModel vm)
+        {
+            SyncTranscriptProcessingPanelFromSession(vm);
+        }
+        else
+        {
+            TranscriptProcessingSourceFileText = string.Empty;
+            TranscriptProcessingSourceFileSizeText = string.Empty;
+            TranscriptProcessingEngineText = string.Empty;
+            ResetTranscriptProcessingProgress();
+        }
 
         _ = Dispatcher.BeginInvoke(new Action(() =>
         {
@@ -3819,15 +3881,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        OnPropertyChanged(nameof(IsTranscribeAudioRestartVisible));
+
         bool isStopState = IsTranscribeAudioBatchTranscribing;
         bool isCanceling = IsTranscriptProcessingCanceling;
         TranscribeAudioBatchStartStopButton.Content = isCanceling
             ? "Finalizing... please wait"
-            : isStopState ? "Stop" : "Start";
+            : isStopState ? "Stop" : TranscriptProcessingStartButtonText;
         TranscribeAudioBatchStartStopButton.Tag = isStopState ? "\uE711" : "\uE768";
         TranscribeAudioBatchStartStopButton.IsEnabled = isStopState
             ? IsTranscriptProcessingCancelEnabled
-            : IsTranscribeAudioBatchStartEnabled;
+            : IsTranscribeAudioBatchStartEnabled || CanPrimeTranscribeAudioFromCurrentSession;
 
         if (isStopState)
         {
@@ -3860,6 +3924,65 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             pausePlayback: true,
             reason: "transcribe audio batch canceled",
             discardResults: true);
+    }
+
+    private void SyncTranscriptProcessingPanelFromSession(MainViewModel vm)
+    {
+        if (IsTranscribeAudioBatchPendingStart || IsTranscribeAudioBatchTranscribing)
+        {
+            // Keep engine display synced with the latest selection even while panel is staged/running.
+            TranscriptProcessingEngineText = ResolveCurrentEngineLabel(vm);
+            return;
+        }
+
+        TranscriptProcessingPanelSessionSnapshot snapshot = vm.GetTranscriptProcessingPanelSessionSnapshot();
+        bool shouldShowFreshStartState =
+            vm.IsCurrentSessionAudioTranscriptionSession
+            && !vm.HasCurrentTranscriptLines
+            && !snapshot.ResumeAvailable;
+
+        TranscriptProcessingStartButtonText = shouldShowFreshStartState
+            ? "Start"
+            : snapshot.ResumeAvailable ? "Resume" : "Start";
+        TranscriptProcessingSourceFileText = snapshot.SourceFileName;
+        TranscriptProcessingSourceFileSizeText = snapshot.SourceFileSizeBytes > 0
+            ? FormatFileSize(snapshot.SourceFileSizeBytes)
+            : FormatFileSizeText(vm.LoadedAudioFilePath);
+        // Audio transcription always starts with the current selected engine.
+        // Show the active selection as the source of truth across panels.
+        TranscriptProcessingEngineText = ResolveCurrentEngineLabel(vm);
+
+        if (shouldShowFreshStartState)
+        {
+            TranscriptProcessingPercent = 0;
+            IsTranscriptProcessingIndeterminate = false;
+            TranscriptProcessingChunkText = "Progress 0%";
+            TranscriptProcessingAudioText = "Audio 00:00 / 00:00";
+            TranscriptProcessingElapsedText = "Elapsed 00:00";
+            TranscriptProcessingEtaText = "ETA calculating";
+            return;
+        }
+
+        TranscriptProcessingPercent = snapshot.ProgressPercent;
+        IsTranscriptProcessingIndeterminate = false;
+        TranscriptProcessingChunkText = $"Progress {snapshot.ProgressPercent:0}%";
+
+        if (snapshot.TotalAudioDuration is TimeSpan totalAudio && totalAudio > TimeSpan.Zero)
+        {
+            TimeSpan processedAudio = TimeSpan.FromTicks((long)(totalAudio.Ticks * (snapshot.ProgressPercent / 100d)));
+            TranscriptProcessingAudioText = $"Audio {FormatProgressDuration(processedAudio)} / {FormatProgressDuration(totalAudio)}";
+        }
+        else
+        {
+            TranscriptProcessingAudioText = "Audio 00:00 / 00:00";
+        }
+
+        TranscriptProcessingElapsedText = snapshot.Elapsed is TimeSpan elapsed
+            ? $"Elapsed {FormatProgressDuration(elapsed)}"
+            : "Elapsed 00:00";
+        TranscriptProcessingEtaText = snapshot.EstimatedRemaining is TimeSpan remaining
+            ? $"ETA {FormatProgressDuration(remaining)}"
+            : "ETA calculating";
     }
 
     private void CancelDetectSpeakers(MainViewModel vm)
@@ -7449,18 +7572,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     private static async Task DisposeLiveSegmentTranscriptionSessionAsync(LiveSegmentTranscriptionSession session)
-    {
-        try
-        {
-            await session.DisposeAsync().ConfigureAwait(false);
-        }
-        catch
-        {
-            // Best-effort cleanup.
-        }
-    }
-
-    private static async Task DisposeLiveInterimTranscriptionSessionAsync(LiveInterimTranscriptionSession session)
     {
         try
         {
