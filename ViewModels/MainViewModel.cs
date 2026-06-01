@@ -1436,9 +1436,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             int compactTokenOverlap = CountBoundaryPrefixTokenOverlap(
                 SplitLiveBoundaryTokens(existing.Text),
                 candidateTokens);
+            int fuzzyTokenOverlap = CountBoundaryPrefixTokenOverlapAllowingSingleMismatch(
+                SplitLiveBoundaryTokens(existing.Text),
+                candidateTokens);
             int bestOverlap = Math.Max(
-                Math.Max(suffixPrefixOverlap, suffixPrefixOverlapWithoutLeadingFiller),
-                compactTokenOverlap);
+                Math.Max(Math.Max(suffixPrefixOverlap, suffixPrefixOverlapWithoutLeadingFiller), compactTokenOverlap),
+                fuzzyTokenOverlap);
             bool isMostlyOverlapFragment = candidateWordCount > 0
                 && bestOverlap >= 3
                 && bestOverlap * 10 >= candidateWordCount * 7;
@@ -3566,6 +3569,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         int bestOverlap = 0;
+        int bestTrimCount = 0;
         foreach (FinalizedTranscriptLineViewModel previous in EnumerateRecentBoundaryLines())
         {
             if (previous.StartOffset is not TimeSpan previousStart)
@@ -3581,15 +3585,34 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             }
 
             string[] previousTokens = SplitLiveBoundaryTokens(previous.Text);
-            bestOverlap = Math.Max(bestOverlap, CountBoundaryPrefixTokenOverlap(previousTokens, candidateTokens));
+            int directOverlap = CountBoundaryPrefixTokenOverlap(previousTokens, candidateTokens);
+            if (directOverlap > bestOverlap)
+            {
+                bestOverlap = directOverlap;
+                bestTrimCount = directOverlap;
+            }
+
+            int fuzzyOverlap = CountBoundaryPrefixTokenOverlapAllowingSingleMismatch(previousTokens, candidateTokens);
+            if (fuzzyOverlap > bestOverlap)
+            {
+                bestOverlap = fuzzyOverlap;
+                bestTrimCount = fuzzyOverlap;
+            }
+
+            int fillerAdjustedTrimCount = CountBoundaryPrefixTokenOverlapWithLeadingFiller(previousTokens, candidateTokens);
+            if (fillerAdjustedTrimCount > bestTrimCount)
+            {
+                bestTrimCount = fillerAdjustedTrimCount;
+                bestOverlap = Math.Max(bestOverlap, fillerAdjustedTrimCount - 1);
+            }
         }
 
-        if (bestOverlap == 0)
+        if (bestTrimCount == 0)
         {
             return candidate;
         }
 
-        string trimmedText = string.Join(" ", candidateTokens.Skip(bestOverlap)).Trim();
+        string trimmedText = string.Join(" ", candidateTokens.Skip(bestTrimCount)).Trim();
         if (trimmedText.Length == 0)
         {
             return candidate;
@@ -3659,6 +3682,69 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         return bestRightSize >= 2 ? bestRightSize : 0;
+    }
+
+    private static int CountBoundaryPrefixTokenOverlapAllowingSingleMismatch(string[] leftTokens, string[] rightTokens)
+    {
+        if (leftTokens.Length == 0 || rightTokens.Length == 0)
+        {
+            return 0;
+        }
+
+        string[] normalizedLeft = leftTokens
+            .Select(NormalizeLiveToken)
+            .Where(token => token.Length > 0)
+            .ToArray();
+        string[] normalizedRight = rightTokens
+            .Select(NormalizeLiveToken)
+            .Where(token => token.Length > 0)
+            .ToArray();
+        if (normalizedLeft.Length == 0 || normalizedRight.Length == 0)
+        {
+            return 0;
+        }
+
+        int maxWindow = Math.Min(normalizedLeft.Length, normalizedRight.Length);
+        for (int size = maxWindow; size >= 4; size--)
+        {
+            int leftStart = normalizedLeft.Length - size;
+            int mismatches = 0;
+            for (int index = 0; index < size; index++)
+            {
+                if (!string.Equals(normalizedLeft[leftStart + index], normalizedRight[index], StringComparison.Ordinal))
+                {
+                    mismatches++;
+                    if (mismatches > 1)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (mismatches <= 1)
+            {
+                return size;
+            }
+        }
+
+        return 0;
+    }
+
+    private static int CountBoundaryPrefixTokenOverlapWithLeadingFiller(string[] leftTokens, string[] rightTokens)
+    {
+        if (rightTokens.Length < 2)
+        {
+            return 0;
+        }
+
+        string first = NormalizeLiveToken(rightTokens[0]);
+        if (first is not ("you" or "we" or "they" or "it" or "this" or "that"))
+        {
+            return 0;
+        }
+
+        int shiftedOverlap = CountBoundaryPrefixTokenOverlap(leftTokens, rightTokens.Skip(1).ToArray());
+        return shiftedOverlap >= 3 ? shiftedOverlap + 1 : 0;
     }
 
     private static string BuildCompactTokenWindow(string[] tokens, int startIndex, int count)

@@ -1582,6 +1582,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             vm.ClearLiveInterimTranscriptionBlock();
             vm.SaveLiveTranscriptSession();
             LogLiveTranscription("Live transcription stopped.");
+            EmitLiveTranscriptionTimingSummary();
             SetLiveStoppedActivity(recordingSession?.IsFaulted == true);
 
             if (showToast)
@@ -2124,6 +2125,43 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Owner = this,
             };
             dialog.ShowDialog();
+        }
+    }
+
+    private void CopyLiveTimingSummaryToClipboard_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        ProcessLogService? processLogService = _processLogService;
+        if (processLogService is null)
+        {
+            ShowCopyToast(
+                "Timing summary unavailable",
+                "Process logging is not initialized.",
+                ToastNotificationType.Warning);
+            return;
+        }
+
+        try
+        {
+            IReadOnlyList<string> lines = processLogService.BuildLiveTranscriptionTimingSummaryLines(TimeSpan.FromMinutes(15));
+            string summary = string.Join(Environment.NewLine, lines);
+            System.Windows.Clipboard.SetText(summary);
+            ShowCopyToast(
+                "Copied to clipboard",
+                "Live timing summary is ready to paste.",
+                ToastNotificationType.Success);
+        }
+        catch (Exception ex)
+        {
+            vm.LogHandledException("copy live timing summary", ex);
+            ShowCopyToast(
+                "Copy failed",
+                "Unable to copy live timing summary.",
+                ToastNotificationType.Error);
         }
     }
 
@@ -7598,6 +7636,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void LogLiveTranscription(string message)
     {
         _processLogService?.Log("LiveTranscription", message);
+    }
+
+    private void EmitLiveTranscriptionTimingSummary()
+    {
+        ProcessLogService? processLogService = _processLogService;
+        if (processLogService is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<string> summaryLines = processLogService.BuildLiveTranscriptionTimingSummaryLines(TimeSpan.FromMinutes(15));
+        foreach (string line in summaryLines)
+        {
+            processLogService.Log("LiveTranscription", line);
+        }
     }
 
     private void LogPlaybackEdit(string message)

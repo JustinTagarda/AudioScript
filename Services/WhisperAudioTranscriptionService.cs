@@ -204,7 +204,17 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
             "whispercpp.runtime.ready",
             $"model='{model}', cli='{cliPath}', modelPath='{modelPath}'");
 
+        int availableBeforeWait = _transcriptionSemaphore.CurrentCount;
+        var semaphoreWaitStopwatch = Stopwatch.StartNew();
+        Log(
+            $"[semaphore-wait] model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
+            $"availableBeforeWait={availableBeforeWait} maxConcurrent={MaxConcurrentTranscriptions}");
         await _transcriptionSemaphore.WaitAsync(cancellationToken);
+        semaphoreWaitStopwatch.Stop();
+        int availableAfterWait = _transcriptionSemaphore.CurrentCount;
+        Log(
+            $"[semaphore-acquired] model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
+            $"waitMs={semaphoreWaitStopwatch.Elapsed.TotalMilliseconds:F0} availableAfterWait={availableAfterWait}");
         try
         {
             progressReporter?.Report(
@@ -234,6 +244,9 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         finally
         {
             _transcriptionSemaphore.Release();
+            Log(
+                $"[semaphore-released] model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
+                $"availableAfterRelease={_transcriptionSemaphore.CurrentCount}");
         }
     }
 

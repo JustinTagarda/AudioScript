@@ -1600,10 +1600,12 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Style="{StaticResource SessionMetaTextStyle}"
-                                               Text=""/>
+                                    <Button Grid.Column="0"
+                                            HorizontalAlignment="Left"
+                                            Content="Copy timing summary"
+                                            Tag="&#xE8C8;"
+                                            Style="{StaticResource SessionActionSecondaryButtonStyle}"
+                                            Click="CopyLiveTimingSummaryToClipboard_Click"/>
                                     <Button x:Name="StartStopButton"
                                             Grid.Column="1"
                                             Content="Start"

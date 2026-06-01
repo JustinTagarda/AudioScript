@@ -2475,6 +2475,178 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task AppendLiveTranscriptionResult_TrimsBoundaryPrefixWithLeadingFillerToken()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    _ = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "first",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(1),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "And it was brilliant because at the time.",
+                                TimeSpan.FromSeconds(55),
+                                TimeSpan.FromSeconds(60),
+                                false),
+                        }));
+
+                    int secondAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "second",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(1),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "it because at the time nobody was doing that.",
+                                TimeSpan.FromSeconds(60),
+                                TimeSpan.FromSeconds(65),
+                                false),
+                        }));
+
+                    Assert.Equal(1, secondAdded);
+                    Assert.Equal(2, viewModel.FinalizedTranscriptLines.Count);
+                    Assert.Equal(
+                        "nobody was doing that.",
+                        viewModel.FinalizedTranscriptLines[1].Text);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AppendLiveTranscriptionResult_TrimsBoundaryPrefixWithSingleTokenMismatch()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    _ = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "first",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(1),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "There was a feeling that I had in talking to Steve that he",
+                                TimeSpan.FromSeconds(28),
+                                TimeSpan.FromSeconds(30),
+                                false),
+                        }));
+
+                    int secondAdded = viewModel.AppendLiveTranscriptionResult(new TranscriptionResult(
+                        Text: "second",
+                        Model: TranscriptionModelCatalog.WhisperSmall,
+                        CreatedAt: DateTimeOffset.UtcNow,
+                        Duration: TimeSpan.FromSeconds(1),
+                        TokenLogprobs: Array.Empty<TranscriptionTokenLogprob>(),
+                        LowConfidenceTokens: Array.Empty<LowConfidenceToken>(),
+                        TimedLines: new[]
+                        {
+                            new TranscriptionTimedLine(
+                                "that I had in speaking to Steve that he was a very different kind of CEO.",
+                                TimeSpan.FromSeconds(30),
+                                TimeSpan.FromSeconds(36),
+                                false),
+                        }));
+
+                    Assert.Equal(1, secondAdded);
+                    Assert.Equal(2, viewModel.FinalizedTranscriptLines.Count);
+                    Assert.Equal(
+                        "was a very different kind of CEO.",
+                        viewModel.FinalizedTranscriptLines[1].Text);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
     public async Task UpsertLiveInterimTranscriptionBlock_ReplacesProvisionalBlockWithMultipleRows()
     {
         await RunInStaAsync(async () =>

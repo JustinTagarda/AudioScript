@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
 
 namespace AudioScript.Services;
 
@@ -66,6 +67,81 @@ public sealed class ProcessLogService : IDisposable
     public event EventHandler<string>? LogEmitted;
 
     public string LogFilePath => _logFilePath;
+
+    public IReadOnlyList<string> BuildLiveTranscriptionTimingSummaryLines(TimeSpan window)
+    {
+        if (window <= TimeSpan.Zero)
+        {
+            return ["Live timing summary unavailable: invalid window."];
+        }
+
+        if (!File.Exists(_logFilePath))
+        {
+            return ["Live timing summary unavailable: log file does not exist yet."];
+        }
+
+        DateTimeOffset cutoff = DateTimeOffset.Now - window;
+        var metrics = new Dictionary<string, List<double>>(StringComparer.Ordinal);
+        int processedLines = 0;
+
+        try
+        {
+            foreach (string rawLine in File.ReadLines(_logFilePath))
+            {
+                if (!TryParseLogTimestamp(rawLine, out DateTimeOffset timestamp) || timestamp < cutoff)
+                {
+                    continue;
+                }
+
+                if (!(rawLine.Contains("[LiveSegmentTranscription]", StringComparison.Ordinal)
+                      || rawLine.Contains("[WhisperLocal]", StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                processedLines++;
+                ExtractMetric(rawLine, "waitBufferedMs", metrics);
+                ExtractMetric(rawLine, "requestQueueWaitMs", metrics);
+                ExtractMetric(rawLine, "endToStartMs", metrics);
+                ExtractMetric(rawLine, "waitMs", metrics);
+                ExtractMetric(rawLine, "transcribeMs", metrics);
+                ExtractMetric(rawLine, "bufferWaitMs", metrics);
+                ExtractMetric(rawLine, "e2eMs", metrics);
+            }
+        }
+        catch (Exception ex)
+        {
+            return [$"Live timing summary unavailable: {ex.GetType().Name}: {ex.Message}"];
+        }
+
+        if (processedLines == 0 || metrics.Count == 0)
+        {
+            return [$"Live timing summary: no telemetry samples in the last {window.TotalMinutes:F0} minute(s)."];
+        }
+
+        var lines = new List<string>
+        {
+            $"Live timing summary ({window.TotalMinutes:F0}m window): telemetryLines={processedLines:N0}, metrics={metrics.Count:N0}.",
+        };
+
+        foreach ((string metricName, List<double> samples) in metrics.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+        {
+            if (samples.Count == 0)
+            {
+                continue;
+            }
+
+            samples.Sort();
+            double p50 = Percentile(samples, 0.50);
+            double p95 = Percentile(samples, 0.95);
+            double avg = samples.Average();
+            double max = samples[^1];
+            lines.Add(
+                $"metric {metricName}: count={samples.Count:N0}, p50={p50:F0}ms, p95={p95:F0}ms, avg={avg:F0}ms, max={max:F0}ms.");
+        }
+
+        return lines;
+    }
 
     public void Log(string source, string message)
     {
@@ -207,6 +283,88 @@ public sealed class ProcessLogService : IDisposable
     private static string FormatProxyUri(Uri proxyUri)
     {
         return $"{proxyUri.Scheme}://{proxyUri.Host}:{proxyUri.Port}";
+    }
+
+    private static bool TryParseLogTimestamp(string logLine, out DateTimeOffset timestamp)
+    {
+        timestamp = default;
+        if (string.IsNullOrWhiteSpace(logLine))
+        {
+            return false;
+        }
+
+        int levelIndex = logLine.IndexOf(" [", StringComparison.Ordinal);
+        if (levelIndex <= 0)
+        {
+            return false;
+        }
+
+        string candidate = logLine[..levelIndex];
+        return DateTimeOffset.TryParseExact(
+            candidate,
+            "yyyy-MM-dd HH:mm:ss.fff zzz",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out timestamp);
+    }
+
+    private static void ExtractMetric(
+        string logLine,
+        string metricName,
+        IDictionary<string, List<double>> metrics)
+    {
+        string marker = metricName + "=";
+        int markerIndex = logLine.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex < 0)
+        {
+            return;
+        }
+
+        int valueStart = markerIndex + marker.Length;
+        int valueEnd = valueStart;
+        while (valueEnd < logLine.Length && char.IsDigit(logLine[valueEnd]))
+        {
+            valueEnd++;
+        }
+
+        if (valueEnd <= valueStart)
+        {
+            return;
+        }
+
+        string valueSlice = logLine[valueStart..valueEnd];
+        if (!double.TryParse(valueSlice, NumberStyles.Integer, CultureInfo.InvariantCulture, out double parsed))
+        {
+            return;
+        }
+
+        if (!metrics.TryGetValue(metricName, out List<double>? sampleList))
+        {
+            sampleList = [];
+            metrics[metricName] = sampleList;
+        }
+
+        sampleList.Add(parsed);
+    }
+
+    private static double Percentile(IReadOnlyList<double> sortedValues, double percentile)
+    {
+        if (sortedValues.Count == 0)
+        {
+            return 0;
+        }
+
+        double clamped = Math.Clamp(percentile, 0, 1);
+        double position = (sortedValues.Count - 1) * clamped;
+        int lower = (int)Math.Floor(position);
+        int upper = (int)Math.Ceiling(position);
+        if (lower == upper)
+        {
+            return sortedValues[lower];
+        }
+
+        double weight = position - lower;
+        return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * weight;
     }
 
     private static string GetAssemblyVersion()

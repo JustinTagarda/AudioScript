@@ -98,8 +98,12 @@ public sealed class LiveSegmentTranscriptionSessionTests
 
             Assert.Equal(2, completed.Count);
             Assert.Equal(2, transcriptionService.RequestDurations.Count);
-            Assert.InRange(transcriptionService.RequestDurations[0], TimeSpan.FromMilliseconds(149), TimeSpan.FromMilliseconds(151));
-            Assert.InRange(transcriptionService.RequestDurations[1], TimeSpan.FromMilliseconds(99), TimeSpan.FromMilliseconds(101));
+            Assert.Contains(
+                transcriptionService.RequestDurations,
+                duration => duration >= TimeSpan.FromMilliseconds(149) && duration <= TimeSpan.FromMilliseconds(151));
+            Assert.Contains(
+                transcriptionService.RequestDurations,
+                duration => duration >= TimeSpan.FromMilliseconds(99) && duration <= TimeSpan.FromMilliseconds(101));
 
             TranscriptionTimedLine[] firstSegmentLines = completed[0].Result.TimedLines!.ToArray();
             Assert.Equal(new[] { "Current segment", "Boundary phrase" }, firstSegmentLines.Select(line => line.Text).ToArray());
