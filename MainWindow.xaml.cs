@@ -111,7 +111,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isTranscriptProcessingCanceling;
     private TranscriptProcessingWorkflowKind _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.None;
     private double _transcriptProcessingPercent;
-    private string _transcriptProcessingDetail = "Preparing...";
     private string _transcriptProcessingElapsedText = "Elapsed 00:00";
     private string _transcriptProcessingEtaText = "ETA calculating";
     private string _transcriptProcessingChunkText = "Progress 0%";
@@ -119,7 +118,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _transcriptProcessingSourceFileText = string.Empty;
     private string _transcriptProcessingSourceFileSizeText = string.Empty;
     private string _transcriptProcessingEngineText = string.Empty;
-    private string _transcriptProcessingTitle = "Generating Transcript";
     private string _transcriptProcessingStartButtonText = "Start";
     private FinalizedTranscriptLineViewModel? _playbackMatchedLine;
     private FinalizedTranscriptLineViewModel? _editLoopLine;
@@ -222,6 +220,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
             UpdateLivePrimaryActionButtonState();
+            UpdateTranscribeAudioBatchControlState();
             UpdateTranscriptionInteractionLockState();
         }
     }
@@ -320,6 +319,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(IsTranscribeAudioBatchStartEnabled));
             OnPropertyChanged(nameof(TranscriptProcessingDismissButtonText));
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
+            UpdateTranscribeAudioBatchControlState();
         }
     }
 
@@ -358,21 +358,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             _isTranscriptProcessingMuteAvailable = value;
             OnPropertyChanged();
-        }
-    }
-
-    public string TranscriptProcessingTitle
-    {
-        get => _transcriptProcessingTitle;
-        private set
-        {
-            if (string.Equals(_transcriptProcessingTitle, value, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            _transcriptProcessingTitle = value;
-            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsTranscriptProcessingMuteEnabled));
         }
     }
 
@@ -516,14 +502,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        ConfigureTranscriptProcessingUi(
-            title: "Transcribe Audio",
-            allowMute: false);
+        ConfigureTranscriptProcessingUi(allowMute: false);
         _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.TranscribeAudio;
         TranscriptProcessingStartButtonText = vm.IsPreparedTranscribeAudioResumeRequested ? "Resume" : "Start";
-        TranscriptProcessingDetail = vm.IsPreparedTranscribeAudioResumeRequested
-            ? "Resume the saved transcription job."
-            : "Review the source file, then click Start.";
         TranscriptProcessingSourceFileText = vm.LoadedAudioFileName;
         TranscriptProcessingSourceFileSizeText = FormatFileSizeText(vm.LoadedAudioFilePath);
         TranscriptProcessingEngineText = ResolveCurrentEngineLabel(vm);
@@ -564,12 +545,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        ConfigureTranscriptProcessingUi(
-            title: "Detect Speaker",
-            allowMute: false);
+        ConfigureTranscriptProcessingUi(allowMute: false);
         _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.DetectSpeakers;
         TranscriptProcessingStartButtonText = "Start";
-        TranscriptProcessingDetail = "Review the session audio, then click Start.";
         TranscriptProcessingSourceFileText = vm.LoadedAudioFileName;
         TranscriptProcessingSourceFileSizeText = FormatFileSizeText(vm.LoadedAudioFilePath);
         TranscriptProcessingEngineText = "Pyannote Community-1";
@@ -590,7 +568,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         IsTranscribeAudioBatchPendingStart = false;
-        TranscriptProcessingDetail = "Preparing audio.";
         IsTranscriptProcessingIndeterminate = true;
         IsTranscribeAudioBatchTranscribing = true;
         vm.SetGenerationRunning(isRunning: true);
@@ -662,7 +639,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         IsTranscribeAudioBatchPendingStart = false;
-        TranscriptProcessingDetail = "Preparing speaker detection.";
         IsTranscriptProcessingIndeterminate = true;
         IsTranscribeAudioBatchTranscribing = true;
         vm.SetGenerationRunning(isRunning: true);
@@ -750,10 +726,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _isTranscriptProcessingCanceling = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsTranscriptProcessingCancelEnabled));
+            OnPropertyChanged(nameof(IsTranscriptProcessingMuteEnabled));
+            UpdateTranscribeAudioBatchControlState();
         }
     }
 
     public bool IsTranscriptProcessingCancelEnabled => !IsTranscriptProcessingCanceling;
+
+    public bool IsTranscriptProcessingMuteEnabled =>
+        IsTranscriptProcessingMuteAvailable && !IsTranscriptProcessingCanceling;
 
     public double TranscriptProcessingPercent
     {
@@ -767,21 +748,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             _transcriptProcessingPercent = normalized;
-            OnPropertyChanged();
-        }
-    }
-
-    public string TranscriptProcessingDetail
-    {
-        get => _transcriptProcessingDetail;
-        private set
-        {
-            if (string.Equals(_transcriptProcessingDetail, value, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            _transcriptProcessingDetail = value;
             OnPropertyChanged();
         }
     }
@@ -989,9 +955,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return false;
         }
 
-        ConfigureTranscriptProcessingUi(
-            title: "Live Transcription",
-            allowMute: false);
+        ConfigureTranscriptProcessingUi(allowMute: false);
 
         LiveRecordingSession recordingSession;
         try
@@ -2106,6 +2070,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         await RunTranscribeAudioAsync(vm);
     }
 
+    private async void TranscribeAudioBatchStartStop_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        if (IsTranscribeAudioBatchTranscribing)
+        {
+            if (_activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.DetectSpeakers)
+            {
+                CancelDetectSpeakers(vm);
+            }
+            else
+            {
+                CancelTranscribeAudioBatch(vm);
+            }
+
+            return;
+        }
+
+        if (!IsTranscribeAudioBatchPendingStart)
+        {
+            return;
+        }
+
+        if (_activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.DetectSpeakers)
+        {
+            await RunDetectSpeakersAsync(vm);
+            return;
+        }
+
+        await RunTranscribeAudioAsync(vm);
+    }
+
     private void CopyFinalizedToClipboard_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm)
@@ -2933,9 +2932,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return true;
         }
 
-        TranscriptProcessingTitle = "Detect Speaker";
         TranscriptProcessingEngineText = "Pyannote Community-1";
-        TranscriptProcessingDetail = "Downloading speaker detection files.";
         TranscriptProcessingChunkText = "Progress 0%";
         TranscriptProcessingAudioText = "Download 0 B / unknown size";
         TranscriptProcessingElapsedText = "Elapsed 00:00";
@@ -2947,7 +2944,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             TranscriptProcessingPercent = assetProgress.Percent;
             IsTranscriptProcessingIndeterminate = assetProgress.TotalBytes is not > 0;
-            TranscriptProcessingDetail = $"{assetProgress.DisplayName}: {assetProgress.Status}";
             TranscriptProcessingChunkText = $"Progress {assetProgress.Percent:0}%";
             TranscriptProcessingAudioText = $"Download {FormatDownloadBytes(assetProgress.BytesReceived)} / {FormatDownloadBytes(assetProgress.TotalBytes)}";
         });
@@ -2955,7 +2951,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             await _pyannoteCommunityModelManager.EnsureProvisionedAsync(progress, cancellationToken);
-            TranscriptProcessingDetail = "Speaker detection files are ready.";
             TranscriptProcessingChunkText = "Progress 100%";
             TranscriptProcessingAudioText = "Download completed";
             TranscriptProcessingPercent = 100;
@@ -3142,6 +3137,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ApplyFloatingSurfaceTheme();
         ApplySelectionControlTheme();
         ApplySessionsCardTheme();
+        UpdateTranscribeAudioBatchControlState();
     }
 
     private void CancelCopyToast()
@@ -3602,9 +3598,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return null;
     }
 
-    private void ConfigureTranscriptProcessingUi(string title, bool allowMute)
+    private void ConfigureTranscriptProcessingUi(bool allowMute)
     {
-        TranscriptProcessingTitle = title;
         TranscriptProcessingStartButtonText = "Start";
         IsTranscriptProcessingMuteAvailable = allowMute;
         TranscriptProcessingSourceFileText = string.Empty;
@@ -3618,7 +3613,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IsTranscriptProcessingCanceling = false;
         IsTranscriptProcessingIndeterminate = true;
         TranscriptProcessingPercent = 0;
-        TranscriptProcessingDetail = "Preparing...";
         TranscriptProcessingChunkText = "Progress 0%";
         TranscriptProcessingAudioText = "Audio 00:00 / 00:00";
         TranscriptProcessingElapsedText = "Elapsed 00:00";
@@ -3635,9 +3629,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         TranscriptProcessingPercent = snapshot.Percent;
         IsTranscriptProcessingIndeterminate = ShouldShowIndeterminateTranscriptProgress(snapshot);
-        TranscriptProcessingDetail = string.IsNullOrWhiteSpace(snapshot.DetailMessage)
-            ? FormatTranscriptionPhase(snapshot.Phase)
-            : snapshot.DetailMessage;
         TranscriptProcessingChunkText = FormatProgressChunkText(snapshot);
         TranscriptProcessingAudioText =
             $"Audio {FormatProgressDuration(snapshot.ProcessedAudio)} / {FormatProgressDuration(snapshot.TotalAudio)}";
@@ -3649,19 +3640,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ApplyTranscriptProcessingCancelingState()
     {
-        ApplyTranscriptProcessingStoppingState("Canceling...", "ETA canceled");
+        ApplyTranscriptProcessingStoppingState("ETA canceled");
     }
 
     private void ApplyTranscriptProcessingPausingState()
     {
-        ApplyTranscriptProcessingStoppingState("Pausing...", "Resume available");
+        ApplyTranscriptProcessingStoppingState("Resume available");
     }
 
-    private void ApplyTranscriptProcessingStoppingState(string detail, string etaText)
+    private void ApplyTranscriptProcessingStoppingState(string etaText)
     {
         IsTranscriptProcessingCanceling = true;
         IsTranscriptProcessingIndeterminate = true;
-        TranscriptProcessingDetail = detail;
         TranscriptProcessingEtaText = etaText;
     }
 
@@ -3800,11 +3790,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (IsTranscribeAudioBatchPendingStart)
             {
-                TranscribeAudioBatchStartButton.Focus();
-                return;
+                TranscribeAudioBatchStartStopButton.Focus();
             }
-
-            TranscribeAudioBatchCancelButton.Focus();
         }), DispatcherPriority.Input);
     }
 
@@ -3813,7 +3800,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IsTranscribeAudioBatchPendingStart = false;
         _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.None;
         IsTranscriptProcessingMuteAvailable = true;
-        TranscriptProcessingTitle = "Generating Transcript";
         TranscriptProcessingSourceFileText = string.Empty;
         TranscriptProcessingSourceFileSizeText = string.Empty;
         TranscriptProcessingEngineText = string.Empty;
@@ -3824,6 +3810,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             FinalizedTranscriptGrid.UnselectAllCells();
             FinalizedTranscriptGrid.CurrentCell = default;
         }), DispatcherPriority.Background);
+    }
+
+    private void UpdateTranscribeAudioBatchControlState()
+    {
+        if (TranscribeAudioBatchStartStopButton is null)
+        {
+            return;
+        }
+
+        bool isStopState = IsTranscribeAudioBatchTranscribing;
+        bool isCanceling = IsTranscriptProcessingCanceling;
+        TranscribeAudioBatchStartStopButton.Content = isCanceling
+            ? "Finalizing... please wait"
+            : isStopState ? "Stop" : "Start";
+        TranscribeAudioBatchStartStopButton.Tag = isStopState ? "\uE711" : "\uE768";
+        TranscribeAudioBatchStartStopButton.IsEnabled = isStopState
+            ? IsTranscriptProcessingCancelEnabled
+            : IsTranscribeAudioBatchStartEnabled;
+
+        if (isStopState)
+        {
+            TranscribeAudioBatchStartStopButton.Background = System.Windows.Media.Brushes.Red;
+            TranscribeAudioBatchStartStopButton.Foreground = System.Windows.Media.Brushes.White;
+        }
+        else
+        {
+            TranscribeAudioBatchStartStopButton.ClearValue(BackgroundProperty);
+            TranscribeAudioBatchStartStopButton.ClearValue(ForegroundProperty);
+        }
     }
 
     private void CancelTranscribeAudioBatch(MainViewModel vm)

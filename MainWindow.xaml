@@ -204,6 +204,183 @@
         <Style x:Key="FluentListViewItemStyle"
                TargetType="{x:Type ListViewItem}"
                BasedOn="{StaticResource {x:Type ListViewItem}}"/>
+        <Style x:Key="SessionPanelRootBorderStyle"
+               TargetType="{x:Type Border}">
+            <Setter Property="Padding"
+                    Value="10,8"/>
+            <Setter Property="CornerRadius"
+                    Value="6"/>
+            <Setter Property="Background"
+                    Value="{x:Null}"/>
+            <Setter Property="BorderBrush"
+                    Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+            <Setter Property="BorderThickness"
+                    Value="1"/>
+        </Style>
+        <Style x:Key="SessionSectionLabelTextStyle"
+               TargetType="{x:Type TextBlock}"
+               BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize"
+                    Value="11"/>
+            <Setter Property="Margin"
+                    Value="0,0,0,4"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+        <Style x:Key="SessionPrimaryValueTextStyle"
+               TargetType="{x:Type TextBlock}"
+               BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize"
+                    Value="13"/>
+            <Setter Property="FontWeight"
+                    Value="SemiBold"/>
+        </Style>
+        <Style x:Key="SessionMetaTextStyle"
+               TargetType="{x:Type TextBlock}"
+               BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize"
+                    Value="11"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+        <Style x:Key="SessionBodyTextStyle"
+               TargetType="{x:Type TextBlock}"
+               BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize"
+                    Value="12"/>
+            <Setter Property="FontWeight"
+                    Value="Normal"/>
+        </Style>
+        <Style x:Key="SessionProgressBarStyle"
+               TargetType="{x:Type ProgressBar}"
+               BasedOn="{StaticResource {x:Type ProgressBar}}">
+            <Setter Property="Height"
+                    Value="8"/>
+            <Setter Property="HorizontalAlignment"
+                    Value="Stretch"/>
+        </Style>
+        <Style x:Key="SessionActionPrimaryButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource ToolbarPrimaryButtonStyle}">
+            <Setter Property="MinWidth"
+                    Value="120"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Margin="{TemplateBinding Padding}">
+                                <TextBlock x:Name="IconText"
+                                           Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                           Text="{TemplateBinding Tag}"
+                                           FontSize="16"
+                                           Margin="0,0,6,0"/>
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Tag"
+                                     Value="{x:Null}">
+                                <Setter TargetName="IconText"
+                                        Property="Visibility"
+                                        Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver"
+                                     Value="True">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed"
+                                     Value="True">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled"
+                                     Value="False">
+                                <Setter Property="Opacity"
+                                        Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SessionActionSecondaryButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource ToolbarButtonStyle}">
+            <Setter Property="MinWidth"
+                    Value="120"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Margin="{TemplateBinding Padding}">
+                                <TextBlock x:Name="IconText"
+                                           Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                           Text="{TemplateBinding Tag}"
+                                           FontSize="16"
+                                           Margin="0,0,6,0"/>
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Tag"
+                                     Value="{x:Null}">
+                                <Setter TargetName="IconText"
+                                        Property="Visibility"
+                                        Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver"
+                                     Value="True">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed"
+                                     Value="True">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled"
+                                     Value="False">
+                                <Setter Property="Opacity"
+                                        Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style x:Key="TranscribeAudioButtonStyle"
                TargetType="{x:Type Button}"
                BasedOn="{StaticResource ToolbarPrimaryButtonStyle}">
@@ -1058,21 +1235,8 @@
                                         CornerRadius="0"
                                         Padding="0">
                                     <StackPanel>
-                                        <TextBlock Text="{Binding TranscriptProcessingTitle, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                   FontSize="13"
-                                                   FontWeight="SemiBold"/>
-                                        <TextBlock Text="{Binding TranscriptProcessingDetail, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                   Margin="0,4,0,0"
-                                                   FontSize="11"
-                                                   Opacity="0.82"
-                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-
-                                        <Border Margin="0,10,0,0"
-                                                Padding="10,8"
-                                                CornerRadius="6"
-                                                Background="{x:Null}"
-                                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                                BorderThickness="1">
+                                        <Border Margin="0,0,0,0"
+                                                Style="{StaticResource SessionPanelRootBorderStyle}">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*"/>
@@ -1080,14 +1244,12 @@
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0">
                                                     <TextBlock Text="Source file"
-                                                               FontSize="11"
-                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                               Style="{StaticResource SessionSectionLabelTextStyle}"/>
                                                     <TextBlock Margin="0,4,0,0"
-                                                               FontSize="13"
-                                                               FontWeight="SemiBold"
                                                                TextTrimming="CharacterEllipsis">
                                                         <TextBlock.Style>
-                                                            <Style TargetType="TextBlock">
+                                                            <Style TargetType="TextBlock"
+                                                                   BasedOn="{StaticResource SessionPrimaryValueTextStyle}">
                                                                 <Setter Property="Text"
                                                                         Value="{Binding TranscriptProcessingSourceFileText, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                                                 <Style.Triggers>
@@ -1106,15 +1268,13 @@
                                                             HorizontalAlignment="Right"
                                                             VerticalAlignment="Bottom">
                                                     <TextBlock Text="File size"
-                                                               FontSize="11"
-                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                               Style="{StaticResource SessionSectionLabelTextStyle}"
                                                                TextAlignment="Right"/>
                                                     <TextBlock Margin="0,4,0,0"
-                                                               FontSize="13"
-                                                               FontWeight="SemiBold"
                                                                TextAlignment="Right">
                                                         <TextBlock.Style>
-                                                            <Style TargetType="TextBlock">
+                                                            <Style TargetType="TextBlock"
+                                                                   BasedOn="{StaticResource SessionPrimaryValueTextStyle}">
                                                                 <Setter Property="Text"
                                                                         Value="{Binding TranscriptProcessingSourceFileSizeText, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                                                 <Style.Triggers>
@@ -1131,22 +1291,16 @@
                                             </Grid>
                                         </Border>
 
-                                        <Border Margin="0,8,0,0"
-                                                Padding="10,8"
-                                                CornerRadius="6"
-                                                Background="{x:Null}"
-                                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                                BorderThickness="1">
+                                        <Border Margin="0,10,0,0"
+                                                Style="{StaticResource SessionPanelRootBorderStyle}">
                                             <StackPanel>
                                                 <TextBlock Text="Engine"
-                                                           FontSize="11"
-                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                           Style="{StaticResource SessionSectionLabelTextStyle}"/>
                                                 <TextBlock Margin="0,4,0,0"
-                                                           FontSize="13"
-                                                           FontWeight="SemiBold"
                                                            TextTrimming="CharacterEllipsis">
                                                     <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
+                                                        <Style TargetType="TextBlock"
+                                                               BasedOn="{StaticResource SessionPrimaryValueTextStyle}">
                                                             <Setter Property="Text"
                                                                     Value="{Binding TranscriptProcessingEngineText, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                                             <Style.Triggers>
@@ -1162,36 +1316,18 @@
                                             </StackPanel>
                                         </Border>
 
-                                        <Border Margin="0,8,0,0"
-                                                Padding="10,8"
-                                                CornerRadius="6"
-                                                Background="{x:Null}"
-                                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                                BorderThickness="1">
+                                        <Border Margin="0,10,0,0"
+                                                Style="{StaticResource SessionPanelRootBorderStyle}">
                                         <StackPanel>
-                                            <StackPanel.Style>
-                                                <Style TargetType="StackPanel">
-                                                    <Setter Property="Visibility"
-                                                            Value="Visible"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsTranscribeAudioBatchPendingStart, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                     Value="True">
-                                                            <Setter Property="Visibility"
-                                                                    Value="Collapsed"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </StackPanel.Style>
-                                            <ProgressBar Height="8"
-                                                         HorizontalAlignment="Stretch"
-                                                         Minimum="0"
+                                            
+                                            <ProgressBar Minimum="0"
                                                          Maximum="100"
+                                                         Style="{StaticResource SessionProgressBarStyle}"
                                                          Value="{Binding TranscriptProcessingPercent, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
                                                          IsIndeterminate="{Binding IsTranscriptProcessingIndeterminate, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                             <StackPanel Margin="0,10,0,0">
                                                 <TextBlock Text="{Binding TranscriptProcessingChunkText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                           FontSize="13"
-                                                           FontWeight="SemiBold"/>
+                                                           Style="{StaticResource SessionPrimaryValueTextStyle}"/>
                                                 <TextBlock Text="{Binding TranscriptProcessingAudioText, RelativeSource={RelativeSource AncestorType=Window}}"
                                                            Margin="0,4,0,0"
                                                            FontSize="12"
@@ -1203,93 +1339,42 @@
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0"
                                                                Text="{Binding TranscriptProcessingElapsedText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                               FontSize="11"
-                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                               Style="{StaticResource SessionMetaTextStyle}"/>
                                                     <TextBlock Grid.Column="1"
                                                                Text="{Binding TranscriptProcessingEtaText, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                Margin="14,0,0,0"
-                                                               FontSize="11"
-                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                               Style="{StaticResource SessionMetaTextStyle}"/>
                                                 </Grid>
                                             </StackPanel>
                                         </StackPanel>
                                         </Border>
 
-                                        <DockPanel Margin="0,8,0,0"
-                                                   LastChildFill="False">
-                                            <StackPanel DockPanel.Dock="Left"
+                                        <Grid Margin="0,12,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0"
                                                         Orientation="Horizontal"
                                                         VerticalAlignment="Center">
                                                 <CheckBox Content="Mute"
                                                           IsChecked="{Binding IsPlaybackMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          IsEnabled="{Binding IsTranscriptProcessingMuteEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
                                                           VerticalAlignment="Center"
                                                           Margin="0,0,8,0">
-                                                    <CheckBox.Style>
-                                                        <Style TargetType="CheckBox"
-                                                               BasedOn="{StaticResource {x:Type CheckBox}}">
-                                                            <Setter Property="Visibility"
-                                                                    Value="Visible"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsTranscriptProcessingMuteAvailable, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                             Value="False">
-                                                                    <Setter Property="Visibility"
-                                                                            Value="Collapsed"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </CheckBox.Style>
+                                                     
                                                 </CheckBox>
-                                                <TextBlock Text="Processing…"
-                                                           FontSize="11"
-                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                                           VerticalAlignment="Center">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Visibility"
-                                                                    Value="Collapsed"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsTranscribeAudioBatchTranscribing, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                             Value="True">
-                                                                    <Setter Property="Visibility"
-                                                                            Value="Visible"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
                                             </StackPanel>
-                                            <Button x:Name="TranscribeAudioBatchStartButton"
-                                                    DockPanel.Dock="Right"
-                                                    Content="{Binding TranscriptProcessingStartButtonText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                    Tag="&#xE768;"
-                                                    MinWidth="120"
-                                                    IsEnabled="{Binding IsTranscribeAudioBatchStartEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                    Click="StartProcessing_Click">
-                                                <Button.Style>
-                                                    <Style TargetType="Button"
-                                                           BasedOn="{StaticResource ToolbarPrimaryButtonStyle}">
-                                                        <Setter Property="Visibility"
-                                                                Value="Visible"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsTranscribeAudioBatchPendingStart, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                                         Value="False">
-                                                                <Setter Property="Visibility"
-                                                                        Value="Collapsed"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Button.Style>
-                                            </Button>
-                                            <Button x:Name="TranscribeAudioBatchCancelButton"
-                                                    DockPanel.Dock="Right"
-                                                    Content="{Binding TranscriptProcessingDismissButtonText, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                    Tag="&#xE711;"
-                                                    MinWidth="120"
-                                                    Margin="0,0,8,0"
-                                                    Style="{StaticResource ToolbarButtonStyle}"
-                                                    IsEnabled="{Binding IsTranscriptProcessingCancelEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                    Click="CancelProcessing_Click"/>
-                                        </DockPanel>
+                                            <StackPanel Grid.Column="1"
+                                                        Orientation="Horizontal"
+                                                        HorizontalAlignment="Right">
+                                                <Button x:Name="TranscribeAudioBatchStartStopButton"
+                                                        Content="Start"
+                                                        Tag="&#xE768;"
+                                                        Style="{StaticResource SessionActionPrimaryButtonStyle}"
+                                                        Click="TranscribeAudioBatchStartStop_Click"/>
+                                            </StackPanel>
+                                        </Grid>
                                     </StackPanel>
                                 </Border>
                             </Grid>
@@ -1298,7 +1383,7 @@
                         <Border Grid.Row="2"
                                 MinHeight="100"
                                 Margin="0,8,0,0"
-                                Padding="8"
+                                Padding="10"
                                 CornerRadius="6"
                                 BorderThickness="0"
                                 BorderBrush="{x:Null}"
@@ -1327,9 +1412,7 @@
 
                                 <StackPanel Grid.Row="0">
                                     <TextBlock Text="Live audio source"
-                                               FontSize="11"
-                                               Margin="0,0,0,4"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                               Style="{StaticResource SessionSectionLabelTextStyle}"/>
                                     <ComboBox x:Name="DeviceComboBox"
                                               FontSize="13"
                                               DisplayMemberPath="Name"
@@ -1337,66 +1420,75 @@
                                               SelectionChanged="DeviceComboBox_SelectionChanged"/>
                                 </StackPanel>
 
-                                <StackPanel Grid.Row="1"
-                                            Margin="0,10,0,0">
+                                <Border Grid.Row="1"
+                                        Margin="0,12,0,0"
+                                        Style="{StaticResource SessionPanelRootBorderStyle}">
+                                    <StackPanel>
                                     <TextBlock x:Name="ProgressMeterLabel"
                                                Text="Processed input level"
-                                               FontSize="11"
-                                               Margin="0,0,0,4"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                               Style="{StaticResource SessionSectionLabelTextStyle}"/>
                                     <ProgressBar x:Name="VolumeMeter"
-                                                 Height="8"
                                                  Minimum="0"
                                                  Maximum="100"
+                                                 Style="{StaticResource SessionProgressBarStyle}"
                                                  Value="0"/>
-                                </StackPanel>
+                                    </StackPanel>
+                                </Border>
 
                                 <StackPanel Grid.Row="2"
-                                            Margin="0,10,0,0"/>
+                                            Margin="0,0,0,0"/>
 
-                                <StackPanel Grid.Row="3"
-                                            Margin="0,12,0,0">
-                                    <TextBlock Text="Current activity"
-                                               FontSize="11"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                                    <TextBlock x:Name="ActivitySummaryText"
-                                               Margin="0,6,0,0"
-                                               FontSize="13"
-                                               FontWeight="SemiBold"
-                                               TextWrapping="Wrap"
-                                               Text="Ready. Start live transcription to begin recording and speech processing."/>
-                                    <TextBlock x:Name="RecordingActivityText"
-                                               Margin="0,8,0,0"
-                                               FontSize="12"
-                                               TextWrapping="Wrap"
-                                               Text="Recorder: idle"/>
-                                    <TextBlock x:Name="TranscriptionActivityText"
-                                               Margin="0,4,0,0"
-                                               FontSize="12"
-                                               TextWrapping="Wrap"
-                                               Text="Transcriber: idle"/>
-                                    <TextBlock x:Name="ChunkActivityText"
-                                               Margin="0,4,0,0"
-                                               FontSize="12"
-                                               TextWrapping="Wrap"
-                                               Text="Chunks: waiting to start"/>
-                                    <TextBlock x:Name="LatestActivityText"
-                                               Margin="0,8,0,0"
-                                               FontSize="11"
-                                               TextWrapping="Wrap"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                               Text="Latest event: waiting to start"/>
-                                </StackPanel>
+                                <Border Grid.Row="3"
+                                        Margin="0,12,0,0"
+                                        Style="{StaticResource SessionPanelRootBorderStyle}">
+                                    <StackPanel>
+                                        <TextBlock Text="Current activity"
+                                                   Style="{StaticResource SessionSectionLabelTextStyle}"/>
+                                        <TextBlock x:Name="ActivitySummaryText"
+                                                   Margin="0,6,0,0"
+                                                   Style="{StaticResource SessionPrimaryValueTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Text="Ready. Start live transcription to begin recording and speech processing."/>
+                                        <TextBlock x:Name="RecordingActivityText"
+                                                   Margin="0,8,0,0"
+                                                   Style="{StaticResource SessionBodyTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Text="Recorder: idle"/>
+                                        <TextBlock x:Name="TranscriptionActivityText"
+                                                   Margin="0,4,0,0"
+                                                   Style="{StaticResource SessionBodyTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Text="Transcriber: idle"/>
+                                        <TextBlock x:Name="ChunkActivityText"
+                                                   Margin="0,4,0,0"
+                                                   Style="{StaticResource SessionBodyTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Text="Chunks: waiting to start"/>
+                                        <TextBlock x:Name="LatestActivityText"
+                                                   Margin="0,8,0,0"
+                                                   Style="{StaticResource SessionMetaTextStyle}"
+                                                   TextWrapping="Wrap"
+                                                   Text="Latest event: waiting to start"/>
+                                    </StackPanel>
+                                </Border>
 
-                                <StackPanel Grid.Row="4"
-                                            Margin="0,12,0,0"
-                                            Orientation="Horizontal"
-                                            HorizontalAlignment="Right">
+                                <Grid Grid.Row="4"
+                                      Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Style="{StaticResource SessionMetaTextStyle}"
+                                               Text=""/>
                                     <Button x:Name="StartStopButton"
+                                            Grid.Column="1"
                                             Content="Start"
-                                            MinWidth="120"
+                                            Tag="&#xE768;"
+                                            Style="{StaticResource SessionActionPrimaryButtonStyle}"
                                             Click="LiveTranscriptionStartStop_Click"/>
-                                </StackPanel>
+                                </Grid>
                             </Grid>
                         </Border>
 

@@ -9,6 +9,119 @@
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         ResizeMode="NoResize">
+    <Window.Resources>
+        <Style x:Key="SessionPanelRootBorderStyle"
+               TargetType="{x:Type Border}">
+            <Setter Property="Padding"
+                    Value="10,8"/>
+            <Setter Property="CornerRadius"
+                    Value="6"/>
+            <Setter Property="Background"
+                    Value="{x:Null}"/>
+            <Setter Property="BorderBrush"
+                    Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+            <Setter Property="BorderThickness"
+                    Value="1"/>
+        </Style>
+        <Style x:Key="SessionSectionLabelTextStyle"
+               TargetType="{x:Type TextBlock}">
+            <Setter Property="FontSize"
+                    Value="11"/>
+            <Setter Property="Margin"
+                    Value="0,0,0,4"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+        <Style x:Key="SessionPrimaryValueTextStyle"
+               TargetType="{x:Type TextBlock}">
+            <Setter Property="FontSize"
+                    Value="13"/>
+            <Setter Property="FontWeight"
+                    Value="SemiBold"/>
+        </Style>
+        <Style x:Key="SessionMetaTextStyle"
+               TargetType="{x:Type TextBlock}">
+            <Setter Property="FontSize"
+                    Value="11"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+        <Style x:Key="SessionBodyTextStyle"
+               TargetType="{x:Type TextBlock}">
+            <Setter Property="FontSize"
+                    Value="12"/>
+            <Setter Property="FontWeight"
+                    Value="Normal"/>
+        </Style>
+        <Style x:Key="SessionProgressBarStyle"
+               TargetType="{x:Type ProgressBar}">
+            <Setter Property="Height"
+                    Value="8"/>
+            <Setter Property="HorizontalAlignment"
+                    Value="Stretch"/>
+        </Style>
+        <Style x:Key="SessionActionPrimaryButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource ToolbarPrimaryButtonStyle}">
+            <Setter Property="MinWidth"
+                    Value="120"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5">
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Margin="{TemplateBinding Padding}">
+                                <TextBlock x:Name="IconText"
+                                           Style="{StaticResource ToolbarButtonIconTextStyle}"
+                                           Text="{TemplateBinding Tag}"
+                                           FontSize="16"
+                                           Margin="0,0,6,0"/>
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Tag"
+                                     Value="{x:Null}">
+                                <Setter TargetName="IconText"
+                                        Property="Visibility"
+                                        Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver"
+                                     Value="True">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="{DynamicResource ControlStrokeColorSecondaryBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed"
+                                     Value="True">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="{DynamicResource ControlFillColorTertiaryBrush}"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled"
+                                     Value="False">
+                                <Setter Property="Opacity"
+                                        Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -20,9 +133,7 @@
 
         <StackPanel Grid.Row="0">
             <TextBlock Text="Live audio source"
-                       FontSize="11"
-                       Margin="0,0,0,4"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                       Style="{StaticResource SessionSectionLabelTextStyle}"/>
             <ComboBox x:Name="DeviceComboBox"
                       FontSize="13"
                       DisplayMemberPath="Name"
@@ -30,66 +141,75 @@
                       SelectionChanged="DeviceComboBox_SelectionChanged"/>
         </StackPanel>
 
-        <StackPanel Grid.Row="1"
-                    Margin="0,10,0,0">
-            <TextBlock x:Name="ProgressMeterLabel"
-                       Text="Processed input level"
-                       FontSize="11"
-                       Margin="0,0,0,4"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-            <ProgressBar x:Name="VolumeMeter"
-                         Height="8"
-                         Minimum="0"
-                         Maximum="100"
-                         Value="0"/>
-        </StackPanel>
+        <Border Grid.Row="1"
+                Margin="0,12,0,0"
+                Style="{StaticResource SessionPanelRootBorderStyle}">
+            <StackPanel>
+                <TextBlock x:Name="ProgressMeterLabel"
+                           Text="Processed input level"
+                           Style="{StaticResource SessionSectionLabelTextStyle}"/>
+                <ProgressBar x:Name="VolumeMeter"
+                             Minimum="0"
+                             Maximum="100"
+                             Style="{StaticResource SessionProgressBarStyle}"
+                             Value="0"/>
+            </StackPanel>
+        </Border>
 
         <StackPanel Grid.Row="2"
-                    Margin="0,10,0,0"/>
+                    Margin="0,0,0,0"/>
 
-        <StackPanel Grid.Row="3"
-                    Margin="0,12,0,0">
-            <TextBlock Text="Current activity"
-                       FontSize="11"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-            <TextBlock x:Name="ActivitySummaryText"
-                       Margin="0,6,0,0"
-                       FontSize="13"
-                       FontWeight="SemiBold"
-                       TextWrapping="Wrap"
-                       Text="Ready. Start live transcription to begin recording and speech processing."/>
-            <TextBlock x:Name="RecordingActivityText"
-                       Margin="0,8,0,0"
-                       FontSize="12"
-                       TextWrapping="Wrap"
-                       Text="Recorder: idle"/>
-            <TextBlock x:Name="TranscriptionActivityText"
-                       Margin="0,4,0,0"
-                       FontSize="12"
-                       TextWrapping="Wrap"
-                       Text="Transcriber: idle"/>
-            <TextBlock x:Name="ChunkActivityText"
-                       Margin="0,4,0,0"
-                       FontSize="12"
-                       TextWrapping="Wrap"
-                       Text="Chunks: waiting to start"/>
-            <TextBlock x:Name="LatestActivityText"
-                       Margin="0,8,0,0"
-                       FontSize="11"
-                       TextWrapping="Wrap"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       Text="Latest event: waiting to start"/>
-        </StackPanel>
+        <Border Grid.Row="3"
+                Margin="0,12,0,0"
+                Style="{StaticResource SessionPanelRootBorderStyle}">
+            <StackPanel>
+                <TextBlock Text="Current activity"
+                           Style="{StaticResource SessionSectionLabelTextStyle}"/>
+                <TextBlock x:Name="ActivitySummaryText"
+                           Margin="0,6,0,0"
+                           Style="{StaticResource SessionPrimaryValueTextStyle}"
+                           TextWrapping="Wrap"
+                           Text="Ready. Start live transcription to begin recording and speech processing."/>
+                <TextBlock x:Name="RecordingActivityText"
+                           Margin="0,8,0,0"
+                           Style="{StaticResource SessionBodyTextStyle}"
+                           TextWrapping="Wrap"
+                           Text="Recorder: idle"/>
+                <TextBlock x:Name="TranscriptionActivityText"
+                           Margin="0,4,0,0"
+                           Style="{StaticResource SessionBodyTextStyle}"
+                           TextWrapping="Wrap"
+                           Text="Transcriber: idle"/>
+                <TextBlock x:Name="ChunkActivityText"
+                           Margin="0,4,0,0"
+                           Style="{StaticResource SessionBodyTextStyle}"
+                           TextWrapping="Wrap"
+                           Text="Chunks: waiting to start"/>
+                <TextBlock x:Name="LatestActivityText"
+                           Margin="0,8,0,0"
+                           Style="{StaticResource SessionMetaTextStyle}"
+                           TextWrapping="Wrap"
+                           Text="Latest event: waiting to start"/>
+            </StackPanel>
+        </Border>
 
-        <StackPanel Grid.Row="4"
-                    Margin="0,12,0,0"
-                    Orientation="Horizontal"
-                    HorizontalAlignment="Right">
+        <Grid Grid.Row="4"
+              Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0"
+                       VerticalAlignment="Center"
+                       Style="{StaticResource SessionMetaTextStyle}"
+                       Text=""/>
             <Button x:Name="StartStopButton"
+                    Grid.Column="1"
                     Content="Start"
-                    MinWidth="120"
+                    Tag="&#xE768;"
+                    Style="{StaticResource SessionActionPrimaryButtonStyle}"
                     IsDefault="True"
                     Click="StartStop_Click"/>
-        </StackPanel>
+        </Grid>
     </Grid>
 </Window>
