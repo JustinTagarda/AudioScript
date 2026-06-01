@@ -1213,7 +1213,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RecordingActivityText.Text = "Recorder: idle";
         TranscriptionActivityText.Text = "Transcriber: idle";
         SetLiveChunkCounts(generated: 0, queued: 0, processing: 0, transcribed: 0, failed: 0);
-        LatestActivityText.Text = "Latest event: waiting to start";
     }
 
     private void SetLiveSessionReadyToStartActivity()
@@ -1224,7 +1223,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RecordingActivityText.Text = "Recorder: session initialized and idle";
         TranscriptionActivityText.Text = "Transcriber: waiting for Start";
         SetLiveChunkCounts(generated: 0, queued: 0, processing: 0, transcribed: 0, failed: 0);
-        LatestActivityText.Text = "Latest event: live session created and awaiting source selection";
     }
 
     private void SetLiveStartingActivity(string sourceName)
@@ -1235,7 +1233,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RecordingActivityText.Text = "Recorder: preparing manifest and output segment path";
         TranscriptionActivityText.Text = "Transcriber: validating engine and opening capture source";
         SetLiveChunkCounts(generated: 0, queued: 0, processing: 0, transcribed: 0, failed: 0);
-        LatestActivityText.Text = $"Latest event: preparing source {sourceName}";
     }
 
     private void SetLiveListeningActivity(string modelDisplayName)
@@ -1245,7 +1242,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ActivitySummaryText.Text = "Live recording and transcription are active.";
         RecordingActivityText.Text = "Recorder: writing standardized PCM audio into rotating WAV segments";
         TranscriptionActivityText.Text = $"Transcriber: listening for speech with {modelDisplayName}";
-        LatestActivityText.Text = "Latest event: capture started and waiting for speech";
     }
 
     private void SetLiveFinalTranscriptionActivity(string preview)
@@ -1258,9 +1254,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ActivitySummaryText.Text = "A transcript segment was finalized and saved into the session.";
         RecordingActivityText.Text = "Recorder: continuing segmented session recording";
         TranscriptionActivityText.Text = "Transcriber: finalized the latest speech chunk";
-        LatestActivityText.Text = string.IsNullOrWhiteSpace(preview)
-            ? "Latest event: final transcription segment saved"
-            : $"Latest event: final segment '{preview}'";
     }
 
     private void SetLiveStoppingActivity()
@@ -1269,7 +1262,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ActivitySummaryText.Text = "Stopped listening and recording. Completing pending chunk transcription.";
         RecordingActivityText.Text = "Recorder: finalizing the current WAV segment";
         TranscriptionActivityText.Text = "Transcriber: preparing pending chunk drain";
-        LatestActivityText.Text = "Latest event: stopping live session";
     }
 
     private void SetLiveDrainPendingChunkProgress(int initialPendingChunks)
@@ -1284,9 +1276,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         TranscriptionActivityText.Text = _liveDrainInitialPendingChunks == 0
             ? "Transcriber: no pending chunks to transcribe"
             : $"Transcriber: transcribing pending chunks 0/{_liveDrainInitialPendingChunks:N0}";
-        LatestActivityText.Text = _liveDrainInitialPendingChunks == 0
-            ? "Latest event: no pending chunk transcription after stop"
-            : "Latest event: draining pending chunk transcription";
     }
 
     private void SetLiveCancelPendingChunkProgress()
@@ -1296,7 +1285,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _liveDrainInitialPendingChunks = 0;
         VolumeMeter.IsIndeterminate = true;
         TranscriptionActivityText.Text = "Transcriber: canceling pending and active chunk transcription";
-        LatestActivityText.Text = "Latest event: canceling live chunk transcription work";
     }
 
     private void SetLiveStoppedActivity(bool recordingInterrupted)
@@ -1318,9 +1306,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ? "Recorder: interrupted before clean completion"
             : "Recorder: completed and saved session audio";
         TranscriptionActivityText.Text = "Transcriber: stopped";
-        LatestActivityText.Text = recordingInterrupted
-            ? "Latest event: stopped with incomplete audio recording"
-            : "Latest event: live session completed";
     }
 
     private void SetLiveRecordingSavedForClose()
@@ -1333,7 +1318,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ActivitySummaryText.Text = "Recording was interrupted, but live transcription is still running.";
         RecordingActivityText.Text = $"Recorder: interrupted ({reason})";
         TranscriptionActivityText.Text = "Transcriber: continuing without full session audio coverage";
-        LatestActivityText.Text = "Latest event: recording interruption detected";
     }
 
     private void SetLiveFailureActivity(string detail)
@@ -1343,7 +1327,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ActivitySummaryText.Text = "Live transcription encountered a failure.";
         RecordingActivityText.Text = "Recorder: stopped";
         TranscriptionActivityText.Text = "Transcriber: stopped";
-        LatestActivityText.Text = $"Latest event: {detail}";
     }
 
     private void StartLiveElapsedTime()
@@ -1415,9 +1398,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 int completed = Math.Max(0, Math.Min(_liveDrainInitialPendingChunks, _liveDrainInitialPendingChunks - pending));
                 TranscriptionActivityText.Text =
                     $"Transcriber: transcribing pending chunks {completed:N0}/{_liveDrainInitialPendingChunks:N0}";
-                LatestActivityText.Text = pending > 0
-                    ? $"Latest event: pending chunk transcription remaining {pending:N0}"
-                    : "Latest event: pending chunk transcription completed";
             }
         }
 
@@ -1822,7 +1802,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     ActivitySummaryText.Text = "A recorded segment is being transcribed.";
                     RecordingActivityText.Text = "Recorder: appending audio frames to the active segment";
                     TranscriptionActivityText.Text = "Transcriber: processing recorded segment";
-                    LatestActivityText.Text = "Latest event: processing recorded segment";
                 }
             }),
             DispatcherPriority.Background);
@@ -8284,6 +8263,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     );
 
 }
+
 
 
 

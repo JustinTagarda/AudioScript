@@ -1591,11 +1591,6 @@
                                                    Style="{StaticResource SessionBodyTextStyle}"
                                                    TextWrapping="Wrap"
                                                    Text="Chunks: waiting to start"/>
-                                        <TextBlock x:Name="LatestActivityText"
-                                                   Margin="0,8,0,0"
-                                                   Style="{StaticResource SessionMetaTextStyle}"
-                                                   TextWrapping="Wrap"
-                                                   Text="Latest event: waiting to start"/>
                                     </StackPanel>
                                 </Border>
 

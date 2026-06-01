@@ -129,7 +129,6 @@ public partial class LiveTranscriptionWindow : Window
         RecordingActivityText.Text = "Recorder: idle";
         TranscriptionActivityText.Text = "Transcriber: idle";
         SetChunkCounts(generated: 0, queued: 0, processing: 0, transcribed: 0, failed: 0);
-        LatestActivityText.Text = "Latest event: waiting to start";
     }
 
     public void SetStartingActivity(string sourceName)
@@ -139,7 +138,6 @@ public partial class LiveTranscriptionWindow : Window
         RecordingActivityText.Text = "Recorder: preparing manifest and output segment path";
         TranscriptionActivityText.Text = "Transcriber: validating engine and opening capture source";
         SetChunkCounts(generated: 0, queued: 0, processing: 0, transcribed: 0, failed: 0);
-        LatestActivityText.Text = $"Latest event: preparing source {sourceName}";
     }
 
     public void SetListeningActivity(string modelDisplayName)
@@ -147,7 +145,6 @@ public partial class LiveTranscriptionWindow : Window
         ActivitySummaryText.Text = "Live recording and transcription are active.";
         RecordingActivityText.Text = "Recorder: writing standardized PCM audio into rotating WAV segments";
         TranscriptionActivityText.Text = $"Transcriber: listening for speech with {modelDisplayName}";
-        LatestActivityText.Text = "Latest event: capture started and waiting for speech";
     }
 
     public void SetInterimTranscriptionActivity(string preview)
@@ -160,7 +157,6 @@ public partial class LiveTranscriptionWindow : Window
         ActivitySummaryText.Text = "Speech detected. Interim text is being updated.";
         RecordingActivityText.Text = "Recorder: appending audio frames to the active segment";
         TranscriptionActivityText.Text = "Transcriber: processing the current live speech chunk";
-        LatestActivityText.Text = "Latest event: interim transcription update received";
     }
 
     public void SetFinalTranscriptionActivity(string preview)
@@ -173,7 +169,6 @@ public partial class LiveTranscriptionWindow : Window
         ActivitySummaryText.Text = "A transcript segment was finalized and saved into the session.";
         RecordingActivityText.Text = "Recorder: continuing segmented session recording";
         TranscriptionActivityText.Text = "Transcriber: finalized the latest speech chunk";
-        LatestActivityText.Text = "Latest event: final transcription segment saved";
     }
 
     public void SetStoppingActivity()
@@ -181,7 +176,6 @@ public partial class LiveTranscriptionWindow : Window
         ActivitySummaryText.Text = "Stopped listening and recording. Completing pending chunk transcription.";
         RecordingActivityText.Text = "Recorder: finalizing the current WAV segment";
         TranscriptionActivityText.Text = "Transcriber: preparing pending chunk drain";
-        LatestActivityText.Text = "Latest event: stopping live session";
     }
 
     public void SetDrainPendingChunkProgress(int initialPendingChunks)
@@ -197,9 +191,6 @@ public partial class LiveTranscriptionWindow : Window
         TranscriptionActivityText.Text = _drainInitialPendingChunks == 0
             ? "Transcriber: no pending chunks to transcribe"
             : $"Transcriber: transcribing pending chunks 0/{_drainInitialPendingChunks:N0}";
-        LatestActivityText.Text = _drainInitialPendingChunks == 0
-            ? "Latest event: no pending chunk transcription after stop"
-            : "Latest event: draining pending chunk transcription";
     }
 
     public void SetCancelPendingChunkProgress()
@@ -210,7 +201,6 @@ public partial class LiveTranscriptionWindow : Window
         VolumeMeter.IsIndeterminate = true;
         UpdateProgressMeterLabel();
         TranscriptionActivityText.Text = "Transcriber: canceling pending and active chunk transcription";
-        LatestActivityText.Text = "Latest event: canceling live chunk transcription work";
     }
 
     public void SetStoppedActivity(bool recordingInterrupted)
@@ -231,9 +221,6 @@ public partial class LiveTranscriptionWindow : Window
             ? "Recorder: interrupted before clean completion"
             : "Recorder: completed and saved session audio";
         TranscriptionActivityText.Text = "Transcriber: stopped";
-        LatestActivityText.Text = recordingInterrupted
-            ? "Latest event: stopped with incomplete audio recording"
-            : "Latest event: live session completed";
     }
 
     public void SetRecordingSavedForClose()
@@ -248,7 +235,6 @@ public partial class LiveTranscriptionWindow : Window
         ActivitySummaryText.Text = "Recording was interrupted, but live transcription is still running.";
         RecordingActivityText.Text = $"Recorder: interrupted ({reason})";
         TranscriptionActivityText.Text = "Transcriber: continuing without full session audio coverage";
-        LatestActivityText.Text = "Latest event: recording interruption detected";
     }
 
     public void SetFailureActivity(string detail)
@@ -256,7 +242,6 @@ public partial class LiveTranscriptionWindow : Window
         ActivitySummaryText.Text = "Live transcription encountered a failure.";
         RecordingActivityText.Text = "Recorder: stopped";
         TranscriptionActivityText.Text = "Transcriber: stopped";
-        LatestActivityText.Text = $"Latest event: {detail}";
     }
 
     public void SetChunkCounts(int generated, int queued, int processing, int transcribed, int failed)
@@ -296,9 +281,6 @@ public partial class LiveTranscriptionWindow : Window
             UpdateProgressMeterLabel();
             TranscriptionActivityText.Text =
                 $"Transcriber: transcribing pending chunks {_drainCompletedChunks:N0}/{_drainInitialPendingChunks:N0}";
-            LatestActivityText.Text = pending > 0
-                ? $"Latest event: pending chunk transcription remaining {pending:N0}"
-                : "Latest event: pending chunk transcription completed";
             if (pending == 0)
             {
                 TryAutoCloseAfterDrainCompletion();
@@ -357,13 +339,11 @@ public partial class LiveTranscriptionWindow : Window
             if (_isStopping)
             {
                 _closeRequestedWhileStopping = true;
-                LatestActivityText.Text = "Latest event: canceling active and queued chunk transcription before close";
                 SetCancelPendingChunkProgress();
                 RequestCloseEscalation();
             }
             else
             {
-                LatestActivityText.Text = "Latest event: operation in progress; close will be available when it finishes";
             }
             return;
         }
@@ -628,3 +608,4 @@ public partial class LiveTranscriptionWindow : Window
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint EnableMenuItem(IntPtr hMenu, uint uIDEnableItem, uint uEnable);
 }
+
