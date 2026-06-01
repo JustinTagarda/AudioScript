@@ -17,6 +17,7 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
     private const double WhisperHeartbeatStartPercent = 50d;
     private const double WhisperHeartbeatMaxPercent = 95d;
     private const double WhisperRealtimeDivisor = 1.2d;
+    private const int MaxConcurrentTranscriptions = 2;
     internal static readonly TimeSpan ShortAudioPromptSuppressionDuration = TimeSpan.FromSeconds(10);
 
     private readonly AudioStandardizer _audioStandardizer;
@@ -25,7 +26,7 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
     private readonly WhisperModelManager _whisperModelManager;
     private readonly IAssetProvisioningService _assetProvisioningService;
     private readonly AppDataPathProvider _paths;
-    private readonly SemaphoreSlim _transcriptionSemaphore = new(1, 1);
+    private readonly SemaphoreSlim _transcriptionSemaphore = new(MaxConcurrentTranscriptions, MaxConcurrentTranscriptions);
 
     public WhisperAudioTranscriptionService(
         AudioStandardizer audioStandardizer,
@@ -85,7 +86,10 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
             force: true);
         var stopwatch = Stopwatch.StartNew();
 
-        string standardizedPath = _audioStandardizer.ConvertFileToEngineWav(fullPath);
+        bool usingEngineWaveInput = options.IsEngineWaveInput;
+        string standardizedPath = usingEngineWaveInput
+            ? fullPath
+            : _audioStandardizer.ConvertFileToEngineWav(fullPath);
         try
         {
             TimeSpan duration = ResolveAudioDuration(standardizedPath);
@@ -134,7 +138,10 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         }
         finally
         {
-            DeleteTemporaryFile(standardizedPath);
+            if (!usingEngineWaveInput)
+            {
+                DeleteTemporaryFile(standardizedPath);
+            }
         }
     }
 
@@ -357,7 +364,6 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         }
         finally
         {
-            DeleteTemporaryFile(outputRoot + ".json");
             DeleteTemporaryFile(outputRoot + ".srt");
             DeleteTemporaryFile(outputRoot + ".txt");
         }
@@ -408,9 +414,8 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
             "-f", QuoteArgument(waveFilePath),
             "-l", "auto",
             "-osrt",
-            "-oj",
             "-of", QuoteArgument(outputRoot),
-            "-t", Math.Max(1, Environment.ProcessorCount).ToString(CultureInfo.InvariantCulture),
+            "-t", Math.Max(1, Environment.ProcessorCount / MaxConcurrentTranscriptions).ToString(CultureInfo.InvariantCulture),
             "-ng",
             "-np",
         };

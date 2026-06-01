@@ -1402,41 +1402,53 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         TimeSpan candidateStart = candidate.StartOffset;
         TimeSpan candidateEnd = ResolveLiveSegmentEnd(candidate.StartOffset, candidate.EndOffset);
-        FinalizedTranscriptLineViewModel? existing = FinalizedTranscriptLines
-            .LastOrDefault(line => line.StartOffset is not null);
-        if (existing?.StartOffset is not TimeSpan existingStart)
+        string[] candidateTokens = SplitLiveBoundaryTokens(candidate.Text);
+        foreach (FinalizedTranscriptLineViewModel existing in EnumerateRecentBoundaryLines())
         {
-            return false;
+            if (existing.StartOffset is not TimeSpan existingStart)
+            {
+                continue;
+            }
+
+            TimeSpan existingEnd = ResolveLiveSegmentEnd(existingStart, existing.EndOffset);
+            bool overlapsOrTouches = RangesOverlapOrTouch(existingStart, existingEnd, candidateStart, candidateEnd);
+            if (!overlapsOrTouches)
+            {
+                continue;
+            }
+
+            string existingText = NormalizeLiveSegmentText(existing.Text);
+            if (string.Equals(existingText, candidateText, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            bool containedFragment = ContainsWholeNormalizedPhrase(existingText, candidateText)
+                && CountWords(candidateText) <= 10;
+            if (containedFragment)
+            {
+                return true;
+            }
+
+            int candidateWordCount = CountWords(candidateText);
+            int suffixPrefixOverlap = CountSuffixPrefixTokenOverlap(existingText, candidateText);
+            int suffixPrefixOverlapWithoutLeadingFiller = CountSuffixPrefixTokenOverlapWithoutLeadingFiller(existingText, candidateText);
+            int compactTokenOverlap = CountBoundaryPrefixTokenOverlap(
+                SplitLiveBoundaryTokens(existing.Text),
+                candidateTokens);
+            int bestOverlap = Math.Max(
+                Math.Max(suffixPrefixOverlap, suffixPrefixOverlapWithoutLeadingFiller),
+                compactTokenOverlap);
+            bool isMostlyOverlapFragment = candidateWordCount > 0
+                && bestOverlap >= 3
+                && bestOverlap * 10 >= candidateWordCount * 7;
+            if (isMostlyOverlapFragment)
+            {
+                return true;
+            }
         }
 
-        string existingText = NormalizeLiveSegmentText(existing.Text);
-        TimeSpan existingEnd = ResolveLiveSegmentEnd(existingStart, existing.EndOffset);
-        bool overlapsOrTouches = RangesOverlapOrTouch(existingStart, existingEnd, candidateStart, candidateEnd);
-        if (!overlapsOrTouches)
-        {
-            return false;
-        }
-
-        if (string.Equals(existingText, candidateText, StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        bool containedFragment = ContainsWholeNormalizedPhrase(existingText, candidateText)
-            && CountWords(candidateText) <= 10;
-        if (containedFragment)
-        {
-            return true;
-        }
-
-        int candidateWordCount = CountWords(candidateText);
-        int suffixPrefixOverlap = CountSuffixPrefixTokenOverlap(existingText, candidateText);
-        int suffixPrefixOverlapWithoutLeadingFiller = CountSuffixPrefixTokenOverlapWithoutLeadingFiller(existingText, candidateText);
-        int bestOverlap = Math.Max(suffixPrefixOverlap, suffixPrefixOverlapWithoutLeadingFiller);
-        bool isMostlyOverlapFragment = candidateWordCount > 0
-            && bestOverlap >= 3
-            && bestOverlap * 10 >= candidateWordCount * 7;
-        return isMostlyOverlapFragment;
+        return false;
     }
 
     private static bool RangesOverlapOrTouch(
@@ -3547,45 +3559,29 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return candidate;
         }
 
-        FinalizedTranscriptLineViewModel? previous = FinalizedTranscriptLines
-            .LastOrDefault(line => !line.IsProvisional && !string.IsNullOrWhiteSpace(line.Text));
-        if (previous is null)
+        string[] candidateTokens = SplitLiveBoundaryTokens(candidate.Text);
+        if (candidateTokens.Length == 0)
         {
             return candidate;
         }
 
-        string[] previousTokens = previous.Text
-            .Trim()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        string[] candidateTokens = candidate.Text
-            .Trim()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (previousTokens.Length == 0 || candidateTokens.Length == 0)
-        {
-            return candidate;
-        }
-
-        int maxOverlap = Math.Min(previousTokens.Length, candidateTokens.Length);
         int bestOverlap = 0;
-        for (int size = maxOverlap; size >= 2; size--)
+        foreach (FinalizedTranscriptLineViewModel previous in EnumerateRecentBoundaryLines())
         {
-            bool matches = true;
-            for (int index = 0; index < size; index++)
+            if (previous.StartOffset is not TimeSpan previousStart)
             {
-                string leftToken = NormalizeLiveToken(previousTokens[previousTokens.Length - size + index]);
-                string rightToken = NormalizeLiveToken(candidateTokens[index]);
-                if (leftToken.Length == 0 || rightToken.Length == 0 || !string.Equals(leftToken, rightToken, StringComparison.Ordinal))
-                {
-                    matches = false;
-                    break;
-                }
+                continue;
             }
 
-            if (matches)
+            TimeSpan previousEnd = ResolveLiveSegmentEnd(previousStart, previous.EndOffset);
+            TimeSpan candidateEnd = ResolveLiveSegmentEnd(candidate.StartOffset, candidate.EndOffset);
+            if (!RangesOverlapOrTouch(previousStart, previousEnd, candidate.StartOffset, candidateEnd))
             {
-                bestOverlap = size;
-                break;
+                continue;
             }
+
+            string[] previousTokens = SplitLiveBoundaryTokens(previous.Text);
+            bestOverlap = Math.Max(bestOverlap, CountBoundaryPrefixTokenOverlap(previousTokens, candidateTokens));
         }
 
         if (bestOverlap == 0)
@@ -3606,6 +3602,74 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             candidate.StartOffset,
             candidate.EndOffset,
             candidate.IsTimestampEstimated);
+    }
+
+    private IEnumerable<FinalizedTranscriptLineViewModel> EnumerateRecentBoundaryLines()
+    {
+        return FinalizedTranscriptLines
+            .Reverse()
+            .Where(line => !line.IsProvisional && !string.IsNullOrWhiteSpace(line.Text))
+            .Take(3);
+    }
+
+    private static string[] SplitLiveBoundaryTokens(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Array.Empty<string>();
+        }
+
+        return text
+            .Trim()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static int CountBoundaryPrefixTokenOverlap(string[] leftTokens, string[] rightTokens)
+    {
+        if (leftTokens.Length == 0 || rightTokens.Length == 0)
+        {
+            return 0;
+        }
+
+        int bestRightSize = 0;
+        int maxLeftWindow = leftTokens.Length;
+        int maxRightWindow = rightTokens.Length;
+        for (int leftSize = maxLeftWindow; leftSize >= 1; leftSize--)
+        {
+            string left = BuildCompactTokenWindow(leftTokens, leftTokens.Length - leftSize, leftSize);
+            if (left.Length == 0)
+            {
+                continue;
+            }
+
+            for (int rightSize = maxRightWindow; rightSize >= 1; rightSize--)
+            {
+                string right = BuildCompactTokenWindow(rightTokens, 0, rightSize);
+                if (right.Length == 0)
+                {
+                    continue;
+                }
+
+                if (string.Equals(left, right, StringComparison.Ordinal))
+                {
+                    bestRightSize = Math.Max(bestRightSize, rightSize);
+                    break;
+                }
+            }
+        }
+
+        return bestRightSize >= 2 ? bestRightSize : 0;
+    }
+
+    private static string BuildCompactTokenWindow(string[] tokens, int startIndex, int count)
+    {
+        var builder = new StringBuilder();
+        for (int index = startIndex; index < startIndex + count && index < tokens.Length; index++)
+        {
+            builder.Append(NormalizeLiveToken(tokens[index]));
+        }
+
+        return builder.ToString();
     }
 
     private static int CountSuffixPrefixTokenOverlapWithoutLeadingFiller(

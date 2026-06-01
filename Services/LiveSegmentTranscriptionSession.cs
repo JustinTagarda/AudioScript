@@ -8,11 +8,13 @@ namespace AudioScript.Services;
 public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultOverlapDuration = TimeSpan.FromSeconds(3);
+    private const int DefaultMaxParallelTranscriptions = 2;
 
     private readonly LiveRecordingSession _recordingSession;
     private readonly IAudioTranscriptionService _transcriptionService;
     private readonly ProcessLogService _processLogService;
     private readonly TimeSpan _overlapDuration;
+    private readonly int _maxParallelTranscriptions;
     private readonly Channel<LiveSegmentTranscriptionWorkItem> _queue =
         Channel.CreateUnbounded<LiveSegmentTranscriptionWorkItem>();
 
@@ -26,7 +28,8 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         LiveRecordingSession recordingSession,
         IAudioTranscriptionService transcriptionService,
         ProcessLogService processLogService,
-        TimeSpan? overlapDuration = null)
+        TimeSpan? overlapDuration = null,
+        int maxParallelTranscriptions = DefaultMaxParallelTranscriptions)
     {
         _recordingSession = recordingSession;
         _transcriptionService = transcriptionService;
@@ -36,6 +39,13 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(overlapDuration), "Overlap duration must not be negative.");
         }
+
+        if (maxParallelTranscriptions < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxParallelTranscriptions), "Parallel transcription count must be at least one.");
+        }
+
+        _maxParallelTranscriptions = maxParallelTranscriptions;
     }
 
     public event EventHandler<LiveSegmentTranscriptionStartedEventArgs>? SegmentTranscriptionStarted;
@@ -65,7 +75,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         _cts = new CancellationTokenSource();
         _recordingSession.SegmentFinalized += OnRecordingSegmentFinalized;
         _workerTask = Task.Run(() => RunWorkerAsync(_cts.Token));
-        Log($"Live segment transcription session started using model '{_model}'.");
+        Log($"Live segment transcription session started using model '{_model}', maxParallel={_maxParallelTranscriptions:N0}.");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -160,26 +170,146 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
 
     private async Task RunWorkerAsync(CancellationToken cancellationToken)
     {
-        LiveSegmentTranscriptionWorkItem? pending = null;
-        await foreach (LiveSegmentTranscriptionWorkItem item in _queue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
-        {
-            if (pending is not null)
+        var transcriptionQueue = Channel.CreateBounded<LiveSegmentTranscriptionRequest>(
+            new BoundedChannelOptions(_maxParallelTranscriptions * 2)
             {
-                await TranscribeWorkItemAsync(pending, item, cancellationToken).ConfigureAwait(false);
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false,
+                SingleWriter = true,
+            });
+        var completionQueue = Channel.CreateUnbounded<LiveSegmentTranscriptionOutcome>();
+        Task requestBuilderTask = BuildTranscriptionRequestsAsync(transcriptionQueue.Writer, cancellationToken);
+        Task[] transcriptionTasks = Enumerable
+            .Range(0, _maxParallelTranscriptions)
+            .Select(_ => RunTranscriptionWorkerAsync(transcriptionQueue.Reader, completionQueue.Writer, cancellationToken))
+            .ToArray();
+        Task completionTask = CompleteCompletionQueueAsync(
+            requestBuilderTask,
+            transcriptionTasks,
+            transcriptionQueue.Writer,
+            completionQueue.Writer);
+        Task emitterTask = EmitCompletedTranscriptionsAsync(completionQueue.Reader, cancellationToken);
+        await Task.WhenAll(completionTask, emitterTask).ConfigureAwait(false);
+    }
+
+    private async Task BuildTranscriptionRequestsAsync(
+        ChannelWriter<LiveSegmentTranscriptionRequest> requestWriter,
+        CancellationToken cancellationToken)
+    {
+        LiveSegmentTranscriptionWorkItem? pending = null;
+        int sequence = 0;
+
+        try
+        {
+            await foreach (LiveSegmentTranscriptionWorkItem item in _queue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (pending is not null)
+                {
+                    await requestWriter.WriteAsync(
+                        new LiveSegmentTranscriptionRequest(sequence++, pending, item),
+                        cancellationToken).ConfigureAwait(false);
+                }
+
+                pending = item;
             }
 
-            pending = item;
-        }
+            if (pending is not null)
+            {
+                await requestWriter.WriteAsync(
+                    new LiveSegmentTranscriptionRequest(sequence, pending, NextItem: null),
+                    cancellationToken).ConfigureAwait(false);
+            }
 
-        if (pending is not null)
+            requestWriter.TryComplete();
+        }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
         {
-            await TranscribeWorkItemAsync(pending, nextItem: null, cancellationToken).ConfigureAwait(false);
+            requestWriter.TryComplete(ex);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            requestWriter.TryComplete(ex);
+            throw;
         }
     }
 
-    private async Task TranscribeWorkItemAsync(
+    private async Task RunTranscriptionWorkerAsync(
+        ChannelReader<LiveSegmentTranscriptionRequest> requestReader,
+        ChannelWriter<LiveSegmentTranscriptionOutcome> completionWriter,
+        CancellationToken cancellationToken)
+    {
+        await foreach (LiveSegmentTranscriptionRequest request in requestReader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            LiveSegmentTranscriptionOutcome outcome = await TranscribeWorkItemAsync(
+                request.Item,
+                request.NextItem,
+                request.Sequence,
+                cancellationToken).ConfigureAwait(false);
+            await completionWriter.WriteAsync(outcome, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task CompleteCompletionQueueAsync(
+        Task requestBuilderTask,
+        IReadOnlyCollection<Task> transcriptionTasks,
+        ChannelWriter<LiveSegmentTranscriptionRequest> requestWriter,
+        ChannelWriter<LiveSegmentTranscriptionOutcome> completionWriter)
+    {
+        try
+        {
+            await requestBuilderTask.ConfigureAwait(false);
+            await Task.WhenAll(transcriptionTasks).ConfigureAwait(false);
+            completionWriter.TryComplete();
+        }
+        catch (Exception ex)
+        {
+            requestWriter.TryComplete(ex);
+            completionWriter.TryComplete(ex);
+            throw;
+        }
+    }
+
+    private async Task EmitCompletedTranscriptionsAsync(
+        ChannelReader<LiveSegmentTranscriptionOutcome> completionReader,
+        CancellationToken cancellationToken)
+    {
+        var pendingOutcomes = new SortedDictionary<int, LiveSegmentTranscriptionOutcome>();
+        int nextSequenceToEmit = 0;
+
+        await foreach (LiveSegmentTranscriptionOutcome outcome in completionReader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            pendingOutcomes[outcome.Sequence] = outcome;
+            while (pendingOutcomes.Remove(nextSequenceToEmit, out LiveSegmentTranscriptionOutcome? nextOutcome))
+            {
+                EmitTranscriptionOutcome(nextOutcome);
+                nextSequenceToEmit++;
+            }
+        }
+    }
+
+    private void EmitTranscriptionOutcome(LiveSegmentTranscriptionOutcome outcome)
+    {
+        if (outcome.Exception is not null)
+        {
+            SegmentTranscriptionFailed?.Invoke(
+                this,
+                new LiveSegmentTranscriptionFailedEventArgs(outcome.Item.Segment, outcome.Item.SegmentPath, outcome.Exception));
+            return;
+        }
+
+        if (outcome.Result is not null)
+        {
+            SegmentTranscriptionCompleted?.Invoke(
+                this,
+                new LiveSegmentTranscriptionCompletedEventArgs(outcome.Item.Segment, outcome.Item.SegmentPath, outcome.Result));
+        }
+    }
+
+    private async Task<LiveSegmentTranscriptionOutcome> TranscribeWorkItemAsync(
         LiveSegmentTranscriptionWorkItem item,
         LiveSegmentTranscriptionWorkItem? nextItem,
+        int sequence,
         CancellationToken cancellationToken)
     {
         string requestPath = item.SegmentPath;
@@ -207,9 +337,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
                 cancellationToken).ConfigureAwait(false);
             TranscriptionResult translated = TranslateResultToSessionTimeline(result, item.Segment, requestStart);
 
-            SegmentTranscriptionCompleted?.Invoke(
-                this,
-                new LiveSegmentTranscriptionCompletedEventArgs(item.Segment, item.SegmentPath, translated));
+            return new LiveSegmentTranscriptionOutcome(sequence, item, translated, Exception: null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -220,9 +348,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
             Log(
                 $"Live segment transcription failed for '{item.SegmentPath}': " +
                 $"{ex.GetType().Name}: {ex.Message}.");
-            SegmentTranscriptionFailed?.Invoke(
-                this,
-                new LiveSegmentTranscriptionFailedEventArgs(item.Segment, item.SegmentPath, ex));
+            return new LiveSegmentTranscriptionOutcome(sequence, item, Result: null, ex);
         }
         finally
         {
@@ -242,7 +368,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
             return configurableService.TranscribeAudioFileAsync(
                 requestPath,
                 _model,
-                new AudioTranscriptionRequestOptions(SuppressPrompt: true),
+                new AudioTranscriptionRequestOptions(SuppressPrompt: true, IsEngineWaveInput: true),
                 cancellationToken);
         }
 
@@ -431,6 +557,17 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
     private sealed record LiveSegmentTranscriptionWorkItem(
         LiveRecordingSegmentManifest Segment,
         string SegmentPath);
+
+    private sealed record LiveSegmentTranscriptionRequest(
+        int Sequence,
+        LiveSegmentTranscriptionWorkItem Item,
+        LiveSegmentTranscriptionWorkItem? NextItem);
+
+    private sealed record LiveSegmentTranscriptionOutcome(
+        int Sequence,
+        LiveSegmentTranscriptionWorkItem Item,
+        TranscriptionResult? Result,
+        Exception? Exception);
 }
 
 public sealed class LiveSegmentTranscriptionStartedEventArgs : EventArgs
