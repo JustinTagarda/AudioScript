@@ -1202,9 +1202,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         int addedCount = 0;
         try
         {
-            foreach (TranscriptionTimedLine timedLine in timedLines)
+            var recentLines = new List<FinalizedTranscriptLineViewModel>(
+                FinalizedTranscriptLines
+                    .Where(line => !line.IsProvisional && !string.IsNullOrWhiteSpace(line.Text))
+                    .TakeLast(6));
+            for (int index = 0; index < timedLines.Count; index++)
             {
-                TranscriptionTimedLine adjustedLine = TrimBoundaryOverlapWithPreviousLine(timedLine);
+                TranscriptionTimedLine timedLine = timedLines[index];
+                TranscriptionTimedLine adjustedLine = TrimBoundaryOverlapWithPreviousLine(timedLine, recentLines);
+                TranscriptionTimedLine? nextTimedLine = index + 1 < timedLines.Count
+                    ? timedLines[index + 1]
+                    : null;
+                adjustedLine = SanitizeLiveBoundaryLine(adjustedLine, nextTimedLine);
                 if (string.IsNullOrWhiteSpace(adjustedLine.Text))
                 {
                     continue;
@@ -1225,6 +1234,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     text: adjustedLine.Text.Trim());
                 line.PropertyChanged += OnFinalizedLinePropertyChanged;
                 FinalizedTranscriptLines.Add(line);
+                recentLines.Add(line);
                 addedCount++;
             }
 
@@ -1234,6 +1244,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 return 0;
             }
 
+            ConsolidateRecentLiveTranscriptRows(Math.Max(0, FinalizedTranscriptLines.Count - (addedCount + 8)));
             RebuildFinalizedTextFromLines();
         }
         finally
@@ -1245,6 +1256,162 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyCurrentTranscriptStateChanged();
         ScheduleSessionAutosave();
         return addedCount;
+    }
+
+    private void ConsolidateRecentLiveTranscriptRows(int startIndex)
+    {
+        int index = Math.Max(1, startIndex);
+        while (index < FinalizedTranscriptLines.Count)
+        {
+            FinalizedTranscriptLineViewModel previous = FinalizedTranscriptLines[index - 1];
+            FinalizedTranscriptLineViewModel current = FinalizedTranscriptLines[index];
+            string previousText = previous.Text?.Trim() ?? string.Empty;
+            string currentText = current.Text?.Trim() ?? string.Empty;
+            if (previousText.Length == 0 || currentText.Length == 0)
+            {
+                index++;
+                continue;
+            }
+
+            string normalizedPrevious = NormalizeLiveSegmentText(previousText);
+            string normalizedCurrent = NormalizeLiveSegmentText(currentText);
+            int overlap = CountSuffixPrefixTokenOverlap(normalizedPrevious, normalizedCurrent);
+            if (overlap >= 2)
+            {
+                string[] currentTokens = SplitLiveBoundaryTokens(currentText);
+                if (overlap < currentTokens.Length)
+                {
+                    string trimmedCurrent = string.Join(" ", currentTokens.Skip(overlap)).Trim();
+                    if (trimmedCurrent.Length > 0)
+                    {
+                        current.Text = trimmedCurrent;
+                        currentText = trimmedCurrent;
+                        normalizedCurrent = NormalizeLiveSegmentText(trimmedCurrent);
+                        AppendLog(
+                            $"Trimmed repeated adjacent phrase at {FormatOffset(current.StartOffset ?? TimeSpan.Zero)}: " +
+                            $"'{BuildPreview(trimmedCurrent)}'.");
+                    }
+                    else
+                    {
+                        RemoveFinalizedTranscriptLineAt(index);
+                        AppendLog(
+                            $"Dropped duplicate adjacent live row at {FormatOffset(current.StartOffset ?? TimeSpan.Zero)}: " +
+                            $"'{BuildPreview(currentText)}'.");
+                        continue;
+                    }
+                }
+            }
+
+            bool previousContainedByCurrent = IsShortContainedBoundaryFragment(normalizedPrevious, normalizedCurrent);
+            if (previousContainedByCurrent)
+            {
+                RemoveFinalizedTranscriptLineAt(index - 1);
+                AppendLog(
+                    $"Dropped contained previous live row at {FormatOffset(previous.StartOffset ?? TimeSpan.Zero)}: " +
+                    $"'{BuildPreview(previousText)}'.");
+                index = Math.Max(1, index - 1);
+                continue;
+            }
+
+            bool currentContainedByPrevious = IsShortContainedBoundaryFragment(normalizedCurrent, normalizedPrevious);
+            if (currentContainedByPrevious)
+            {
+                RemoveFinalizedTranscriptLineAt(index);
+                AppendLog(
+                    $"Dropped contained current live row at {FormatOffset(current.StartOffset ?? TimeSpan.Zero)}: " +
+                    $"'{BuildPreview(currentText)}'.");
+                continue;
+            }
+
+            if (ShouldMergeAdjacentLiveRows(previousText, currentText))
+            {
+                previous.Text = $"{previousText} {currentText}".Trim();
+                previous.SetTimelineOffsets(previous.StartOffset, current.EndOffset);
+                RemoveFinalizedTranscriptLineAt(index);
+                AppendLog(
+                    $"Merged adjacent live rows at {FormatOffset(previous.StartOffset ?? TimeSpan.Zero)}: " +
+                    $"'{BuildPreview(previous.Text)}'.");
+                continue;
+            }
+
+            index++;
+        }
+    }
+
+    private TranscriptionTimedLine SanitizeLiveBoundaryLine(
+        TranscriptionTimedLine candidate,
+        TranscriptionTimedLine? nextCandidate)
+    {
+        string text = candidate.Text?.Trim() ?? string.Empty;
+        if (text.Length == 0)
+        {
+            return candidate;
+        }
+
+        if (IsPlaceholderLiveBoundaryText(text))
+        {
+            AppendLog(
+                $"Dropped placeholder live transcript row at {FormatOffset(candidate.StartOffset)}: " +
+                $"'{BuildPreview(text)}'.");
+            return new TranscriptionTimedLine(
+                string.Empty,
+                candidate.StartOffset,
+                candidate.EndOffset,
+                candidate.IsTimestampEstimated);
+        }
+
+        if (nextCandidate is null || string.IsNullOrWhiteSpace(nextCandidate.Text))
+        {
+            return candidate;
+        }
+
+        string normalizedCandidate = NormalizeLiveSegmentText(text);
+        string normalizedNext = NormalizeLiveSegmentText(nextCandidate.Text);
+        int candidateWordCount = CountWords(normalizedCandidate);
+        if (candidateWordCount > 0
+            && candidateWordCount <= 6
+            && ContainsWholeNormalizedPhrase(normalizedNext, normalizedCandidate))
+        {
+            AppendLog(
+                $"Dropped contained live boundary fragment at {FormatOffset(candidate.StartOffset)}: " +
+                $"'{BuildPreview(text)}'.");
+            return new TranscriptionTimedLine(
+                string.Empty,
+                candidate.StartOffset,
+                candidate.EndOffset,
+                candidate.IsTimestampEstimated);
+        }
+
+        int overlapWithNext = CountSuffixPrefixTokenOverlap(normalizedCandidate, normalizedNext);
+        if (candidateWordCount > 0
+            && candidateWordCount <= 7
+            && overlapWithNext >= 3
+            && overlapWithNext * 10 >= candidateWordCount * 7)
+        {
+            AppendLog(
+                $"Dropped repeated live boundary fragment at {FormatOffset(candidate.StartOffset)}: " +
+                $"'{BuildPreview(text)}'.");
+            return new TranscriptionTimedLine(
+                string.Empty,
+                candidate.StartOffset,
+                candidate.EndOffset,
+                candidate.IsTimestampEstimated);
+        }
+
+        string trimmedTrailingStem = TrimTrailingStemFragment(text, nextCandidate.Text);
+        if (!string.Equals(trimmedTrailingStem, text, StringComparison.Ordinal))
+        {
+            AppendLog(
+                $"Trimmed trailing live boundary stem at {FormatOffset(candidate.StartOffset)}: " +
+                $"'{BuildPreview(trimmedTrailingStem)}'.");
+            return new TranscriptionTimedLine(
+                trimmedTrailingStem,
+                candidate.StartOffset,
+                candidate.EndOffset,
+                candidate.IsTimestampEstimated);
+        }
+
+        return candidate;
     }
 
     private static string NormalizeLiveToken(string token)
@@ -1414,7 +1581,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             bool overlapsOrTouches = RangesOverlapOrTouch(existingStart, existingEnd, candidateStart, candidateEnd);
             if (!overlapsOrTouches)
             {
-                continue;
+                TimeSpan gap = candidateStart >= existingEnd
+                    ? candidateStart - existingEnd
+                    : existingStart - candidateEnd;
+                if (gap > LiveBoundaryTrimProximityTolerance)
+                {
+                    continue;
+                }
             }
 
             string existingText = NormalizeLiveSegmentText(existing.Text);
@@ -1503,6 +1676,129 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         return builder.ToString().Trim();
+    }
+
+    private static bool IsPlaceholderLiveBoundaryText(string text)
+    {
+        string normalized = NormalizeLiveSegmentText(text).Replace(" ", string.Empty, StringComparison.Ordinal);
+        return normalized is "blankaudio" or "silence";
+    }
+
+    private static bool IsShortContainedBoundaryFragment(string candidate, string container)
+    {
+        if (candidate.Length == 0 || container.Length == 0)
+        {
+            return false;
+        }
+
+        int candidateWordCount = CountWords(candidate);
+        return candidateWordCount > 0
+            && candidateWordCount <= 6
+            && ContainsWholeNormalizedPhrase(container, candidate);
+    }
+
+    private static bool ShouldMergeAdjacentLiveRows(string previousText, string currentText)
+    {
+        string normalizedPrevious = NormalizeLiveSegmentText(previousText);
+        string normalizedCurrent = NormalizeLiveSegmentText(currentText);
+        int previousWords = CountWords(normalizedPrevious);
+        int currentWords = CountWords(normalizedCurrent);
+        if (previousWords == 0 || currentWords == 0)
+        {
+            return false;
+        }
+
+        bool previousLooksIncomplete = previousWords <= 4
+            || EndsWithContinuationWord(previousText)
+            || !EndsWithTerminalPunctuation(previousText);
+        bool currentLooksContinuation = StartsWithContinuationWord(currentText)
+            || char.IsLower(currentText.TrimStart()[0]);
+
+        return previousLooksIncomplete && currentLooksContinuation;
+    }
+
+    private static bool EndsWithContinuationWord(string text)
+    {
+        string[] tokens = SplitLiveBoundaryTokens(text);
+        if (tokens.Length == 0)
+        {
+            return false;
+        }
+
+        string trailing = NormalizeLiveToken(tokens[^1]);
+        return trailing is "a" or "an" or "the" or "of" or "to" or "and" or "or" or "but" or "with" or "in" or "on";
+    }
+
+    private static bool StartsWithContinuationWord(string text)
+    {
+        string[] tokens = SplitLiveBoundaryTokens(text);
+        if (tokens.Length == 0)
+        {
+            return false;
+        }
+
+        string leading = NormalizeLiveToken(tokens[0]);
+        return leading is "and" or "or" or "but" or "because" or "that" or "which" or "who" or "whom" or "whose" or "where" or "when" or "with" or "to" or "of" or "in" or "on" or "for";
+    }
+
+    private static bool EndsWithTerminalPunctuation(string text)
+    {
+        string trimmed = text.TrimEnd();
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        char last = trimmed[^1];
+        return last is '.' or '!' or '?' or ':' or ';';
+    }
+
+    private void RemoveFinalizedTranscriptLineAt(int index)
+    {
+        FinalizedTranscriptLineViewModel line = FinalizedTranscriptLines[index];
+        line.PropertyChanged -= OnFinalizedLinePropertyChanged;
+        FinalizedTranscriptLines.RemoveAt(index);
+    }
+
+    private static string TrimTrailingStemFragment(string currentText, string nextText)
+    {
+        string[] currentWords = currentText
+            .Trim()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (currentWords.Length == 0)
+        {
+            return currentText;
+        }
+
+        string[] nextWords = nextText
+            .Trim()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (nextWords.Length == 0)
+        {
+            return currentText;
+        }
+
+        string trailing = NormalizeLiveToken(currentWords[^1]);
+        if (trailing.Length < 4)
+        {
+            return currentText;
+        }
+
+        foreach (string nextWord in nextWords.Take(2))
+        {
+            string normalizedNextWord = NormalizeLiveToken(nextWord);
+            if (normalizedNextWord.Length <= trailing.Length)
+            {
+                continue;
+            }
+
+            if (normalizedNextWord.StartsWith(trailing, StringComparison.Ordinal))
+            {
+                return string.Join(" ", currentWords.Take(currentWords.Length - 1)).TrimEnd();
+            }
+        }
+
+        return currentText;
     }
 
     private static string FormatOffset(TimeSpan offset)
@@ -3427,7 +3723,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private bool CanDeleteSelectedSession()
     {
-        return HasCurrentSession && !IsBusy;
+        return !IsBusy && (HasCurrentSession || SelectedRecentSession is not null);
     }
 
     private void EnsureSessionDeletedFromStorage(string sessionId)
@@ -3555,9 +3851,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return 0;
     }
 
-    private TranscriptionTimedLine TrimBoundaryOverlapWithPreviousLine(TranscriptionTimedLine candidate)
+    private static readonly TimeSpan LiveBoundaryTrimProximityTolerance = TimeSpan.FromSeconds(12);
+
+    private TranscriptionTimedLine TrimBoundaryOverlapWithPreviousLine(
+        TranscriptionTimedLine candidate,
+        IReadOnlyList<FinalizedTranscriptLineViewModel> referenceLines)
     {
-        if (FinalizedTranscriptLines.Count == 0 || string.IsNullOrWhiteSpace(candidate.Text))
+        if (referenceLines.Count == 0 || string.IsNullOrWhiteSpace(candidate.Text))
         {
             return candidate;
         }
@@ -3570,7 +3870,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         int bestOverlap = 0;
         int bestTrimCount = 0;
-        foreach (FinalizedTranscriptLineViewModel previous in EnumerateRecentBoundaryLines())
+        foreach (FinalizedTranscriptLineViewModel previous in referenceLines
+                     .Reverse()
+                     .Where(line => !line.IsProvisional && !string.IsNullOrWhiteSpace(line.Text))
+                     .Take(6))
         {
             if (previous.StartOffset is not TimeSpan previousStart)
             {
@@ -3581,7 +3884,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             TimeSpan candidateEnd = ResolveLiveSegmentEnd(candidate.StartOffset, candidate.EndOffset);
             if (!RangesOverlapOrTouch(previousStart, previousEnd, candidate.StartOffset, candidateEnd))
             {
-                continue;
+                TimeSpan gap = candidate.StartOffset >= previousEnd
+                    ? candidate.StartOffset - previousEnd
+                    : previousStart - candidateEnd;
+                if (gap > LiveBoundaryTrimProximityTolerance)
+                {
+                    continue;
+                }
             }
 
             string[] previousTokens = SplitLiveBoundaryTokens(previous.Text);
@@ -3625,14 +3934,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             candidate.StartOffset,
             candidate.EndOffset,
             candidate.IsTimestampEstimated);
-    }
-
-    private IEnumerable<FinalizedTranscriptLineViewModel> EnumerateRecentBoundaryLines()
-    {
-        return FinalizedTranscriptLines
-            .Reverse()
-            .Where(line => !line.IsProvisional && !string.IsNullOrWhiteSpace(line.Text))
-            .Take(3);
     }
 
     private static string[] SplitLiveBoundaryTokens(string? text)
@@ -3745,6 +4046,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         int shiftedOverlap = CountBoundaryPrefixTokenOverlap(leftTokens, rightTokens.Skip(1).ToArray());
         return shiftedOverlap >= 3 ? shiftedOverlap + 1 : 0;
+    }
+
+    private IEnumerable<FinalizedTranscriptLineViewModel> EnumerateRecentBoundaryLines()
+    {
+        return FinalizedTranscriptLines
+            .Reverse()
+            .Where(line => !line.IsProvisional && !string.IsNullOrWhiteSpace(line.Text))
+            .Take(6);
     }
 
     private static string BuildCompactTokenWindow(string[] tokens, int startIndex, int count)

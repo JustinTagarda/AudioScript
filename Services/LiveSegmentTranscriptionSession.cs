@@ -10,6 +10,9 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultOverlapDuration = TimeSpan.FromSeconds(3);
     private const int DefaultMaxParallelTranscriptions = 2;
+    private static readonly TimeSpan DefaultAdaptiveHoldMax = TimeSpan.FromMilliseconds(1200);
+    private static readonly TimeSpan HoldPollingInterval = TimeSpan.FromMilliseconds(75);
+    private const int BacklogBypassBufferedSegments = 2;
 
     private readonly LiveRecordingSession _recordingSession;
     private readonly IAudioTranscriptionService _transcriptionService;
@@ -27,6 +30,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
     private string _model = string.Empty;
     private bool _hasStarted;
     private bool _isDisposed;
+    private volatile bool _isStopping;
 
     public LiveSegmentTranscriptionSession(
         LiveRecordingSession recordingSession,
@@ -90,6 +94,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         }
 
         _recordingSession.SegmentFinalized -= OnRecordingSegmentFinalized;
+        _isStopping = true;
         _queue.Writer.TryComplete();
 
         Task? workerTask = _workerTask;
@@ -101,6 +106,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         _cts?.Dispose();
         _cts = null;
         _workerTask = null;
+        _isStopping = false;
         Log("Live segment transcription session stopped.");
     }
 
@@ -112,6 +118,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         }
 
         _recordingSession.SegmentFinalized -= OnRecordingSegmentFinalized;
+        _isStopping = true;
         CancellationTokenSource? cts = _cts;
         cts?.Cancel();
         _queue.Writer.TryComplete();
@@ -132,6 +139,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         cts?.Dispose();
         _cts = null;
         _workerTask = null;
+        _isStopping = false;
         Log("Live segment transcription session canceled.");
     }
 
@@ -205,17 +213,72 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         LiveSegmentTranscriptionWorkItem? pending = null;
+        LiveSegmentTranscriptionWorkItem? previousCommitted = null;
         int sequence = 0;
 
         try
         {
-            await foreach (LiveSegmentTranscriptionWorkItem item in _queue.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            while (true)
             {
-                if (pending is not null)
+                if (pending is null)
+                {
+                    if (!await _queue.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        break;
+                    }
+
+                    if (!_queue.Reader.TryRead(out LiveSegmentTranscriptionWorkItem? nextItem))
+                    {
+                        continue;
+                    }
+
+                    pending = nextItem;
+                    Log(
+                        $"[lookahead-hold] path='{Path.GetFileName(pending.SegmentPath)}' waitingForNextSegment=true " +
+                        $"holdMs={FormatMs(DateTimeOffset.UtcNow - pending.QueuedAt)} bufferedSegments={Volatile.Read(ref _bufferedSegmentCount)}");
+                    continue;
+                }
+
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                TimeSpan pendingAge = now - pending.QueuedAt;
+                bool channelHasData = _queue.Reader.TryPeek(out _);
+                int bufferedSnapshot = Volatile.Read(ref _bufferedSegmentCount);
+                bool backlogBypass = bufferedSnapshot >= BacklogBypassBufferedSegments;
+                bool maxHoldElapsed = pendingAge >= DefaultAdaptiveHoldMax;
+                bool drainBypass = _isStopping;
+
+                if (drainBypass || backlogBypass || maxHoldElapsed)
                 {
                     int bufferedAfterDequeue = Interlocked.Decrement(ref _bufferedSegmentCount);
                     var request = new LiveSegmentTranscriptionRequest(
                         sequence++,
+                        previousCommitted,
+                        pending,
+                        NextItem: null,
+                        DateTimeOffset.UtcNow,
+                        bufferedAfterDequeue);
+                    await requestWriter.WriteAsync(request, cancellationToken).ConfigureAwait(false);
+                    int queuedRequests = Interlocked.Increment(ref _queuedRequestCount);
+                    string releaseReason = drainBypass
+                        ? "stop-drain"
+                        : backlogBypass
+                            ? "backlog"
+                            : "max-hold";
+                    Log(
+                        $"[request-queued-adaptive] seq={request.Sequence} path='{Path.GetFileName(request.Item.SegmentPath)}' " +
+                        $"reason={releaseReason} holdActualMs={FormatMs(request.RequestQueuedAt - request.Item.QueuedAt)} " +
+                        $"bufferedSegments={bufferedAfterDequeue} queuedRequests={queuedRequests} activeWorkers={Volatile.Read(ref _activeWorkerCount)}");
+                    previousCommitted = pending;
+                    pending = null;
+                    continue;
+                }
+
+                if (channelHasData && _queue.Reader.TryRead(out LiveSegmentTranscriptionWorkItem? item))
+                {
+                    int bufferedAfterDequeue = Interlocked.Decrement(ref _bufferedSegmentCount);
+                    var request = new LiveSegmentTranscriptionRequest(
+                        sequence++,
+                        previousCommitted,
                         pending,
                         item,
                         DateTimeOffset.UtcNow,
@@ -228,12 +291,31 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
                         $"[request-queued] seq={request.Sequence} path='{Path.GetFileName(request.Item.SegmentPath)}' " +
                         $"waitBufferedMs={FormatMs(request.RequestQueuedAt - request.Item.QueuedAt)} " +
                         $"bufferedSegments={bufferedAfterDequeue} queuedRequests={queuedRequests} activeWorkers={Volatile.Read(ref _activeWorkerCount)}");
+
+                    previousCommitted = pending;
+                    pending = item;
+                    Log(
+                        $"[lookahead-hold] path='{Path.GetFileName(item.SegmentPath)}' waitingForNextSegment=true " +
+                        $"holdMs={FormatMs(DateTimeOffset.UtcNow - item.QueuedAt)} bufferedSegments={Volatile.Read(ref _bufferedSegmentCount)}");
+                    continue;
                 }
 
-                pending = item;
-                Log(
-                    $"[lookahead-hold] path='{Path.GetFileName(item.SegmentPath)}' waitingForNextSegment=true " +
-                    $"holdMs={FormatMs(DateTimeOffset.UtcNow - item.QueuedAt)} bufferedSegments={Volatile.Read(ref _bufferedSegmentCount)}");
+                TimeSpan remainingHold = DefaultAdaptiveHoldMax - pendingAge;
+                TimeSpan waitSlice = remainingHold > HoldPollingInterval
+                    ? HoldPollingInterval
+                    : remainingHold;
+                if (waitSlice <= TimeSpan.Zero)
+                {
+                    continue;
+                }
+
+                Task<bool> waitForDataTask = _queue.Reader.WaitToReadAsync(cancellationToken).AsTask();
+                Task delayTask = Task.Delay(waitSlice, cancellationToken);
+                Task completedTask = await Task.WhenAny(waitForDataTask, delayTask).ConfigureAwait(false);
+                if (completedTask == waitForDataTask && !await waitForDataTask.ConfigureAwait(false))
+                {
+                    break;
+                }
             }
 
             if (pending is not null)
@@ -241,6 +323,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
                 int bufferedAfterDequeue = Interlocked.Decrement(ref _bufferedSegmentCount);
                 var request = new LiveSegmentTranscriptionRequest(
                     sequence,
+                    previousCommitted,
                     pending,
                     NextItem: null,
                     DateTimeOffset.UtcNow,
@@ -286,6 +369,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
                 $"queuedRequests={queuedRequests} activeWorkers={activeWorkers}");
 
             LiveSegmentTranscriptionOutcome outcome = await TranscribeWorkItemAsync(
+                request.PreviousItem,
                 request.Item,
                 request.NextItem,
                 request.Sequence,
@@ -367,6 +451,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
     }
 
     private async Task<LiveSegmentTranscriptionOutcome> TranscribeWorkItemAsync(
+        LiveSegmentTranscriptionWorkItem? previousItem,
         LiveSegmentTranscriptionWorkItem item,
         LiveSegmentTranscriptionWorkItem? nextItem,
         int sequence,
@@ -380,9 +465,9 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
 
         try
         {
-            if (nextItem is not null && _overlapDuration > TimeSpan.Zero)
+            if (_overlapDuration > TimeSpan.Zero && (previousItem is not null || nextItem is not null))
             {
-                requestPath = CreateSegmentRequestWaveFile(item, nextItem, out TimeSpan resolvedRequestStart);
+                requestPath = CreateSegmentRequestWaveFile(previousItem, item, nextItem, out TimeSpan resolvedRequestStart);
                 requestStart = resolvedRequestStart;
                 deleteRequestPath = true;
             }
@@ -511,30 +596,77 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
     }
 
     private string CreateSegmentRequestWaveFile(
+        LiveSegmentTranscriptionWorkItem? previousItem,
         LiveSegmentTranscriptionWorkItem item,
-        LiveSegmentTranscriptionWorkItem nextItem,
+        LiveSegmentTranscriptionWorkItem? nextItem,
         out TimeSpan requestStart)
     {
         TimeSpan currentStart = TimeSpan.FromSeconds(item.Segment.StartSeconds);
         TimeSpan currentDuration = TimeSpan.FromSeconds(item.Segment.DurationSeconds);
-        TimeSpan nextDuration = TimeSpan.FromSeconds(nextItem.Segment.DurationSeconds);
-        TimeSpan nextOverlap = Min(_overlapDuration, nextDuration);
+        TimeSpan previousOverlap = TimeSpan.Zero;
+        TimeSpan nextOverlap = TimeSpan.Zero;
         requestStart = currentStart;
+
+        if (previousItem is not null)
+        {
+            TimeSpan previousDuration = TimeSpan.FromSeconds(previousItem.Segment.DurationSeconds);
+            previousOverlap = Min(_overlapDuration, previousDuration);
+            requestStart = currentStart - previousOverlap;
+            if (requestStart < TimeSpan.Zero)
+            {
+                requestStart = TimeSpan.Zero;
+            }
+        }
+
+        if (nextItem is not null)
+        {
+            TimeSpan nextDuration = TimeSpan.FromSeconds(nextItem.Segment.DurationSeconds);
+            nextOverlap = Min(_overlapDuration, nextDuration);
+        }
 
         string tempPath = Path.Combine(
             Path.GetTempPath(),
             $"AudioScript-live-segment-{Guid.NewGuid():N}.wav");
 
+        WaveFileReader? previousReader = null;
         using var currentReader = new WaveFileReader(item.SegmentPath);
-        using var nextReader = new WaveFileReader(nextItem.SegmentPath);
-        if (!WaveFormatsMatch(currentReader.WaveFormat, nextReader.WaveFormat))
+        WaveFileReader? nextReader = nextItem is null ? null : new WaveFileReader(nextItem.SegmentPath);
+        if (previousItem is not null)
         {
+            previousReader = new WaveFileReader(previousItem.SegmentPath);
+            if (!WaveFormatsMatch(currentReader.WaveFormat, previousReader.WaveFormat))
+            {
+                previousReader.Dispose();
+                nextReader?.Dispose();
+                throw new InvalidOperationException("Adjacent live recording segments do not use the same audio format.");
+            }
+        }
+
+        if (nextReader is not null && !WaveFormatsMatch(currentReader.WaveFormat, nextReader.WaveFormat))
+        {
+            previousReader?.Dispose();
+            nextReader.Dispose();
             throw new InvalidOperationException("Adjacent live recording segments do not use the same audio format.");
         }
 
-        using var writer = new WaveFileWriter(tempPath, currentReader.WaveFormat);
-        CopyRange(currentReader, writer, TimeSpan.Zero, currentDuration);
-        CopyRange(nextReader, writer, TimeSpan.Zero, nextOverlap);
+        using (previousReader)
+        using (nextReader)
+        using (var writer = new WaveFileWriter(tempPath, currentReader.WaveFormat))
+        {
+            if (previousReader is not null && previousOverlap > TimeSpan.Zero)
+            {
+                TimeSpan previousStart = TimeSpan.FromSeconds(Math.Max(0, previousItem!.Segment.DurationSeconds - previousOverlap.TotalSeconds));
+                CopyRange(previousReader, writer, previousStart, previousOverlap);
+            }
+
+            CopyRange(currentReader, writer, TimeSpan.Zero, currentDuration);
+
+            if (nextReader is not null && nextOverlap > TimeSpan.Zero)
+            {
+                CopyRange(nextReader, writer, TimeSpan.Zero, nextOverlap);
+            }
+        }
+
         return tempPath;
     }
 
@@ -648,6 +780,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
 
     private sealed record LiveSegmentTranscriptionRequest(
         int Sequence,
+        LiveSegmentTranscriptionWorkItem? PreviousItem,
         LiveSegmentTranscriptionWorkItem Item,
         LiveSegmentTranscriptionWorkItem? NextItem,
         DateTimeOffset RequestQueuedAt,

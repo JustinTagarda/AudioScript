@@ -10,7 +10,8 @@
 
             <SolidColorBrush x:Key="SelectionControlForegroundBrush"
                              Color="#FF1A1A1A"/>
-
+            <SolidColorBrush x:Key="SessionsCardContextMenuFocusBackgroundBrush"
+                             Color="#DCDCDC"/>
             <Style x:Key="ToolbarButtonIconTextStyle"
                    TargetType="{x:Type TextBlock}">
                 <Setter Property="FontFamily"

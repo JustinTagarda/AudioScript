@@ -139,6 +139,11 @@
                     <Setter Property="Background"
                             Value="{DynamicResource SessionsCardLoadedBackgroundBrush}"/>
                 </DataTrigger>
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=ContextMenu.IsOpen}"
+                             Value="True">
+                    <Setter Property="Background"
+                            Value="{DynamicResource SessionsCardContextMenuFocusBackgroundBrush}"/>
+                </DataTrigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="SessionsCardTextBlockStyle"
@@ -920,14 +925,29 @@
                                          Background="{x:Null}"
                                          ItemContainerStyle="{StaticResource SessionsListBoxItemStyle}"
                                          PreviewMouseLeftButtonDown="RecentSessionsList_PreviewMouseLeftButtonDown"
+                                         PreviewMouseRightButtonDown="RecentSessionsList_PreviewMouseRightButtonDown"
                                          MouseDoubleClick="RecentSessionsList_MouseDoubleClick"
                                          ScrollViewer.VerticalScrollBarVisibility="Auto">
 
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <Border Style="{StaticResource SessionsCardBorderStyle}"
+                                            <Border x:Name="SessionCardBorder"
+                                                    Style="{StaticResource SessionsCardBorderStyle}"
                                                     ToolTip="{Binding DisplayName}">
-                                                <Grid>
+                                                <Border.ContextMenu>
+                                                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                                        <MenuItem Header="Open"
+                                                                  Click="RecentSessionContextMenuOpen_Click"/>
+                                                        <MenuItem Header="Close"
+                                                                  IsEnabled="{Binding IsLoaded}"
+                                                                  Click="RecentSessionContextMenuClose_Click"/>
+                                                        <Separator/>
+                                                        <MenuItem Header="Delete"
+                                                                  Click="RecentSessionContextMenuDelete_Click"/>
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                                <Grid x:Name="SessionCardContentRoot"
+                                                      Background="Transparent">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*"/>
                                                         <ColumnDefinition Width="Auto"/>
@@ -1600,12 +1620,10 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <Button Grid.Column="0"
-                                            HorizontalAlignment="Left"
-                                            Content="Copy timing summary"
-                                            Tag="&#xE8C8;"
-                                            Style="{StaticResource SessionActionSecondaryButtonStyle}"
-                                            Click="CopyLiveTimingSummaryToClipboard_Click"/>
+                                    <TextBlock Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Style="{StaticResource SessionMetaTextStyle}"
+                                               Text=""/>
                                     <Button x:Name="StartStopButton"
                                             Grid.Column="1"
                                             Content="Start"

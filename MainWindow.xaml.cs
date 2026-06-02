@@ -2128,43 +2128,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void CopyLiveTimingSummaryToClipboard_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is not MainViewModel vm)
-        {
-            return;
-        }
-
-        ProcessLogService? processLogService = _processLogService;
-        if (processLogService is null)
-        {
-            ShowCopyToast(
-                "Timing summary unavailable",
-                "Process logging is not initialized.",
-                ToastNotificationType.Warning);
-            return;
-        }
-
-        try
-        {
-            IReadOnlyList<string> lines = processLogService.BuildLiveTranscriptionTimingSummaryLines(TimeSpan.FromMinutes(15));
-            string summary = string.Join(Environment.NewLine, lines);
-            System.Windows.Clipboard.SetText(summary);
-            ShowCopyToast(
-                "Copied to clipboard",
-                "Live timing summary is ready to paste.",
-                ToastNotificationType.Success);
-        }
-        catch (Exception ex)
-        {
-            vm.LogHandledException("copy live timing summary", ex);
-            ShowCopyToast(
-                "Copy failed",
-                "Unable to copy live timing summary.",
-                ToastNotificationType.Error);
-        }
-    }
-
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm || _whisperModelManager is null)
@@ -3469,8 +3432,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             foregroundBrush.Freeze();
         }
 
+        var contextMenuFocusBrush = new SolidColorBrush(
+            darkTheme
+                ? System.Windows.Media.Color.FromRgb(105, 105, 105)
+                : System.Windows.Media.Color.FromRgb(220, 220, 220));
+        if (contextMenuFocusBrush.CanFreeze)
+        {
+            contextMenuFocusBrush.Freeze();
+        }
+
         System.Windows.Application.Current.Resources["SessionsCardLoadedBackgroundBrush"] = backgroundBrush;
         System.Windows.Application.Current.Resources["SessionsCardLoadedForegroundBrush"] = foregroundBrush;
+        System.Windows.Application.Current.Resources["SessionsCardContextMenuFocusBackgroundBrush"] = contextMenuFocusBrush;
     }
 
     private bool IsDarkThemeActive()
@@ -3600,6 +3573,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void RecentSessionsList_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ListBox listBox)
+        {
+            return;
+        }
+
+        DependencyObject? source = e.OriginalSource as DependencyObject;
+        if (source is null)
+        {
+            return;
+        }
+
+        if (ItemsControl.ContainerFromElement(listBox, source) is not ListBoxItem item)
+        {
+            return;
+        }
+
+        item.IsSelected = true;
+        item.Focus();
+    }
+
     private async void RecentSessionsList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is not System.Windows.Controls.ListBox listBox || DataContext is not MainViewModel vm)
@@ -3634,9 +3629,63 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             "SessionDelete",
             $"Open button clicked for session. sessionId='{session.SessionId}'.",
             ProcessLogLevel.Debug);
+        await OpenRecentSessionAsync(vm, session);
+        e.Handled = true;
+    }
+
+    private async void RecentSessionContextMenuOpen_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TranscriptSessionSummary session
+            || DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        _processLogService?.Log(
+            "SessionDelete",
+            $"Context menu open requested for session. sessionId='{session.SessionId}'.",
+            ProcessLogLevel.Debug);
+        await OpenRecentSessionAsync(vm, session);
+        e.Handled = true;
+    }
+
+    private void RecentSessionContextMenuClose_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TranscriptSessionSummary session
+            || DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        _processLogService?.Log(
+            "SessionDelete",
+            $"Context menu close requested for session. sessionId='{session.SessionId}'.",
+            ProcessLogLevel.Debug);
+        vm.CloseCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private void RecentSessionContextMenuDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not TranscriptSessionSummary session
+            || DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        vm.SelectedRecentSession = session;
+        _processLogService?.Log(
+            "SessionDelete",
+            $"Context menu delete requested for session. sessionId='{session.SessionId}'.",
+            ProcessLogLevel.Debug);
+        vm.DeleteSelectedSessionCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private async Task OpenRecentSessionAsync(MainViewModel vm, TranscriptSessionSummary session)
+    {
         await vm.LoadRecentSessionAsync(session);
         await PrepareOpenedLiveSessionForNewRecordingStartAsync(vm);
-        e.Handled = true;
     }
 
     private async Task PrepareOpenedLiveSessionForNewRecordingStartAsync(MainViewModel vm)

@@ -888,7 +888,7 @@ public sealed class MainViewModelTests
                 var processLogService = new ProcessLogService();
                 var transcriptionService = new StubAudioTranscriptionService([]);
                 var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
-                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                _ = sessionStore.ImportAudioFile(audioPath);
                 var viewModel = new MainViewModel(
                     TranscriptionModelCatalog.Models,
                     transcriptionService,
@@ -1525,7 +1525,7 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task DeleteSelectedSessionCommand_IsDisabled_WhenOnlyRecentSessionIsSelected()
+    public async Task DeleteSelectedSessionCommand_IsEnabled_WhenOnlyRecentSessionIsSelected()
     {
         await RunInStaAsync(async () =>
         {
@@ -1563,7 +1563,7 @@ public sealed class MainViewModelTests
 
                     viewModel.SelectedRecentSession = Assert.Single(sessionStore.ListRecentSessions());
 
-                    Assert.False(viewModel.DeleteSelectedSessionCommand.CanExecute(null));
+                    Assert.True(viewModel.DeleteSelectedSessionCommand.CanExecute(null));
                 }
                 finally
                 {
@@ -1572,6 +1572,83 @@ public sealed class MainViewModelTests
             }
             finally
             {
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task DeleteSelectedSessionAsync_RemovesUnloadedSelectedSession()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    viewModel.SelectedRecentSession = Assert.Single(sessionStore.ListRecentSessions());
+                    queuedContext.Drain();
+
+                    Assert.False(viewModel.HasCurrentSession);
+                    Assert.True(viewModel.DeleteSelectedSessionCommand.CanExecute(null));
+
+                    EventHandler<ConfirmationRequest>? handler = null;
+                    handler = (_, request) => request.IsConfirmed = true;
+                    viewModel.ConfirmationRequested += handler;
+
+                    try
+                    {
+                        MethodInfo deleteMethod = typeof(MainViewModel)
+                            .GetMethod("DeleteSelectedSessionAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                        await (Task)deleteMethod.Invoke(viewModel, null)!;
+                        queuedContext.Drain();
+                    }
+                    finally
+                    {
+                        viewModel.ConfirmationRequested -= handler;
+                    }
+
+                    Assert.False(viewModel.HasCurrentSession);
+                    Assert.Empty(sessionStore.ListRecentSessions());
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
                 DeleteDirectory(rootPath);
                 File.Delete(audioPath);
             }
