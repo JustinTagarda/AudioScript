@@ -314,7 +314,8 @@ public sealed class PlaybackTranscriptionSessionTests {
             byte[] pcmAudio,
             WaveFormat sourceFormat,
             string model,
-            CancellationToken cancellationToken) {
+            CancellationToken cancellationToken,
+            string? diagnosticRoute = null) {
             SeenByteCounts.Add(pcmAudio.Length);
             return Task.FromResult($"bytes:{pcmAudio.Length}");
         }

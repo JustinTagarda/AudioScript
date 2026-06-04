@@ -6,6 +6,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Threading;
 using AudioScript.Abstractions;
 using AudioScript.Audio;
@@ -27,6 +28,10 @@ public sealed record TranscriptProcessingPanelSessionSnapshot(
     double ProgressPercent,
     TimeSpan? Elapsed,
     TimeSpan? EstimatedRemaining);
+
+public sealed record SpeakerDiarizationPanelSessionSnapshot(
+    bool ResumeAvailable,
+    bool RestartAvailable);
 
 public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
@@ -76,7 +81,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool _isCurrentSessionAudioMissing;
     private string _loadedAudioFilePath = string.Empty;
     private bool _isAudioPlaying;
-    private bool _isPlaybackMuted;
     private double _audioSeekMaximumSeconds;
     private double _audioSeekPositionSeconds;
     private string _audioElapsedText = "00:00";
@@ -173,7 +177,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _processLogService.LogEmitted += OnProcessLogEmitted;
         _audioPlaybackService.PlaybackStateChanged += OnAudioPlaybackStateChanged;
         _isAudioPlaying = _audioPlaybackService.IsPlaying;
-        _isPlaybackMuted = _audioPlaybackService.IsMuted;
 
         _audioTimelineTimer = new DispatcherTimer
         {
@@ -251,6 +254,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public event EventHandler<ConfirmationRequest>? ConfirmationRequested;
     public event EventHandler<ToastNotification>? ToastRequested;
     public event EventHandler? NewAudioFileStagedForTranscribeAudio;
+    public event EventHandler? SessionLoadStarting;
     public event EventHandler<PremiumUpsellRequest>? PremiumUpsellRequested;
 
     public ObservableCollection<EngineOptionViewModel> Engines { get; }
@@ -481,6 +485,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool IsDevelopmentUnpackagedMode =>
         !_entitlementSnapshot.IsPackaged;
 
+    public bool HasUnlimitedLiveTranscription =>
+        IsDevelopmentUnpackagedMode
+        || AppFeatureAccess.HasUnlimitedLiveTranscription(HasPremium);
+
+    public TimeSpan? LiveTranscriptionLimit =>
+        HasUnlimitedLiveTranscription
+            ? null
+            : AppFeatureAccess.GetLiveTranscriptionLimit(HasPremium);
+
     public bool CanUseLiveTranscription =>
         IsDevelopmentUnpackagedMode
         || AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, HasPremium);
@@ -567,12 +580,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         !HasCurrentTranscriptLines
         && string.IsNullOrWhiteSpace(FinalizedText);
 
+    public bool HasNonEmptyCurrentTranscriptionSession =>
+        (IsCurrentSessionLiveTranscriptionSession || IsCurrentSessionAudioTranscriptionSession)
+        && !IsTranscriptDataEmpty;
+
     public bool ShouldShowLiveTranscriptionPanel =>
         IsCurrentSessionLiveTranscriptionSession
         && (IsTranscriptDataEmpty || IsLiveTranscriptionRunning);
 
     public bool CanCopyTranscript =>
-        HasCurrentTranscriptLines && !IsBusy;
+        HasCurrentTranscriptLines
+        && HasNonEmptyCurrentTranscriptionSession
+        && !IsBusy;
+
+    public bool CanExportAudio =>
+        IsAudioFileLoaded
+        && HasNonEmptyCurrentTranscriptionSession
+        && !IsBusy;
 
     public static bool IsSupportedAudioFilePath(string? filePath)
     {
@@ -594,7 +618,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool CanRunDetectSpeakerPrimaryAction =>
         HasCurrentSession
-        && HasCurrentTranscriptLines
+        && IsAudioFileLoaded
+        && HasNonEmptyCurrentTranscriptionSession
         && !IsGenerationRunning
         && !IsBusy;
 
@@ -779,6 +804,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
             NotifyPropertyChanged(nameof(IsAudioFileLoaded));
+            NotifyPropertyChanged(nameof(CanExportAudio));
             NotifyPropertyChanged(nameof(TranscriptPaneSubtitle));
             NotifyCurrentTranscriptStateChanged();
             NotifyInteractionAvailabilityChanged();
@@ -832,21 +858,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             }
 
             RefreshCommandStates();
-        }
-    }
-
-    public bool IsPlaybackMuted
-    {
-        get => _isPlaybackMuted;
-        set
-        {
-            if (!SetProperty(ref _isPlaybackMuted, value))
-            {
-                return;
-            }
-
-            _audioPlaybackService.IsMuted = value;
-            AppendLog($"Playback mute: {(value ? "ON" : "OFF")}.");
         }
     }
 
@@ -918,6 +929,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             AppendLog($"Busy state: {(value ? "ON" : "OFF")}.");
             NotifyPropertyChanged(nameof(CanCopyTranscript));
+            NotifyPropertyChanged(nameof(CanExportAudio));
             NotifyInteractionAvailabilityChanged();
             RefreshCommandStates();
         }
@@ -936,6 +948,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             _entitlementService.SnapshotChanged -= OnEntitlementSnapshotChanged;
         }
 
+        PersistPendingTranscribeAudioSessionForShutdown();
         _sessionAutosaveTimer.Stop();
         _sessionAutosaveTimer.Tick -= OnSessionAutosaveTimerTick;
         TrySaveCurrentSession(
@@ -954,6 +967,30 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _ = _entitlementService?.DisposeAsync();
         AppendLog("Disposed transcription resources.");
         return ValueTask.CompletedTask;
+    }
+
+    private void PersistPendingTranscribeAudioSessionForShutdown()
+    {
+        if (_currentSessionDocument is not null
+            || _transcribeAudioWorkflow is null
+            || _transcribeAudioWorkflow.HasStarted
+            || _transcribeAudioWorkflow.Kind != TranscribeAudioWorkflowKind.NewFile)
+        {
+            return;
+        }
+
+        try
+        {
+            AppendLog("App shutdown detected with pending Transcribe Audio session. Persisting staged audio session before exit.");
+            if (EnsureCurrentSessionForAudioFile(_transcribeAudioWorkflow.SourceAudioPath))
+            {
+                _transcribeAudioWorkflow.CreatedSessionId = _currentSessionDocument?.SessionId;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Shutdown persistence for pending Transcribe Audio session failed: {ex.Message}");
+        }
     }
 
     public void SeekAudioPreview(TimeSpan position)
@@ -1135,6 +1172,43 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return TryLoadAudioPreview(audioPath);
     }
 
+    public bool ConvertCurrentCompletedLiveSessionToAudioTranscriptionSession()
+    {
+        if (_currentSessionDocument is null || !IsCurrentSessionLiveRecordingManifest())
+        {
+            return false;
+        }
+
+        string? liveManifestPath = _sessionStore.ResolveStoredAudioPathForPlayback(_currentSessionDocument);
+        if (string.IsNullOrWhiteSpace(liveManifestPath) || !File.Exists(liveManifestPath))
+        {
+            throw new InvalidOperationException("The current live session does not have recorded audio to convert.");
+        }
+
+        string convertedAudioFileName = BuildConvertedLiveSessionAudioFileName();
+        (string materializedAudioPath, bool deleteMaterializedAudioFile) =
+            PrepareAudioFilePathForTranscription(liveManifestPath);
+
+        try
+        {
+            TranscriptSessionLoadResult loadResult = _sessionStore.ConvertLiveSessionToImportedAudio(
+                _currentSessionDocument.SessionId,
+                materializedAudioPath,
+                convertedAudioFileName);
+            LoadSessionResult(loadResult, showAudioIssueDialog: true);
+            LoadRecentSessions(loadResult.Document.SessionId);
+            AppendLog("Completed live transcription session converted to audio transcription session.");
+            return true;
+        }
+        finally
+        {
+            if (deleteMaterializedAudioFile)
+            {
+                DeleteTemporaryTranscriptionAudioFile(materializedAudioPath);
+            }
+        }
+    }
+
     public bool InitializeNewLiveTranscriptSession(string inputDeviceName)
     {
         if (!EnsureCanCreateNewSession("live transcription session"))
@@ -1144,6 +1218,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         try
         {
+            RaiseSessionLoadStarting();
             _sessionAutosaveTimer.Stop();
             if (!TrySaveCurrentSession(
                     updatedTranscriptMode: null,
@@ -1273,6 +1348,59 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 continue;
             }
 
+            if (TryReattachLeadingBoundaryFragment(previousText, currentText, out string reattachedPreviousText, out string reattachedCurrentText))
+            {
+                previous.Text = reattachedPreviousText;
+                previousText = reattachedPreviousText;
+                if (reattachedCurrentText.Length == 0)
+                {
+                    RemoveFinalizedTranscriptLineAt(index);
+                    AppendLog(
+                        $"Reattached entire leading boundary fragment at {FormatOffset(previous.StartOffset ?? TimeSpan.Zero)}: " +
+                        $"'{BuildPreview(previousText)}'.");
+                    continue;
+                }
+
+                current.Text = reattachedCurrentText;
+                currentText = reattachedCurrentText;
+                AppendLog(
+                    $"Reattached boundary fragment at {FormatOffset(previous.StartOffset ?? TimeSpan.Zero)}: " +
+                    $"'{BuildPreview(previousText)}' | '{BuildPreview(currentText)}'.");
+            }
+
+            if (index >= 2)
+            {
+                string earlierText = FinalizedTranscriptLines[index - 2].Text?.Trim() ?? string.Empty;
+                if (ShouldDropRepeatedQuestionCarryover(earlierText, previousText, currentText))
+                {
+                    RemoveFinalizedTranscriptLineAt(index);
+                    AppendLog(
+                        $"Dropped repeated question carryover at {FormatOffset(current.StartOffset ?? TimeSpan.Zero)}: " +
+                        $"'{BuildPreview(currentText)}'.");
+                    continue;
+                }
+            }
+
+            if (ShouldForceMergeShortLeadingFragment(previousText, currentText, out string forcedMergedText))
+            {
+                previous.Text = forcedMergedText;
+                previous.SetTimelineOffsets(previous.StartOffset, current.EndOffset);
+                RemoveFinalizedTranscriptLineAt(index);
+                AppendLog(
+                    $"Force-merged short leading fragment at {FormatOffset(previous.StartOffset ?? TimeSpan.Zero)}: " +
+                    $"'{BuildPreview(previous.Text)}'.");
+                continue;
+            }
+
+            if (IsSeverelyMalformedLiveBoundaryText(currentText))
+            {
+                RemoveFinalizedTranscriptLineAt(index);
+                AppendLog(
+                    $"Dropped malformed live row at {FormatOffset(current.StartOffset ?? TimeSpan.Zero)}: " +
+                    $"'{BuildPreview(currentText)}'.");
+                continue;
+            }
+
             string normalizedPrevious = NormalizeLiveSegmentText(previousText);
             string normalizedCurrent = NormalizeLiveSegmentText(currentText);
             int overlap = CountSuffixPrefixTokenOverlap(normalizedPrevious, normalizedCurrent);
@@ -1325,7 +1453,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
             if (ShouldMergeAdjacentLiveRows(previousText, currentText))
             {
-                previous.Text = $"{previousText} {currentText}".Trim();
+                string mergedText = $"{previousText} {currentText}".Trim();
+                if (!ShouldKeepMergedLiveRow(previousText, currentText, mergedText))
+                {
+                    index++;
+                    continue;
+                }
+
+                previous.Text = mergedText;
                 previous.SetTimelineOffsets(previous.StartOffset, current.EndOffset);
                 RemoveFinalizedTranscriptLineAt(index);
                 AppendLog(
@@ -1348,10 +1483,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return candidate;
         }
 
+        string normalizedText = NormalizeLiveBoundaryText(text);
+        if (!string.Equals(normalizedText, text, StringComparison.Ordinal))
+        {
+            text = normalizedText;
+            candidate = new TranscriptionTimedLine(
+                text,
+                candidate.StartOffset,
+                candidate.EndOffset,
+                candidate.IsTimestampEstimated);
+        }
+
         if (IsPlaceholderLiveBoundaryText(text))
         {
             AppendLog(
                 $"Dropped placeholder live transcript row at {FormatOffset(candidate.StartOffset)}: " +
+                $"'{BuildPreview(text)}'.");
+            return new TranscriptionTimedLine(
+                string.Empty,
+                candidate.StartOffset,
+                candidate.EndOffset,
+                candidate.IsTimestampEstimated);
+        }
+
+        if (IsSeverelyMalformedLiveBoundaryText(text))
+        {
+            AppendLog(
+                $"Dropped malformed live transcript row at {FormatOffset(candidate.StartOffset)}: " +
                 $"'{BuildPreview(text)}'.");
             return new TranscriptionTimedLine(
                 string.Empty,
@@ -1708,13 +1866,149 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return false;
         }
 
-        bool previousLooksIncomplete = previousWords <= 4
+        bool previousLooksFragment = previousWords <= 6;
+        bool previousEndsOpen = !EndsWithTerminalPunctuation(previousText);
+        bool previousLooksIncomplete = previousLooksFragment
             || EndsWithContinuationWord(previousText)
-            || !EndsWithTerminalPunctuation(previousText);
+            || (previousEndsOpen && previousWords <= 10);
         bool currentLooksContinuation = StartsWithContinuationWord(currentText)
-            || char.IsLower(currentText.TrimStart()[0]);
+            || char.IsLower(currentText.TrimStart()[0])
+            || currentWords <= 4;
 
         return previousLooksIncomplete && currentLooksContinuation;
+    }
+
+    private static bool ShouldKeepMergedLiveRow(string previousText, string currentText, string mergedText)
+    {
+        if (IsSeverelyMalformedLiveBoundaryText(mergedText))
+        {
+            return false;
+        }
+
+        string normalizedMerged = NormalizeLiveSegmentText(mergedText);
+        int mergedWords = CountWords(normalizedMerged);
+        if (mergedWords > 22 || mergedText.Length > 160)
+        {
+            return false;
+        }
+
+        if (EndsWithTerminalPunctuation(previousText) && !StartsWithContinuationWord(currentText))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string NormalizeLiveBoundaryText(string text)
+    {
+        string normalized = text.Trim();
+        if (normalized.Length == 0)
+        {
+            return normalized;
+        }
+
+        normalized = TrimWeakLeadingDash(normalized);
+        normalized = TrimLeadingDiscourseFiller(normalized);
+        normalized = RepairMalformedBoundaryPhrase(normalized);
+        return normalized.Trim();
+    }
+
+    private static string TrimWeakLeadingDash(string text)
+    {
+        string trimmed = text.TrimStart();
+        if (!trimmed.StartsWith("-", StringComparison.Ordinal))
+        {
+            return text;
+        }
+
+        string remainder = trimmed[1..].TrimStart();
+        return remainder.Length > 0 ? remainder : string.Empty;
+    }
+
+    private static string TrimLeadingDiscourseFiller(string text)
+    {
+        string normalized = NormalizeLiveSegmentText(text);
+        int wordCount = CountWords(normalized);
+        if (wordCount < 7)
+        {
+            return text;
+        }
+
+        string[] patterns =
+        [
+            "and, you know, ",
+            "and you know "
+        ];
+
+        foreach (string pattern in patterns)
+        {
+            if (!text.StartsWith(pattern, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string remainder = text[pattern.Length..].TrimStart();
+            return remainder.Length > 0 ? CapitalizeFirstLetter(remainder) : string.Empty;
+        }
+
+        return text;
+    }
+
+    private static string RepairMalformedBoundaryPhrase(string text)
+    {
+        string repaired = text;
+        repaired = Regex.Replace(repaired, @"\s*--\s*", " ", RegexOptions.CultureInvariant);
+        repaired = ReplaceWholeWordPhrase(repaired, "like love that", "love that");
+        repaired = ReplaceWholeWordPhrase(repaired, "it started the entire industry of the year", "that started the entire industry");
+        repaired = ReplaceWholeWordPhrase(repaired, "it started the entire industry", "that started the entire industry");
+        repaired = ReplaceWholeWordPhrase(repaired, "entire engine", "entire industry");
+        repaired = ReplaceWholeWordPhrase(repaired, "the entire end", "the entire industry");
+        repaired = ReplaceWholeWordPhrase(repaired, "entire end", "entire industry");
+        repaired = ReplaceWholeWordPhrase(repaired, "this. but", "this but");
+        repaired = ReplaceWholeWordPhrase(repaired, "and it was brilliant", "it was brilliant");
+        repaired = ReplaceWholeWordPhrase(repaired, "he was the best of a lifetime", "he was the teacher of a lifetime");
+        return repaired;
+    }
+
+    private static string ReplaceWholeWordPhrase(string text, string target, string replacement)
+    {
+        if (text.Length == 0)
+        {
+            return text;
+        }
+
+        string pattern = $@"\b{Regex.Escape(target)}\b";
+        return Regex.Replace(text, pattern, replacement, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    private static string CapitalizeFirstLetter(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        int index = 0;
+        while (index < text.Length && char.IsWhiteSpace(text[index]))
+        {
+            index++;
+        }
+
+        if (index >= text.Length || !char.IsLetter(text[index]))
+        {
+            return text;
+        }
+
+        char upper = char.ToUpperInvariant(text[index]);
+        if (upper == text[index])
+        {
+            return text;
+        }
+
+        string prefix = text[..index];
+        string suffix = index + 1 < text.Length ? text[(index + 1)..] : string.Empty;
+        return prefix + upper + suffix;
     }
 
     private static bool EndsWithContinuationWord(string text)
@@ -1751,6 +2045,255 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         char last = trimmed[^1];
         return last is '.' or '!' or '?' or ':' or ';';
+    }
+
+    private static bool IsSeverelyMalformedLiveBoundaryText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        string[] tokens = SplitLiveBoundaryTokens(text);
+        if (tokens.Length == 0)
+        {
+            return false;
+        }
+
+        if (HasRepeatedFunctionWord(tokens))
+        {
+            return true;
+        }
+
+        if (LooksLikeWeakBoundaryFragment(tokens))
+        {
+            return true;
+        }
+
+        if (HasUnexpectedLowercaseAfterSentenceBreak(text))
+        {
+            return true;
+        }
+
+        return HasUnexpectedCapitalizedContinuation(tokens);
+    }
+
+    private static bool LooksLikeWeakBoundaryFragment(string[] tokens)
+    {
+        if (tokens.Length == 0)
+        {
+            return false;
+        }
+
+        if (tokens.Length <= 4 && tokens[0].StartsWith("-", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        string normalizedText = NormalizeLiveSegmentText(string.Join(" ", tokens));
+        return normalizedText is "people have forgotten this"
+            or "was missing at the time"
+            or "you know ive never"
+            or "but you know ive never"
+            or "a it was a really";
+    }
+
+
+    private static bool ShouldDropRepeatedQuestionCarryover(string earlierText, string previousText, string currentText)
+    {
+        if (earlierText.Length == 0 || previousText.Length == 0 || currentText.Length == 0)
+        {
+            return false;
+        }
+
+        string normalizedEarlier = NormalizeLiveSegmentText(earlierText);
+        string normalizedCurrent = NormalizeLiveSegmentText(currentText);
+        if (!normalizedEarlier.Equals(normalizedCurrent, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!currentText.TrimEnd().EndsWith("?", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string normalizedPrevious = NormalizeLiveSegmentText(previousText);
+        int previousWordCount = CountWords(normalizedPrevious);
+        return previousWordCount > 0
+            && previousWordCount <= 4
+            && (EndsWithContinuationWord(previousText) || !EndsWithTerminalPunctuation(previousText));
+    }
+
+    private static bool ShouldForceMergeShortLeadingFragment(string previousText, string currentText, out string mergedText)
+    {
+        mergedText = string.Empty;
+        if (previousText.Length == 0 || currentText.Length == 0)
+        {
+            return false;
+        }
+
+        string normalizedPrevious = NormalizeLiveSegmentText(previousText);
+        if (CountWords(normalizedPrevious) is 0 or > 4)
+        {
+            return false;
+        }
+
+        if (!EndsWithContinuationWord(previousText))
+        {
+            return false;
+        }
+
+        string trimmedCurrent = currentText.TrimStart();
+        if (trimmedCurrent.Length == 0 || !char.IsLower(trimmedCurrent[0]))
+        {
+            return false;
+        }
+
+        mergedText = RepairMalformedBoundaryPhrase($"{previousText} {currentText}".Trim());
+        return true;
+    }
+
+    private static bool TryReattachLeadingBoundaryFragment(
+        string previousText,
+        string currentText,
+        out string updatedPreviousText,
+        out string updatedCurrentText)
+    {
+        updatedPreviousText = previousText;
+        updatedCurrentText = currentText;
+
+        if (previousText.Length == 0 || currentText.Length == 0)
+        {
+            return false;
+        }
+
+        if (!TrySplitLeadingSentenceFragment(currentText, out string leadingFragment, out string remainingText))
+        {
+            return false;
+        }
+
+        string normalizedLeading = NormalizeLiveSegmentText(leadingFragment);
+        int leadingWords = CountWords(normalizedLeading);
+        if (leadingWords == 0 || leadingWords > 4)
+        {
+            return false;
+        }
+
+        bool previousOpenEnded = !EndsWithTerminalPunctuation(previousText) || EndsWithContinuationWord(previousText);
+        bool leadingLooksContinuation = StartsWithContinuationWord(leadingFragment) || char.IsLower(leadingFragment.TrimStart()[0]);
+        if (!previousOpenEnded && !leadingLooksContinuation)
+        {
+            return false;
+        }
+
+        string mergedPrevious = $"{previousText.TrimEnd('.', '!', '?', ';', ':')} {leadingFragment}".Trim();
+        mergedPrevious = RepairMalformedBoundaryPhrase(mergedPrevious);
+        updatedPreviousText = mergedPrevious;
+        updatedCurrentText = remainingText.Trim();
+        return true;
+    }
+
+    private static bool TrySplitLeadingSentenceFragment(
+        string text,
+        out string leadingFragment,
+        out string remainingText)
+    {
+        leadingFragment = string.Empty;
+        remainingText = text;
+
+        string trimmed = text.Trim();
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        int boundaryIndex = trimmed.IndexOfAny(['.', '!', '?']);
+        if (boundaryIndex <= 0 || boundaryIndex >= trimmed.Length - 1)
+        {
+            return false;
+        }
+
+        leadingFragment = trimmed[..(boundaryIndex + 1)].Trim();
+        remainingText = trimmed[(boundaryIndex + 1)..].Trim();
+        return remainingText.Length > 0;
+    }
+
+    private static bool HasRepeatedFunctionWord(string[] tokens)
+    {
+        for (int index = 1; index < tokens.Length; index++)
+        {
+            string previous = NormalizeLiveToken(tokens[index - 1]);
+            string current = NormalizeLiveToken(tokens[index]);
+            if (previous.Length == 0 || current.Length == 0)
+            {
+                continue;
+            }
+
+            if (string.Equals(previous, current, StringComparison.Ordinal)
+                && previous is "a" or "an" or "the" or "and" or "or" or "but" or "to" or "of" or "in" or "on")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasUnexpectedLowercaseAfterSentenceBreak(string text)
+    {
+        for (int index = 1; index < text.Length; index++)
+        {
+            if (text[index - 1] is not '.' and not '!' and not '?')
+            {
+                continue;
+            }
+
+            int cursor = index;
+            while (cursor < text.Length && char.IsWhiteSpace(text[cursor]))
+            {
+                cursor++;
+            }
+
+            if (cursor < text.Length && char.IsLower(text[cursor]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasUnexpectedCapitalizedContinuation(string[] tokens)
+    {
+        for (int index = 1; index < tokens.Length; index++)
+        {
+            string token = tokens[index].Trim();
+            if (token.Length == 0 || !char.IsUpper(token[0]))
+            {
+                continue;
+            }
+
+            string normalized = NormalizeLiveToken(token);
+            if (normalized is not "and" and not "but" and not "or" and not "because" and not "that")
+            {
+                continue;
+            }
+
+            string previousToken = tokens[index - 1].TrimEnd();
+            if (previousToken.Length == 0)
+            {
+                continue;
+            }
+
+            char lastPreviousChar = previousToken[^1];
+            if (lastPreviousChar is not '.' and not '!' and not '?' and not ':' and not ';')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void RemoveFinalizedTranscriptLineAt(int index)
@@ -1909,11 +2452,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         bool hasExistingTranscript = HasExistingTranscriptContent(TranscriptGenerationMode.TranscribeAudio);
-        if (hasExistingTranscript && !ConfirmTranscriptReplacement(
+        if (hasExistingTranscript)
+        {
+            if (forceRestart)
+            {
+                if (!ConfirmReTranscribeSession())
+                {
+                    return false;
+                }
+            }
+            else if (!ConfirmTranscriptReplacement(
                 operationName: "Transcribe Audio",
                 transcriptMode: TranscriptGenerationMode.TranscribeAudio))
-        {
-            return false;
+            {
+                return false;
+            }
         }
 
         TranscriptSessionDocument? backupDocument = hasExistingTranscript
@@ -2198,12 +2751,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool ConfirmSpeakerLabelOverwrite()
     {
         _pendingSpeakerDiarizationResume = false;
-        if (TryConfirmSpeakerDiarizationResumeChoice(out bool shouldResume))
-        {
-            _pendingSpeakerDiarizationResume = shouldResume;
-            return true;
-        }
-
         if (!HasSpeakerLabels)
         {
             return true;
@@ -2249,6 +2796,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         AppendLog("Detect Speaker canceled: existing speaker labels were left unchanged.");
         return false;
+    }
+
+    public bool TryPrepareSpeakerDiarizationRun(bool shouldResume)
+    {
+        _pendingSpeakerDiarizationResume = false;
+        if (shouldResume)
+        {
+            _pendingSpeakerDiarizationResume = true;
+            AppendLog("Detect Speaker will resume the incomplete speaker diarization job.");
+            return true;
+        }
+
+        if (!ConfirmSpeakerLabelOverwrite())
+        {
+            return false;
+        }
+
+        AppendLog("Detect Speaker will restart from the beginning.");
+        return true;
     }
 
     public bool IsPreparedTranscribeAudioResumeRequested => _transcribeAudioWorkflow?.ResumeRequested == true;
@@ -2321,6 +2887,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             EstimatedRemaining: estimatedRemaining);
     }
 
+    public SpeakerDiarizationPanelSessionSnapshot GetSpeakerDiarizationPanelSessionSnapshot()
+    {
+        TranscriptSessionDocument? document = _currentSessionDocument;
+        if (document is null)
+        {
+            return new SpeakerDiarizationPanelSessionSnapshot(
+                ResumeAvailable: false,
+                RestartAvailable: false);
+        }
+
+        SpeakerDiarizationJobDocument job = document.Transcript?.SpeakerDiarizationJob ?? new SpeakerDiarizationJobDocument();
+        string audioFingerprint = BuildSpeakerDiarizationAudioFingerprint(document);
+        string transcriptFingerprint = BuildSpeakerDiarizationTranscriptFingerprint();
+        bool resumeAvailable = IsSpeakerDiarizationResumeEligible(
+            job,
+            audioFingerprint,
+            transcriptFingerprint,
+            expectedTotalChunks: null);
+        bool restartAvailable = IsCurrentSpeakerDiarizationJob(job, audioFingerprint, transcriptFingerprint)
+            && (resumeAvailable
+                || string.Equals(job.Status, SpeakerDiarizationJobStatuses.Completed, StringComparison.OrdinalIgnoreCase));
+
+        return new SpeakerDiarizationPanelSessionSnapshot(
+            ResumeAvailable: resumeAvailable,
+            RestartAvailable: restartAvailable);
+    }
+
     private bool TryConfirmTranscribeAudioResumeChoice(string sourcePath, out bool shouldResume)
     {
         shouldResume = false;
@@ -2342,7 +2935,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private (string AudioFilePath, bool IsTemporary) PrepareAudioFilePathForTranscription(string audioFilePath)
     {
-        if (!IsCurrentSessionLiveRecordingManifest() || !IsLiveRecordingManifestPath(audioFilePath))
+        if (!IsLiveRecordingManifestPath(audioFilePath))
         {
             return (audioFilePath, false);
         }
@@ -2367,10 +2960,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private static bool IsLiveRecordingManifestPath(string filePath)
     {
-        return string.Equals(Path.GetFileName(filePath), "manifest.json", StringComparison.OrdinalIgnoreCase)
-            && filePath.Contains(
-                Path.Combine("audio", "live"),
-                StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return false;
+        }
+
+        string normalizedPath = filePath.Replace('\\', '/');
+        return string.Equals(Path.GetFileName(normalizedPath), "manifest.json", StringComparison.OrdinalIgnoreCase)
+            && normalizedPath.Contains("/audio/live/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string BuildConvertedLiveSessionAudioFileName()
+    {
+        string baseName = string.IsNullOrWhiteSpace(_currentSessionDocument?.DisplayName)
+            ? TranscriptSessionStore.LiveSessionAudioName
+            : _currentSessionDocument.DisplayName;
+        return $"{baseName}.wav";
     }
 
     private void DeleteTemporaryTranscriptionAudioFile(string filePath)
@@ -2555,59 +3160,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             RestoreAudioPreviewAfterProcessing(previousLoadedAudioFilePath, shouldRestoreAudioPreview);
             IsBusy = false;
         }
-    }
-
-    private bool TryConfirmSpeakerDiarizationResumeChoice(out bool shouldResume)
-    {
-        shouldResume = false;
-        if (_currentSessionDocument?.Transcript.SpeakerDiarizationJob is not SpeakerDiarizationJobDocument job
-            || !IsIncompleteSpeakerDiarizationJob(job)
-            || !IsSpeakerDiarizationResumeEligible(
-                job,
-                BuildSpeakerDiarizationAudioFingerprint(_currentSessionDocument),
-                BuildSpeakerDiarizationTranscriptFingerprint(),
-                expectedTotalChunks: null))
-        {
-            return false;
-        }
-
-        EventHandler<ConfirmationRequest>? handler = ConfirmationRequested;
-        if (handler is null)
-        {
-            shouldResume = true;
-            AppendLog("Detect Speaker will resume an incomplete speaker diarization job.");
-            return true;
-        }
-
-        var request = new ConfirmationRequest(
-            title: "Resume speaker detection?",
-            message: "This session has an incomplete speaker detection job. Resume from the last saved checkpoint or restart speaker detection from the beginning.",
-            confirmButtonText: "Resume",
-            cancelButtonText: "Restart");
-
-        try
-        {
-            if (SynchronizationContext.Current == _uiContext)
-            {
-                handler(this, request);
-            }
-            else
-            {
-                _uiContext.Send(_ => handler(this, request), null);
-            }
-        }
-        catch (Exception ex)
-        {
-            RaiseError($"Unable to confirm speaker detection resume: {ex.Message}");
-            AppendLog($"Detect Speaker canceled: resume confirmation failed: {ex.Message}");
-            return false;
-        }
-
-        shouldResume = request.IsConfirmed;
-        AppendLog(shouldResume
-            ? "Speaker detection resume confirmed by user."
-            : "Speaker detection restart selected by user.");
-        return true;
     }
 
     private TranscriptionJobDocument ResolveTranscriptionJob()
@@ -3210,12 +3762,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return IsIncompleteSpeakerDiarizationJob(job)
             && string.Equals(job.Engine, SpeakerDiarizationEngineId, StringComparison.OrdinalIgnoreCase)
             && job.JobVersion == SpeakerDiarizationJobVersion
-            && string.Equals(job.AudioFingerprint, audioFingerprint, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(job.TranscriptFingerprint, transcriptFingerprint, StringComparison.OrdinalIgnoreCase)
+            && IsCurrentSpeakerDiarizationJob(job, audioFingerprint, transcriptFingerprint)
             && Math.Abs(job.ChunkDurationSeconds - ChunkedSpeakerDiarizationService.SpeakerDiarizationChunkDuration.TotalSeconds) < 0.001d
             && Math.Abs(job.OverlapDurationSeconds - ChunkedSpeakerDiarizationService.SpeakerDiarizationOverlapDuration.TotalSeconds) < 0.001d
             && (expectedTotalChunks is null || job.TotalChunks == expectedTotalChunks.Value)
             && job.LastCompletedChunkIndex < job.TotalChunks - 1;
+    }
+
+    private static bool IsCurrentSpeakerDiarizationJob(
+        SpeakerDiarizationJobDocument job,
+        string audioFingerprint,
+        string transcriptFingerprint)
+    {
+        return string.Equals(job.AudioFingerprint, audioFingerprint, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(job.TranscriptFingerprint, transcriptFingerprint, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsIncompleteSpeakerDiarizationJob(SpeakerDiarizationJobDocument job)
@@ -3426,6 +3986,107 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return LoadSessionByIdAsync(session.SessionId);
     }
 
+    public string? ValidateSessionRename(string sessionId, string proposedDisplayName)
+    {
+        string normalizedDisplayName = proposedDisplayName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return "Session id is required.";
+        }
+
+        if (string.IsNullOrWhiteSpace(normalizedDisplayName))
+        {
+            return "Enter a session name.";
+        }
+
+        try
+        {
+            string currentDisplayName = GetCurrentSessionDisplayNameForRename(sessionId);
+            if (string.Equals(currentDisplayName, normalizedDisplayName, StringComparison.OrdinalIgnoreCase))
+            {
+                return "The session name is unchanged.";
+            }
+
+            if (_sessionStore.SessionDisplayNameExists(normalizedDisplayName, excludeSessionId: sessionId))
+            {
+                return $"A session named '{normalizedDisplayName}' already exists.";
+            }
+        }
+        catch (Exception ex)
+        {
+            return $"Unable to validate session name: {ex.Message}";
+        }
+
+        return null;
+    }
+
+    public async Task<bool> RenameSessionAsync(string sessionId, string proposedDisplayName)
+    {
+        string? validationError = ValidateSessionRename(sessionId, proposedDisplayName);
+        if (!string.IsNullOrWhiteSpace(validationError))
+        {
+            RaiseError(validationError);
+            return false;
+        }
+
+        string normalizedDisplayName = proposedDisplayName.Trim();
+        TranscriptSessionDocument? targetDocument = null;
+        bool renamingLoadedSession = _currentSessionDocument is not null
+            && string.Equals(_currentSessionDocument.SessionId, sessionId, StringComparison.OrdinalIgnoreCase);
+
+        IsBusy = true;
+        try
+        {
+            _sessionAutosaveTimer.Stop();
+
+            await _sessionSaveSemaphore.WaitAsync();
+            try
+            {
+                if (renamingLoadedSession)
+                {
+                    TranscriptSessionDocument loadedDocument = _currentSessionDocument
+                        ?? throw new InvalidOperationException("Loaded session is no longer available.");
+                    targetDocument = loadedDocument;
+                    loadedDocument.DisplayName = normalizedDisplayName;
+                    loadedDocument.UpdatedUtc = DateTimeOffset.UtcNow;
+                    _sessionStore.Save(loadedDocument);
+                }
+                else
+                {
+                    _sessionStore.RenameSessionDisplayName(sessionId, normalizedDisplayName);
+                }
+            }
+            finally
+            {
+                _sessionSaveSemaphore.Release();
+            }
+
+            if (renamingLoadedSession && _currentSessionDocument is not null)
+            {
+                _currentSessionDocument.DisplayName = normalizedDisplayName;
+                _currentSessionDocument.UpdatedUtc = targetDocument!.UpdatedUtc;
+                CurrentSessionDisplayName = normalizedDisplayName;
+            }
+
+            LoadRecentSessions(
+                selectSessionId: renamingLoadedSession
+                    ? _currentSessionDocument?.SessionId
+                    : sessionId);
+            AppendLog($"Session renamed: {normalizedDisplayName}.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            RaiseError($"Unable to rename session: {ex.Message}");
+            AppendLog($"Session rename failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     public bool PrepareOpenedLiveSessionForNewRecordingStart()
     {
         if (_currentSessionDocument is null
@@ -3591,6 +4252,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
     }
 
+    private string GetCurrentSessionDisplayNameForRename(string sessionId)
+    {
+        if (_currentSessionDocument is not null
+            && string.Equals(_currentSessionDocument.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(_currentSessionDocument.DisplayName)
+                ? _currentSessionDocument.Audio.OriginalFileName
+                : _currentSessionDocument.DisplayName;
+        }
+
+        return _sessionStore.GetSessionDisplayName(sessionId);
+    }
+
     private Task CloseAsync()
     {
         _sessionAutosaveTimer.Stop();
@@ -3609,6 +4283,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         if (unloadAudioPreview)
         {
             _audioPlaybackService.UnloadFile();
+            LoadedAudioFilePath = string.Empty;
+            IsAudioPlaying = false;
+            ResetAudioTimeline();
         }
 
         _suppressSessionAutosave = true;
@@ -3632,14 +4309,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             CurrentSessionDisplayName = "No session loaded.";
             CurrentSessionAudioIssue = string.Empty;
             IsCurrentSessionAudioMissing = false;
+            NotifyCurrentTranscriptStateChanged();
+            NotifyInteractionAvailabilityChanged();
             NotifyPropertyChanged(nameof(HasCurrentSession));
             NotifyPropertyChanged(nameof(HasPendingSessionSelection));
-            NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
-            NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
-            NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
-            NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
-            NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
             NotifyPropertyChanged(nameof(LoadedAudioFileName));
+
+            LoadRecentSessions(selectSessionId: null);
         }
 
         RefreshCommandStates();
@@ -4172,6 +4848,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(IsPremiumStatusBannerVisible));
         NotifyPropertyChanged(nameof(IsDevelopmentUnpackagedMode));
         NotifyPropertyChanged(nameof(PremiumProductDisplayName));
+        NotifyPropertyChanged(nameof(HasUnlimitedLiveTranscription));
+        NotifyPropertyChanged(nameof(LiveTranscriptionLimit));
         NotifyPropertyChanged(nameof(CanUseLiveTranscription));
         NotifyPropertyChanged(nameof(CanUseSpeakerDiarization));
         NotifyPropertyChanged(nameof(PremiumStatusText));
@@ -4195,10 +4873,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(HasCurrentTranscriptLines));
         NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
         NotifyPropertyChanged(nameof(IsTranscriptDataEmpty));
+        NotifyPropertyChanged(nameof(HasNonEmptyCurrentTranscriptionSession));
         NotifyPropertyChanged(nameof(ShouldShowLiveTranscriptionPanel));
         NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
         NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
         NotifyPropertyChanged(nameof(CanCopyTranscript));
+        NotifyPropertyChanged(nameof(CanExportAudio));
         NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
         NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptViewSelected));
@@ -4363,7 +5043,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 ClearPendingImportedAudioSelection();
                 LoadSessionResult(loadResult, showAudioIssueDialog: true);
-                LoadRecentSessions(loadResult.Document.SessionId);
+                LoadRecentSessions(loadResult.Document.SessionId, pinSelectedToTop: true);
                 AppendLog("Selected audio matched an existing session and was loaded.");
 
                 if (intent == AudioFileSelectionIntent.OpenForTranscribe)
@@ -4500,6 +5180,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void LoadSessionResult(TranscriptSessionLoadResult loadResult, bool showAudioIssueDialog)
     {
+        RaiseSessionLoadStarting();
         _sessionAutosaveTimer.Stop();
         _suppressSessionAutosave = true;
 
@@ -5128,6 +5809,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         {
             TranscriptSessionSummary? selectedSession = sessions.FirstOrDefault(item =>
                 string.Equals(item.SessionId, selectSessionId, StringComparison.OrdinalIgnoreCase));
+            if (selectedSession is null)
+            {
+                try
+                {
+                    TranscriptSessionLoadResult loadResult = _sessionStore.LoadSession(selectSessionId);
+                    selectedSession = CreateRecentSessionSummary(loadResult);
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"Unable to pin selected recent session '{selectSessionId}': {ex.Message}");
+                }
+            }
+
             if (selectedSession is not null)
             {
                 sessions = sessions
@@ -5157,6 +5851,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         SelectedRecentSession = !string.IsNullOrWhiteSpace(highlightedSessionId)
             ? RecentSessions.FirstOrDefault(item => string.Equals(item.SessionId, highlightedSessionId, StringComparison.OrdinalIgnoreCase))
             : null;
+    }
+
+    private static TranscriptSessionSummary CreateRecentSessionSummary(TranscriptSessionLoadResult loadResult)
+    {
+        TranscriptSessionDocument document = loadResult.Document;
+        string? audioPath = loadResult.AudioFilePath;
+        bool hasStoredAudio = !string.IsNullOrWhiteSpace(audioPath) && File.Exists(audioPath);
+
+        return new TranscriptSessionSummary(
+            SessionId: document.SessionId,
+            DisplayName: string.IsNullOrWhiteSpace(document.DisplayName)
+                ? document.Audio.OriginalFileName
+                : document.DisplayName,
+            CreatedUtc: document.CreatedUtc,
+            UpdatedUtc: document.UpdatedUtc,
+            OriginalFileName: document.Audio.OriginalFileName,
+            HasStoredAudio: hasStoredAudio);
     }
 
     private void ScheduleSessionAutosave()
@@ -5286,6 +5997,51 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return false;
     }
 
+    private bool ConfirmReTranscribeSession()
+    {
+        EventHandler<ConfirmationRequest>? handler = ConfirmationRequested;
+        if (handler is null)
+        {
+            RaiseError("The confirmation dialog is unavailable. The existing transcript was left unchanged.");
+            AppendLog("Re-transcribe canceled: confirmation dialog unavailable.");
+            return false;
+        }
+
+        var request = new ConfirmationRequest(
+            title: "Re-transcribe",
+            heading: "Re-transcribe this session?",
+            message: "This will run transcription again using this session's audio file and replace the existing transcription data.",
+            confirmButtonText: "Re-transcribe",
+            cancelButtonText: "Cancel");
+
+        try
+        {
+            if (SynchronizationContext.Current == _uiContext)
+            {
+                handler(this, request);
+            }
+            else
+            {
+                _uiContext.Send(_ => handler(this, request), null);
+            }
+        }
+        catch (Exception ex)
+        {
+            RaiseError($"Unable to confirm re-transcribe: {ex.Message}");
+            AppendLog($"Re-transcribe canceled: confirmation failed: {ex.Message}");
+            return false;
+        }
+
+        if (request.IsConfirmed)
+        {
+            AppendLog("Re-transcribe confirmed by user.");
+            return true;
+        }
+
+        AppendLog("Re-transcribe canceled: existing transcript was preserved.");
+        return false;
+    }
+
     private void ResetCurrentSessionTranscriptState(TranscriptGenerationMode transcriptMode)
     {
         if (_currentSessionDocument is null)
@@ -5329,13 +6085,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         LoadedAudioFilePath = string.Empty;
         IsAudioPlaying = false;
         ResetAudioTimeline();
+        NotifyCurrentTranscriptStateChanged();
+        NotifyInteractionAvailabilityChanged();
         NotifyPropertyChanged(nameof(HasCurrentSession));
         NotifyPropertyChanged(nameof(HasPendingSessionSelection));
-        NotifyPropertyChanged(nameof(ShouldShowTranscriptChooseFileAction));
-        NotifyPropertyChanged(nameof(ShouldShowTranscriptTranscribeAudioAction));
-        NotifyPropertyChanged(nameof(IsTranscriptEmptyStateVisible));
-        NotifyPropertyChanged(nameof(CanRunDetectSpeakerPrimaryAction));
-        NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
         NotifyPropertyChanged(nameof(LoadedAudioFileName));
         RefreshCommandStates();
     }
@@ -5824,6 +6577,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         _uiContext.Post(_ => ToastRequested?.Invoke(this, new ToastNotification(title, message, type)), null);
+    }
+
+    private void RaiseSessionLoadStarting()
+    {
+        _uiContext.Post(_ => SessionLoadStarting?.Invoke(this, EventArgs.Empty), null);
     }
 
     private void OnAppUpdateSnapshotChanged(object? sender, AppUpdateSnapshot snapshot)

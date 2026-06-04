@@ -48,14 +48,16 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         string audioFilePath,
         string model,
         CancellationToken cancellationToken,
-        IProgress<TranscriptionProgressSnapshot>? progress = null)
+        IProgress<TranscriptionProgressSnapshot>? progress = null,
+        string? diagnosticRoute = null)
     {
         return await TranscribeAudioFileAsync(
             audioFilePath,
             model,
             new AudioTranscriptionRequestOptions(),
             cancellationToken,
-            progress);
+            progress,
+            diagnosticRoute);
     }
 
     public async Task<TranscriptionResult> TranscribeAudioFileAsync(
@@ -63,18 +65,22 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         string model,
         AudioTranscriptionRequestOptions options,
         CancellationToken cancellationToken,
-        IProgress<TranscriptionProgressSnapshot>? progress = null)
+        IProgress<TranscriptionProgressSnapshot>? progress = null,
+        string? diagnosticRoute = null)
     {
         ValidateModel(model);
         string fullPath = ValidateAudioFilePath(audioFilePath);
         string fileName = Path.GetFileName(fullPath);
         var fileInfo = new FileInfo(fullPath);
         var progressReporter = new TranscriptionProgressReporter(progress);
+        string route = NormalizeDiagnosticRoute(diagnosticRoute);
 
-        Log($"Starting whisper.cpp transcription for '{fileName}' ({fileInfo.Length:N0} bytes) using '{model}'.");
+        Log(
+            $"Starting whisper.cpp transcription route='{route}' for '{fileName}' " +
+            $"({fileInfo.Length:N0} bytes) using '{model}'.");
         _processLogService.UpdateCrashContext(
             "whispercpp.file.start",
-            $"model='{model}', file='{fullPath}', bytes={fileInfo.Length}");
+            $"route='{route}', model='{model}', file='{fullPath}', bytes={fileInfo.Length}");
         progressReporter.Report(
             TranscriptionProgressPhase.PreparingAudio,
             0,
@@ -95,22 +101,23 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
             TimeSpan duration = ResolveAudioDuration(standardizedPath);
             _processLogService.UpdateCrashContext(
                 "whispercpp.file.standardized_ready",
-                $"model='{model}', standardizedPath='{standardizedPath}', durationMs={duration.TotalMilliseconds:F0}");
+                $"route='{route}', model='{model}', standardizedPath='{standardizedPath}', durationMs={duration.TotalMilliseconds:F0}");
             IReadOnlyList<TranscriptionTimedLine> timedLines = await TranscribeWaveFileAsync(
                 standardizedPath,
                 model,
                 duration,
                 options,
                 cancellationToken,
-                progressReporter);
+                progressReporter,
+                route);
             stopwatch.Stop();
 
             Log(
-                $"whisper.cpp transcription for '{fileName}' completed in {stopwatch.Elapsed.TotalSeconds:F2}s " +
+                $"whisper.cpp transcription route='{route}' for '{fileName}' completed in {stopwatch.Elapsed.TotalSeconds:F2}s " +
                 $"with {timedLines.Count:N0} timed line(s).");
             _processLogService.UpdateCrashContext(
                 "whispercpp.file.completed",
-                $"model='{model}', lines={timedLines.Count}, elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F0}");
+                $"route='{route}', model='{model}', lines={timedLines.Count}, elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F0}");
             progressReporter.Report(
                 TranscriptionProgressPhase.Completed,
                 100,
@@ -132,8 +139,11 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         }
         catch (Exception ex)
         {
-            _processLogService.UpdateCrashContext("whispercpp.file.failed", ex.GetType().FullName);
-            _processLogService.LogException("WhisperLocal", $"whisper.cpp transcription failed for '{fileName}'.", ex);
+            _processLogService.UpdateCrashContext("whispercpp.file.failed", $"route='{route}', exception='{ex.GetType().FullName}'");
+            _processLogService.LogException(
+                "WhisperLocal",
+                $"whisper.cpp transcription failed route='{route}' for '{fileName}'.",
+                ex);
             throw;
         }
         finally
@@ -149,11 +159,13 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         byte[] pcmAudio,
         WaveFormat sourceFormat,
         string model,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? diagnosticRoute = null)
     {
         ArgumentNullException.ThrowIfNull(pcmAudio);
         ArgumentNullException.ThrowIfNull(sourceFormat);
         ValidateModel(model);
+        string route = NormalizeDiagnosticRoute(diagnosticRoute);
 
         if (pcmAudio.Length == 0)
         {
@@ -161,7 +173,9 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         }
 
         byte[] standardizedWaveBytes = _audioStandardizer.ConvertPcmBytesToEngineWav(pcmAudio, sourceFormat);
-        Log($"Starting whisper.cpp playback transcription chunk ({standardizedWaveBytes.Length:N0} wav bytes) using '{model}'.");
+        Log(
+            $"Starting whisper.cpp playback transcription route='{route}' " +
+            $"({standardizedWaveBytes.Length:N0} wav bytes) using '{model}'.");
 
         string tempWavePath = CreateTemporaryWavePath();
         try
@@ -175,13 +189,17 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
                 duration,
                 new AudioTranscriptionRequestOptions(SuppressPrompt: true),
                 cancellationToken,
-                progressReporter: null);
+                progressReporter: null,
+                route);
 
             return BuildText(timedLines).Trim();
         }
         catch (Exception ex)
         {
-            _processLogService.LogException("WhisperLocal", "whisper.cpp playback transcription failed.", ex);
+            _processLogService.LogException(
+                "WhisperLocal",
+                $"whisper.cpp playback transcription failed route='{route}'.",
+                ex);
             throw;
         }
         finally
@@ -196,24 +214,25 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         TimeSpan duration,
         AudioTranscriptionRequestOptions options,
         CancellationToken cancellationToken,
-        TranscriptionProgressReporter? progressReporter)
+        TranscriptionProgressReporter? progressReporter,
+        string diagnosticRoute)
     {
         string modelPath = _whisperModelManager.ResolveInstalledModelPath(model);
         string cliPath = await EnsureWhisperCliExecutableAsync(cancellationToken);
         _processLogService.UpdateCrashContext(
             "whispercpp.runtime.ready",
-            $"model='{model}', cli='{cliPath}', modelPath='{modelPath}'");
+            $"route='{diagnosticRoute}', model='{model}', cli='{cliPath}', modelPath='{modelPath}'");
 
         int availableBeforeWait = _transcriptionSemaphore.CurrentCount;
         var semaphoreWaitStopwatch = Stopwatch.StartNew();
         Log(
-            $"[semaphore-wait] model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
+            $"[semaphore-wait] route='{diagnosticRoute}' model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
             $"availableBeforeWait={availableBeforeWait} maxConcurrent={MaxConcurrentTranscriptions}");
         await _transcriptionSemaphore.WaitAsync(cancellationToken);
         semaphoreWaitStopwatch.Stop();
         int availableAfterWait = _transcriptionSemaphore.CurrentCount;
         Log(
-            $"[semaphore-acquired] model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
+            $"[semaphore-acquired] route='{diagnosticRoute}' model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
             $"waitMs={semaphoreWaitStopwatch.Elapsed.TotalMilliseconds:F0} availableAfterWait={availableAfterWait}");
         try
         {
@@ -234,18 +253,19 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
                 duration,
                 options,
                 cancellationToken,
-                progressReporter);
+                progressReporter,
+                diagnosticRoute);
 
             _processLogService.UpdateCrashContext(
                 "whispercpp.process.completed",
-                $"model='{model}', segments={cliResult.TimedLines.Count}, elapsedMs={cliResult.Elapsed.TotalMilliseconds:F0}");
+                $"route='{diagnosticRoute}', model='{model}', segments={cliResult.TimedLines.Count}, elapsedMs={cliResult.Elapsed.TotalMilliseconds:F0}");
             return cliResult.TimedLines;
         }
         finally
         {
             _transcriptionSemaphore.Release();
             Log(
-                $"[semaphore-released] model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
+                $"[semaphore-released] route='{diagnosticRoute}' model='{model}' wave='{Path.GetFileName(waveFilePath)}' " +
                 $"availableAfterRelease={_transcriptionSemaphore.CurrentCount}");
         }
     }
@@ -285,7 +305,8 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
         TimeSpan duration,
         AudioTranscriptionRequestOptions options,
         CancellationToken cancellationToken,
-        TranscriptionProgressReporter? progressReporter)
+        TranscriptionProgressReporter? progressReporter,
+        string diagnosticRoute)
     {
         string outputRoot = Path.Combine(_paths.TempPath, "whispercpp", Guid.NewGuid().ToString("N"));
         string workingDirectory = Path.GetDirectoryName(cliPath) ?? Environment.CurrentDirectory;
@@ -303,10 +324,10 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
             RedirectStandardError = true,
         };
 
-        Log($"Launching whisper.cpp CLI. exe='{cliPath}', args='{arguments}'.");
+        Log($"Launching whisper.cpp CLI route='{diagnosticRoute}'. exe='{cliPath}', args='{arguments}'.");
         _processLogService.UpdateCrashContext(
             "whispercpp.process.start",
-            $"cli='{cliPath}', wave='{waveFilePath}', output='{outputRoot}'");
+            $"route='{diagnosticRoute}', cli='{cliPath}', wave='{waveFilePath}', output='{outputRoot}'");
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();
@@ -366,7 +387,7 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
 
             string srtContent = await File.ReadAllTextAsync(srtPath, cancellationToken);
             IReadOnlyList<TranscriptionTimedLine> timedLines = ParseSrtTimedLines(srtContent);
-            Log($"whisper.cpp CLI completed in {stopwatch.Elapsed.TotalSeconds:F2}s with exitCode=0.");
+            Log($"whisper.cpp CLI route='{diagnosticRoute}' completed in {stopwatch.Elapsed.TotalSeconds:F2}s with exitCode=0.");
             return new WhisperCliResult(timedLines, stopwatch.Elapsed);
         }
         catch (OperationCanceledException)
@@ -609,6 +630,13 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
     private void Log(string message)
     {
         _processLogService.Log("WhisperLocal", message);
+    }
+
+    private static string NormalizeDiagnosticRoute(string? diagnosticRoute)
+    {
+        return string.IsNullOrWhiteSpace(diagnosticRoute)
+            ? "unspecified"
+            : diagnosticRoute.Trim();
     }
 
     private sealed record WhisperCliResult(

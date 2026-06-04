@@ -264,6 +264,76 @@ public sealed class TranscriptSessionStoreTests {
     }
 
     [Fact]
+    public void ListRecentSessions_DefaultIsNotCapped() {
+        string rootPath = CreateTempDirectory();
+        var audioPaths = new List<string>();
+
+        try {
+            var store = new TranscriptSessionStore(rootPath);
+
+            for (int index = 0; index < 13; index++) {
+                string audioPath = CreateSilentWaveFile(16000 + (index * 1000));
+                audioPaths.Add(audioPath);
+                store.ImportAudioFile(audioPath);
+            }
+
+            IReadOnlyList<TranscriptSessionSummary> recent = store.ListRecentSessions();
+
+            Assert.Equal(13, recent.Count);
+        }
+        finally {
+            DeleteDirectory(rootPath);
+            foreach (string audioPath in audioPaths) {
+                if (File.Exists(audioPath)) {
+                    File.Delete(audioPath);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void SessionDisplayNameExists_UsesEffectiveDisplayNameAndExcludesTargetSession() {
+        string rootPath = CreateTempDirectory();
+        string audioPath = CreateSilentWaveFile(16000);
+
+        try {
+            var store = new TranscriptSessionStore(rootPath);
+            TranscriptSessionLoadResult imported = store.ImportAudioFile(audioPath);
+            imported.Document.DisplayName = string.Empty;
+            imported.Document.Audio.OriginalFileName = "Demo Session.wav";
+            store.Save(imported.Document);
+
+            Assert.True(store.SessionDisplayNameExists("Demo Session.wav"));
+            Assert.False(store.SessionDisplayNameExists("Demo Session.wav", excludeSessionId: imported.Document.SessionId));
+        }
+        finally {
+            DeleteDirectory(rootPath);
+            File.Delete(audioPath);
+        }
+    }
+
+    [Fact]
+    public void RenameSessionDisplayName_UpdatesStoredDisplayName() {
+        string rootPath = CreateTempDirectory();
+        string audioPath = CreateSilentWaveFile(16000);
+
+        try {
+            var store = new TranscriptSessionStore(rootPath);
+            TranscriptSessionLoadResult imported = store.ImportAudioFile(audioPath);
+
+            store.RenameSessionDisplayName(imported.Document.SessionId, "Renamed Session");
+
+            TranscriptSessionLoadResult reloaded = store.LoadSession(imported.Document.SessionId);
+            Assert.Equal("Renamed Session", reloaded.Document.DisplayName);
+            Assert.True(store.SessionDisplayNameExists("Renamed Session"));
+        }
+        finally {
+            DeleteDirectory(rootPath);
+            File.Delete(audioPath);
+        }
+    }
+
+    [Fact]
     public void RestoreAudioFile_RejectsMismatchedFingerprint() {
         string rootPath = CreateTempDirectory();
         string firstAudioPath = CreateSilentWaveFile(16000);
@@ -456,6 +526,60 @@ public sealed class TranscriptSessionStoreTests {
             Assert.True(loaded.AudioAvailable);
             Assert.Equal(TranscriptSessionStore.LiveRecordingManifestRelativePath, loaded.Document.Audio.StoredRelativePath);
             Assert.Equal(Path.GetFullPath(manifestPath), Path.GetFullPath(loaded.AudioFilePath!));
+        }
+        finally {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public void ConvertLiveSessionToImportedAudio_ChangesStorageKindAndStoresWaveCopy() {
+        string rootPath = CreateTempDirectory();
+        string audioPath = CreateSilentWaveFile(16000);
+
+        try {
+            var store = new TranscriptSessionStore(rootPath);
+            TranscriptSessionLoadResult liveSession = store.CreateLiveSession("Convert Live Session Test");
+
+            TranscriptSessionLoadResult converted = store.ConvertLiveSessionToImportedAudio(
+                liveSession.Document.SessionId,
+                audioPath,
+                "Converted Live Session.wav");
+
+            Assert.True(converted.AudioAvailable);
+            Assert.Equal(AudioStorageKinds.ImportedFile, converted.Document.Audio.StorageKind);
+            Assert.Equal("Converted Live Session.wav", converted.Document.Audio.OriginalFileName);
+            Assert.Equal("audio/Converted Live Session.wav", converted.Document.Audio.StoredRelativePath);
+            Assert.NotNull(converted.AudioFilePath);
+            Assert.EndsWith("Converted Live Session.wav", converted.AudioFilePath, StringComparison.OrdinalIgnoreCase);
+            Assert.True(File.Exists(converted.AudioFilePath));
+        }
+        finally {
+            DeleteDirectory(rootPath);
+            File.Delete(audioPath);
+        }
+    }
+
+    [Fact]
+    public void ConvertLiveSessionToImportedAudio_RejectsNonWaveReplacementAudio() {
+        string rootPath = CreateTempDirectory();
+        string replacementPath = Path.Combine(rootPath, "not-a-wave.txt");
+        File.WriteAllText(replacementPath, "plain text payload");
+
+        try {
+            var store = new TranscriptSessionStore(rootPath);
+            TranscriptSessionLoadResult liveSession = store.CreateLiveSession("Convert Live Session Test");
+
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
+                store.ConvertLiveSessionToImportedAudio(
+                    liveSession.Document.SessionId,
+                    replacementPath,
+                    "Converted Live Session.wav"));
+
+            Assert.Contains("not a valid WAV file", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+            TranscriptSessionLoadResult reloaded = store.LoadSession(liveSession.Document.SessionId);
+            Assert.Equal(AudioStorageKinds.LiveRecordingManifest, reloaded.Document.Audio.StorageKind);
         }
         finally {
             DeleteDirectory(rootPath);

@@ -179,7 +179,8 @@ public sealed class ChunkedAudioTranscriptionServiceTests {
             string audioFilePath,
             string model,
             CancellationToken cancellationToken,
-            IProgress<TranscriptionProgressSnapshot>? progress = null) {
+            IProgress<TranscriptionProgressSnapshot>? progress = null,
+            string? diagnosticRoute = null) {
             int index = RequestCount;
             RequestCount++;
             IReadOnlyList<TranscriptionTimedLine> timedLines = _responses[Math.Min(index, _responses.Count - 1)];

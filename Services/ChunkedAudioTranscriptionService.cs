@@ -38,6 +38,7 @@ public sealed class ChunkedAudioTranscriptionService : IChunkedAudioTranscriptio
         Action<TranscriptionChunkCommit>? chunkCommitted = null) {
         var progressReporter = new TranscriptionProgressReporter(progress);
         AudioSourceInfo sourceInfo = _audioChunkingService.GetSourceInfo(audioFilePath);
+        string route = $"chunked:{sourceInfo.Name}";
         progressReporter.Report(
             TranscriptionProgressPhase.PreparingAudio,
             0,
@@ -47,7 +48,7 @@ public sealed class ChunkedAudioTranscriptionService : IChunkedAudioTranscriptio
             force: true);
 
         Log(
-            $"Audio transcription will use chunked requests for '{sourceInfo.Name}' " +
+            $"Audio transcription route='{route}' will use chunked requests for '{sourceInfo.Name}' " +
             $"({FormatDuration(sourceInfo.Duration)}, {sourceInfo.FileSizeBytes:N0} bytes).");
         progressReporter.Report(
             TranscriptionProgressPhase.Chunking,
@@ -86,8 +87,9 @@ public sealed class ChunkedAudioTranscriptionService : IChunkedAudioTranscriptio
             AudioChunkFile chunkFile = chunkedAudioFile.Chunks[chunkIndex];
             AudioChunkPlan chunkPlan = chunkFile.Plan;
             int currentChunk = chunkIndex + 1;
+            string chunkRoute = $"{route}.chunk[{currentChunk}/{chunkedAudioFile.Chunks.Count}]";
             Log(
-                $"Submitting transcription chunk {currentChunk}/{chunkedAudioFile.Chunks.Count} " +
+                $"Submitting transcription chunk route='{chunkRoute}' {currentChunk}/{chunkedAudioFile.Chunks.Count} " +
                 $"[{FormatDuration(chunkPlan.RequestStart)} - {FormatDuration(chunkPlan.RequestEnd)}].");
             progressReporter.Report(
                 TranscriptionProgressPhase.TranscribingChunk,
@@ -131,7 +133,8 @@ public sealed class ChunkedAudioTranscriptionService : IChunkedAudioTranscriptio
                 chunkFile.FilePath,
                 model,
                 cancellationToken,
-                chunkProgress);
+                chunkProgress,
+                chunkRoute);
 
             if (chunkIndex == 0) {
                 createdAt = chunkResult.CreatedAt;
@@ -161,7 +164,7 @@ public sealed class ChunkedAudioTranscriptionService : IChunkedAudioTranscriptio
             lowConfidenceTokens.AddRange(chunkResult.LowConfidenceTokens);
 
             Log(
-                $"Transcription chunk {chunkIndex + 1}/{chunkedAudioFile.Chunks.Count} produced " +
+                $"Transcription chunk route='{chunkRoute}' {chunkIndex + 1}/{chunkedAudioFile.Chunks.Count} produced " +
                 $"{chunkResult.TimedLines?.Count ?? 0:N0} timed line(s); {keepLines.Count:N0} kept after overlap merge.");
         }
 

@@ -7,6 +7,7 @@ AudioScript is a Windows desktop WPF app for local/offline audio transcription, 
 - Imports local audio files for playback and transcription
 - Captures live audio from playback and/or microphone
 - Runs transcription locally with installed Whisper models
+- Processes live transcription in parallel chunk workers with adaptive dispatch
 - Runs speaker diarization locally with bundled `pyannote-community-1` assets
 - Supports transcript editing, row operations, autosave, and restore
 - Exports transcripts to `.docx`
@@ -30,6 +31,37 @@ AudioScript is a Windows desktop WPF app for local/offline audio transcription, 
 - `Audio/`: audio capture/playback/chunking utilities
 - `Abstractions/`: shared contracts/models
 - `AudioScript.Tests/`: unit tests
+
+## Live Transcription Pipeline
+
+- Live audio is captured from playback and/or microphone, segmented into rolling WAV chunks, and transcribed locally.
+- Live chunk transcription is dispatched through parallel workers to reduce queue buildup during active sessions.
+- Chunk submission uses adaptive hold behavior so boundary context can be preserved without reintroducing long startup stalls.
+- Stop/finalize paths use priority drain behavior so buffered chunks are flushed immediately when a live run ends.
+- Live transcripts currently do not use interim text updates. The app commits finalized chunk results only.
+
+### Key Implementation Areas
+
+- `Services/LiveSegmentTranscriptionSession.cs`
+  - live chunk buffering, adaptive dispatch, parallel worker orchestration, stop-drain behavior
+- `Services/WhisperAudioTranscriptionService.cs`
+  - local Whisper invocation and request execution
+- `Audio/SegmentedLiveRecordingWaveStream.cs`
+  - segmented live WAV capture support
+- `ViewModels/MainViewModel.cs`
+  - live transcript append, row consolidation, boundary cleanup, and quality heuristics
+- `Services/ProcessLogService.cs`
+  - process logging used for live timing and transcription diagnostics
+
+### Current Quality-Tuning Notes
+
+- Current tuning work is focused on live transcript boundary quality rather than throughput.
+- The main post-processing logic is in `ViewModels/MainViewModel.cs`, where the app:
+  - drops placeholder and malformed live rows
+  - trims repeated adjacent boundary phrases
+  - merges or reattaches short continuation fragments when they clearly belong together
+  - preserves a conservative cleanup baseline to avoid over-normalizing valid text
+- Remaining quality issues are concentrated at chunk boundaries, especially where model output introduces duplicated fragments or substitutions. The current strategy favors small, targeted cleanup rules over broad transcript rewriting.
 
 ## Build Development (FAST)
 
@@ -73,7 +105,11 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 ## Premium Entitlement Model
 
 - Basic mode remains usable forever.
+- Basic can run Live Transcription for up to 10 minutes per active run. When that limit is reached, the app stops the live session and surfaces the Premium upsell flow.
+- Basic cannot use Speaker Diarization / Detect Speaker.
+- Basic cannot install or use premium models: `whisper-medium`, `whisper-large-v3`, `whisper-large-v3-turbo`.
 - Premium is unlocked only by Microsoft Store durable add-on ownership.
+- Premium removes the 10-minute Live Transcription cap and unlocks the premium-only features above.
 - Add-on catalog source of truth: `Services/Store/StorePremiumAddonCatalog.cs`
 - Entitlement verification and fallback cache: `Services/AppEntitlementModels.cs`
 - Premium CTA convergence uses shared in-app purchase flow (`StoreContext.RequestPurchaseAsync(addOnStoreId)`), including the footer `AppStatusDisplay` Upgrade button.

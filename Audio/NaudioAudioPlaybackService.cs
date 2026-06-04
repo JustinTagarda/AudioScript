@@ -10,7 +10,6 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
     private WaveOutEvent? _output;
     private WaveStream? _reader;
     private string? _loadedFilePath;
-    private bool _isMuted;
 
     public event EventHandler? PlaybackStateChanged;
     public event EventHandler<PlaybackAudioFrameEventArgs>? PlaybackAudioFrameProduced;
@@ -53,30 +52,6 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
         }
     }
 
-    public bool IsMuted {
-        get {
-            lock (_sync) {
-                return _isMuted;
-            }
-        }
-        set {
-            WaveOutEvent? output;
-            bool shouldApply;
-
-            lock (_sync) {
-                shouldApply = _isMuted != value;
-                if (!shouldApply) {
-                    return;
-                }
-
-                _isMuted = value;
-                output = _output;
-            }
-
-            ApplyMuteState(output, value);
-        }
-    }
-
     public TimeSpan Duration {
         get {
             lock (_sync) {
@@ -116,7 +91,6 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
                 OnPlaybackAudioFaulted);
             output = new WaveOutEvent();
             output.Init(tappedProvider);
-            ApplyMuteState(output, IsMuted);
             output.PlaybackStopped += OnPlaybackStopped;
 
             WaveOutEvent? previousOutput;
@@ -172,7 +146,6 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
                 OnPlaybackAudioFaulted);
             output = new WaveOutEvent();
             output.Init(tappedProvider);
-            ApplyMuteState(output, IsMuted);
             output.PlaybackStopped += OnPlaybackStopped;
 
             WaveOutEvent? previousOutput;
@@ -363,14 +336,6 @@ public sealed class NaudioAudioPlaybackService : IAudioPlaybackService, IPlaybac
             && left.Channels == right.Channels
             && left.BlockAlign == right.BlockAlign
             && left.AverageBytesPerSecond == right.AverageBytesPerSecond;
-    }
-
-    private static void ApplyMuteState(WaveOutEvent? output, bool isMuted) {
-        if (output is null) {
-            return;
-        }
-
-        output.Volume = isMuted ? 0f : 1f;
     }
 
     private void Log(string message)

@@ -181,7 +181,8 @@ public sealed class LiveSegmentTranscriptionSessionTests
             string audioFilePath,
             string model,
             CancellationToken cancellationToken,
-            IProgress<TranscriptionProgressSnapshot>? progress = null)
+            IProgress<TranscriptionProgressSnapshot>? progress = null,
+            string? diagnosticRoute = null)
         {
             RequestedPaths.Add(audioFilePath);
             return Task.FromResult(new TranscriptionResult(
@@ -210,7 +211,8 @@ public sealed class LiveSegmentTranscriptionSessionTests
             string audioFilePath,
             string model,
             CancellationToken cancellationToken,
-            IProgress<TranscriptionProgressSnapshot>? progress = null)
+            IProgress<TranscriptionProgressSnapshot>? progress = null,
+            string? diagnosticRoute = null)
         {
             using var reader = new WaveFileReader(audioFilePath);
             TimeSpan duration = reader.TotalTime;
@@ -262,14 +264,16 @@ public sealed class LiveSegmentTranscriptionSessionTests
             string audioFilePath,
             string model,
             CancellationToken cancellationToken,
-            IProgress<TranscriptionProgressSnapshot>? progress = null)
+            IProgress<TranscriptionProgressSnapshot>? progress = null,
+            string? diagnosticRoute = null)
         {
             return TranscribeAudioFileAsync(
                 audioFilePath,
                 model,
                 new AudioTranscriptionRequestOptions(),
                 cancellationToken,
-                progress);
+                progress,
+                diagnosticRoute);
         }
 
         public Task<TranscriptionResult> TranscribeAudioFileAsync(
@@ -277,7 +281,8 @@ public sealed class LiveSegmentTranscriptionSessionTests
             string model,
             AudioTranscriptionRequestOptions options,
             CancellationToken cancellationToken,
-            IProgress<TranscriptionProgressSnapshot>? progress = null)
+            IProgress<TranscriptionProgressSnapshot>? progress = null,
+            string? diagnosticRoute = null)
         {
             Options.Add(options);
             return Task.FromResult(new TranscriptionResult(

@@ -41,6 +41,8 @@ public sealed class BasicPremiumGatingPolicyTests
 
         Assert.True(viewModel.IsDevelopmentUnpackagedMode);
         Assert.True(viewModel.CanUseLiveTranscription);
+        Assert.True(viewModel.HasUnlimitedLiveTranscription);
+        Assert.Null(viewModel.LiveTranscriptionLimit);
         Assert.True(viewModel.CanUseSpeakerDiarization);
         Assert.True(viewModel.CanInstallModel(TranscriptionModelCatalog.WhisperLargeV3Turbo));
     }
@@ -59,6 +61,9 @@ public sealed class BasicPremiumGatingPolicyTests
 
         Assert.True(viewModel.IsApplicationAccessTierVisible);
         Assert.False(viewModel.IsUpgradeButtonVisible);
+        Assert.True(viewModel.CanUseLiveTranscription);
+        Assert.True(viewModel.HasUnlimitedLiveTranscription);
+        Assert.Null(viewModel.LiveTranscriptionLimit);
         Assert.Equal("Premium", viewModel.ApplicationAccessTierText);
     }
 
@@ -76,6 +81,9 @@ public sealed class BasicPremiumGatingPolicyTests
 
         Assert.True(viewModel.IsApplicationAccessTierVisible);
         Assert.True(viewModel.IsUpgradeButtonVisible);
+        Assert.True(viewModel.CanUseLiveTranscription);
+        Assert.False(viewModel.HasUnlimitedLiveTranscription);
+        Assert.Equal(AppFeatureAccess.BasicLiveTranscriptionLimit, viewModel.LiveTranscriptionLimit);
         Assert.Equal("Basic", viewModel.ApplicationAccessTierText);
     }
 
@@ -105,9 +113,11 @@ public sealed class BasicPremiumGatingPolicyTests
         Assert.False(AppFeatureAccess.CanInstallModel(TranscriptionModelCatalog.WhisperLargeV3, hasPremium));
         Assert.False(AppFeatureAccess.CanInstallModel(TranscriptionModelCatalog.WhisperLargeV3Turbo, hasPremium));
 
-        Assert.False(AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, hasPremium));
+        Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, hasPremium));
         Assert.False(AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, hasPremium));
         Assert.False(AppFeatureAccess.CanAccessFeature(AppFeature.PremiumModelInstall, hasPremium));
+        Assert.False(AppFeatureAccess.HasUnlimitedLiveTranscription(hasPremium));
+        Assert.Equal(AppFeatureAccess.BasicLiveTranscriptionLimit, AppFeatureAccess.GetLiveTranscriptionLimit(hasPremium));
     }
 
     [Fact]
@@ -128,6 +138,8 @@ public sealed class BasicPremiumGatingPolicyTests
         Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, hasPremium));
         Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, hasPremium));
         Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.PremiumModelInstall, hasPremium));
+        Assert.True(AppFeatureAccess.HasUnlimitedLiveTranscription(hasPremium));
+        Assert.Null(AppFeatureAccess.GetLiveTranscriptionLimit(hasPremium));
     }
 
     [Fact]
@@ -175,9 +187,13 @@ public sealed class BasicPremiumGatingPolicyTests
     private static MainViewModel CreateVisibilityContractViewModel(AppEntitlementSnapshot snapshot)
     {
         var viewModel = (MainViewModel)RuntimeHelpers.GetUninitializedObject(typeof(MainViewModel));
-        FieldInfo? field = typeof(MainViewModel).GetField("_entitlementSnapshot", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(field);
-        field.SetValue(viewModel, snapshot);
+        FieldInfo? entitlementField = typeof(MainViewModel).GetField("_entitlementSnapshot", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(entitlementField);
+        entitlementField.SetValue(viewModel, snapshot);
+
+        FieldInfo? runtimeField = typeof(MainViewModel).GetField("_isSpeakerDiarizationRuntimeAvailable", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(runtimeField);
+        runtimeField.SetValue(viewModel, true);
         return viewModel;
     }
 }

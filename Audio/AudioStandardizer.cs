@@ -4,6 +4,10 @@ using NAudio.Wave;
 namespace AudioScript.Audio;
 
 public sealed class AudioStandardizer {
+    public WaveStream OpenSourceReader(string sourceFilePath) {
+        return CreateSourceReader(sourceFilePath);
+    }
+
     public string ConvertFileToEngineWav(string sourceFilePath) {
         if (!File.Exists(sourceFilePath)) {
             throw new FileNotFoundException("Audio file not found.", sourceFilePath);

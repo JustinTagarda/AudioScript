@@ -7,7 +7,8 @@ public interface IPlaybackTranscriptionService {
         byte[] pcmAudio,
         WaveFormat sourceFormat,
         string model,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string? diagnosticRoute = null);
 }
 
 

@@ -460,6 +460,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         string requestPath = item.SegmentPath;
         bool deleteRequestPath = false;
         TimeSpan requestStart = TimeSpan.FromSeconds(item.Segment.StartSeconds);
+        string route = $"live.segment:{Path.GetFileName(item.SegmentPath)}#{sequence:N0}";
         var transcriptionStopwatch = Stopwatch.StartNew();
         DateTimeOffset transcribeStartedAt = DateTimeOffset.UtcNow;
 
@@ -476,12 +477,13 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
                 this,
                 new LiveSegmentTranscriptionStartedEventArgs(item.Segment, requestPath));
             Log(
-                $"Transcribing live segment '{requestPath}' " +
+                $"Transcribing live segment route='{route}' '{requestPath}' " +
                 $"[{FormatDuration(item.Segment.StartSeconds)} - {FormatDuration(item.Segment.StartSeconds + item.Segment.DurationSeconds)}].");
 
             TranscriptionResult result = await TranscribeLiveSegmentAsync(
                 requestPath,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                route).ConfigureAwait(false);
             TranscriptionResult translated = TranslateResultToSessionTimeline(result, item.Segment, requestStart);
             transcriptionStopwatch.Stop();
 
@@ -504,7 +506,7 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
         {
             transcriptionStopwatch.Stop();
             Log(
-                $"Live segment transcription failed for '{item.SegmentPath}': " +
+                $"Live segment transcription failed route='{route}' for '{item.SegmentPath}': " +
                 $"{ex.GetType().Name}: {ex.Message}.");
             return new LiveSegmentTranscriptionOutcome(
                 sequence,
@@ -528,7 +530,8 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
 
     private Task<TranscriptionResult> TranscribeLiveSegmentAsync(
         string requestPath,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string diagnosticRoute)
     {
         if (_transcriptionService is IConfigurableAudioTranscriptionService configurableService)
         {
@@ -536,13 +539,15 @@ public sealed class LiveSegmentTranscriptionSession : IAsyncDisposable
                 requestPath,
                 _model,
                 new AudioTranscriptionRequestOptions(SuppressPrompt: true, IsEngineWaveInput: true),
-                cancellationToken);
+                cancellationToken,
+                diagnosticRoute: diagnosticRoute);
         }
 
         return _transcriptionService.TranscribeAudioFileAsync(
             requestPath,
             _model,
-            cancellationToken);
+            cancellationToken,
+            diagnosticRoute: diagnosticRoute);
     }
 
     private static TranscriptionResult TranslateResultToSessionTimeline(

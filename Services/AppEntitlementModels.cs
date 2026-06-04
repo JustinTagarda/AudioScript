@@ -90,6 +90,8 @@ public enum AppFeature
 
 public static class AppFeatureAccess
 {
+    public static readonly TimeSpan BasicLiveTranscriptionLimit = TimeSpan.FromMinutes(10);
+
     public static bool IsPremiumOnlyModel(string? modelId)
     {
         string normalized = modelId?.Trim() ?? string.Empty;
@@ -108,11 +110,23 @@ public static class AppFeatureAccess
         return hasPremium || !IsPremiumOnlyModel(modelId);
     }
 
+    public static bool HasUnlimitedLiveTranscription(bool hasPremium)
+    {
+        return hasPremium;
+    }
+
+    public static TimeSpan? GetLiveTranscriptionLimit(bool hasPremium)
+    {
+        return HasUnlimitedLiveTranscription(hasPremium)
+            ? null
+            : BasicLiveTranscriptionLimit;
+    }
+
     public static bool CanAccessFeature(AppFeature feature, bool hasPremium)
     {
         return feature switch
         {
-            AppFeature.LiveTranscription => hasPremium,
+            AppFeature.LiveTranscription => true,
             AppFeature.SpeakerDiarization => hasPremium,
             AppFeature.PremiumModelInstall => hasPremium,
             _ => false,

@@ -9,8 +9,6 @@ public interface IAudioPlaybackService : IDisposable {
 
     bool IsPlaying { get; }
 
-    bool IsMuted { get; set; }
-
     TimeSpan Duration { get; }
 
     TimeSpan Position { get; }

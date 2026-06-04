@@ -13,6 +13,115 @@ namespace AudioScript.Tests;
 public sealed class MainWindowTests
 {
     [Fact]
+    public void TranscriptToolbar_ListsReTranscribeBeforeDetectSpeaker()
+    {
+        string xamlPath = FindRepoFile("MainWindow.xaml");
+        string xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains("<Button Content=\"Re-transcribe\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"ReTranscribe_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Tag=\"&#xE768;\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsEnabled=\"{Binding CanRunReTranscribePrimaryAction}\"", xaml, StringComparison.Ordinal);
+        Assert.True(
+            xaml.IndexOf("Content=\"Re-transcribe\"", StringComparison.Ordinal)
+            < xaml.IndexOf("Content=\"Detect Speaker\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TranscriptProcessingPanel_DoesNotShowMuteControl()
+    {
+        string xamlPath = FindRepoFile("MainWindow.xaml");
+        string xaml = File.ReadAllText(xamlPath);
+
+        Assert.DoesNotContain("Content=\"Mute\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsPlaybackMuted", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReTranscribeEnablement_RequiresNonEmptyCurrentTranscriptionSession()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains("vm.HasNonEmptyCurrentTranscriptionSession", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetectSpeakerRoute_DoesNotShowGenericDidNotCompleteDialog()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.DoesNotContain("ShowTranscribeAudioErrorDialog(\"Detect Speaker did not complete.\")", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetectSpeakerRoute_ShowsProcessingPanelForActiveDetectSpeakerWorkflow()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains("_activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.DetectSpeakers", code, StringComparison.Ordinal);
+        Assert.Contains("ShouldShowDetectSpeakerPanel", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetectSpeakerRoute_UsesDedicatedDetectSpeakerPanel()
+    {
+        string xamlPath = FindRepoFile("MainWindow.xaml");
+        string xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains("ShouldShowDetectSpeakerPanel", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"DetectSpeakerStartStopButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"DetectSpeakerRestartButton\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"DetectSpeakerStartStop_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"DetectSpeakerRestart_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsDetectSpeakerRestartVisible", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Pyannote Community-1\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Click=\"TranscribeAudioRestart_Click\"", xaml[xaml.IndexOf("ShouldShowDetectSpeakerPanel", StringComparison.Ordinal)..], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetectSpeakerRoute_DecommissionsResumeConfirmationModal()
+    {
+        string codePath = FindRepoFile("ViewModels\\MainViewModel.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.DoesNotContain("Resume speaker detection?", code, StringComparison.Ordinal);
+        Assert.Contains("TryPrepareSpeakerDiarizationRun", code, StringComparison.Ordinal);
+        Assert.Contains("GetSpeakerDiarizationPanelSessionSnapshot", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetectSpeakerRoute_DoesNotSyncEngineLabelFromSelectedTranscriptionModelWhileActive()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains(
+            "_activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.DetectSpeakers",
+            code,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "&& (IsTranscribeAudioBatchPendingStart || IsTranscribeAudioBatchTranscribing))",
+            code,
+            StringComparison.Ordinal);
+        Assert.Contains("return;", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MediaPlayerPanel_IsRefreshedWhenTranscriptPanelVisibilityChanges()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains("OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));", code, StringComparison.Ordinal);
+        Assert.Contains("ShouldShowLiveTranscriptionPanel", code, StringComparison.Ordinal);
+        Assert.Contains("ShouldShowAudioTranscriptionPanel", code, StringComparison.Ordinal);
+        Assert.Contains("ShouldShowDetectSpeakerPanel", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TranscriptRowContextMenu_OnlyShowsSupportedActions()
     {
         string xamlPath = FindRepoFile("MainWindow.xaml");
@@ -22,8 +131,10 @@ public sealed class MainWindowTests
         Assert.Contains("<MenuItem Header=\"Split into Two Rows\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Combine with Previous Row\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Rename Speaker…\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("<MenuItem Header=\"Rename Session\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Merge Adjacent Rows for This Speaker\"", xaml, StringComparison.Ordinal);
         Assert.Contains("<MenuItem Header=\"Copy Row Text\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding DisplayName}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"Engine\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Insert Row Above\"", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("<MenuItem Header=\"Insert Row Below\"", xaml, StringComparison.Ordinal);
@@ -1071,7 +1182,8 @@ public sealed class MainWindowTests
             string audioFilePath,
             string model,
             CancellationToken cancellationToken,
-            IProgress<TranscriptionProgressSnapshot>? progress = null)
+            IProgress<TranscriptionProgressSnapshot>? progress = null,
+            string? diagnosticRoute = null)
         {
             TimeSpan duration = _timedLines.Count == 0
                 ? TimeSpan.Zero
@@ -1104,7 +1216,6 @@ public sealed class MainWindowTests
     {
         private string? _loadedFilePath;
         private bool _isPlaying;
-        private bool _isMuted;
         private TimeSpan _position;
 
         public event EventHandler? PlaybackStateChanged;
@@ -1114,12 +1225,6 @@ public sealed class MainWindowTests
         public bool IsLoaded => !string.IsNullOrWhiteSpace(_loadedFilePath);
 
         public bool IsPlaying => _isPlaying;
-
-        public bool IsMuted
-        {
-            get => _isMuted;
-            set => _isMuted = value;
-        }
 
         public TimeSpan Duration => string.IsNullOrWhiteSpace(_loadedFilePath) ? TimeSpan.Zero : TimeSpan.FromSeconds(10);
 

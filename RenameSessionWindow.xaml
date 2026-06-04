@@ -1,0 +1,86 @@
+<Window x:Class="AudioScript.RenameSessionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Rename Session"
+        Icon="pack://application:,,,/assets/AudioScript.ico"
+        Width="460"
+        MinWidth="400"
+        MinHeight="220"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="Rename Session"
+                       FontSize="18"
+                       FontWeight="SemiBold"/>
+            <TextBlock Text="Keep it short and recognizable"
+                       Margin="0,4,0,0"
+                       Opacity="0.75"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <TextBox x:Name="SessionNameTextBox"
+                 Grid.Row="1"
+                 Margin="0,14,0,0"
+                 MinHeight="30"
+                 VerticalContentAlignment="Center"
+                 Text="{Binding SessionName, UpdateSourceTrigger=PropertyChanged}"/>
+
+        <TextBlock Grid.Row="2"
+                   Margin="0,10,0,0"
+                   Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                   Text="{Binding ValidationErrorText}"
+                   TextWrapping="Wrap">
+            <TextBlock.Style>
+                <Style TargetType="{x:Type TextBlock}">
+                    <Setter Property="Visibility"
+                            Value="Visible"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ValidationErrorText}"
+                                     Value="">
+                            <Setter Property="Visibility"
+                                    Value="Hidden"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
+        <StackPanel Grid.Row="3"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,16,0,0">
+            <Button MinWidth="110"
+                    MinHeight="28"
+                    Padding="12,6"
+                    Tag="&#xE711;"
+                    Style="{StaticResource ToolbarButtonStyle}"
+                    Margin="0,0,8,0"
+                    Content="Cancel"
+                    IsCancel="True"
+                    Click="CancelButton_Click"/>
+            <Button x:Name="SaveButton"
+                    MinWidth="110"
+                    MinHeight="28"
+                    Padding="12,6"
+                    Tag="&#xE73E;"
+                    Style="{StaticResource ToolbarPrimaryButtonStyle}"
+                    Content="Save"
+                    IsDefault="True"
+                    IsEnabled="{Binding CanSaveRename}"
+                    Click="SaveButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

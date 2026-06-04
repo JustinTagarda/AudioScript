@@ -7,5 +7,6 @@ public interface IConfigurableAudioTranscriptionService : IAudioTranscriptionSer
         string model,
         AudioTranscriptionRequestOptions options,
         CancellationToken cancellationToken,
-        IProgress<TranscriptionProgressSnapshot>? progress = null);
+        IProgress<TranscriptionProgressSnapshot>? progress = null,
+        string? diagnosticRoute = null);
 }

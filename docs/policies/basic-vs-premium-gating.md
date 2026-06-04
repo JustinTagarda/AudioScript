@@ -10,7 +10,7 @@ Any code change that affects gating behavior must keep this policy accurate.
 This policy applies to:
 
 - Entitlement state and Microsoft Store verification flow.
-- Feature-level gating (Live Transcription, Speaker Diarization, model installs/usage).
+- Feature-level gating (Live Transcription runtime limits, Speaker Diarization, model installs/usage).
 - Basic session-cap upsell behavior.
 - Startup wiring that determines whether gating is active in packaged production builds.
 
@@ -35,11 +35,11 @@ This policy applies to:
 
 - File transcription using `whisper-small`.
 - Manual transcription mode (`manual-transcription`).
+- Live Transcription, limited to 10 minutes per active run. When the 10-minute limit is reached, the app must stop the live session and surface the Premium upsell flow.
 - Session management up to 10 sessions.
 
 ### Basic (must be blocked)
 
-- Live Transcription.
 - Speaker Diarization / Detect Speaker.
 - Installing or using premium models:
   - `whisper-medium`
@@ -49,7 +49,7 @@ This policy applies to:
 ### Premium (must be allowed)
 
 - All Basic features.
-- Live Transcription.
+- Unlimited Live Transcription.
 - Speaker Diarization / Detect Speaker.
 - Installing and using premium models.
 - No Basic 10-session cap.
@@ -87,11 +87,11 @@ Packaged production behavior must remain Store-verified (Basic by default, Premi
 When restoring or validating gating:
 
 1. Confirm packaged startup wires a non-null `IEntitlementService` into `MainViewModel` and refreshes entitlement after initial render.
-2. Confirm Basic cannot run Live Transcription.
+2. Confirm Basic can start Live Transcription and is auto-stopped at 10 minutes with Premium upsell messaging.
 3. Confirm Basic cannot run Speaker Diarization.
 4. Confirm Basic cannot install/use premium models.
 5. Confirm Basic session creation blocks at 10 and raises Premium upsell.
-6. Confirm Premium can access all gated features.
+6. Confirm Premium has no Live Transcription time limit and can access all other gated features.
 7. Confirm downgrade flow reverts premium-only selected model to `whisper-small`.
 8. Confirm tests covering this policy pass in CI.
 

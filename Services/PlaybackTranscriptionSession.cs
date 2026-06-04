@@ -256,15 +256,19 @@ public sealed class PlaybackTranscriptionSession : IAsyncDisposable {
 
     private async Task ExecuteRequestAsync(PendingTranscriptionRequest request, CancellationToken cancellationToken) {
         double requestDurationSeconds = request.PcmBytes.Length / (double)Math.Max(request.SourceFormat.AverageBytesPerSecond, 1);
+        string route = request.IsFinal
+            ? $"playback.final:{SessionId}#{request.SequenceIndex:N0}"
+            : $"playback.interim:{SessionId}#{request.SequenceIndex:N0}";
         LogDebug(
-            $"Dispatching {(request.IsFinal ? "final" : "interim")} transcription request seq={request.SequenceIndex:N0}, " +
+            $"Dispatching {(request.IsFinal ? "final" : "interim")} transcription request route='{route}', seq={request.SequenceIndex:N0}, " +
             $"bytes={request.PcmBytes.Length:N0}, duration={requestDurationSeconds:0.###}s, " +
             $"pendingBytesAfterDequeue={GetPendingByteCount():N0}.");
         string text = await _transcriptionService.TranscribePcmChunkAsync(
             request.PcmBytes,
             request.SourceFormat,
             _model,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            route).ConfigureAwait(false);
 
         if (request.IsFinal) {
             EmitFinal(request.SequenceIndex, text);

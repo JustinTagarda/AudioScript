@@ -290,7 +290,53 @@ public sealed class TranscriptSessionStore {
         return LoadSession(sessionId);
     }
 
-    public IReadOnlyList<TranscriptSessionSummary> ListRecentSessions(int maxCount = 12) {
+    public TranscriptSessionLoadResult ConvertLiveSessionToImportedAudio(
+        string sessionId,
+        string replacementAudioPath,
+        string? originalFileName = null) {
+        Log(
+            $"ConvertLiveSessionToImportedAudio started. sessionId='{sessionId}', " +
+            $"replacement='{replacementAudioPath}', originalFileName='{originalFileName}'.");
+        TranscriptSessionLoadResult loadResult = LoadSessionWithoutAudioValidation(sessionId);
+        TranscriptSessionDocument document = loadResult.Document;
+        if (!IsLiveRecordingManifest(document)) {
+            throw new InvalidOperationException("Only live recording sessions can be converted to imported audio.");
+        }
+
+        string fullReplacementPath = ValidateAudioFilePath(replacementAudioPath);
+        EnsureReadableWaveFile(fullReplacementPath);
+        string extension = Path.GetExtension(fullReplacementPath);
+        if (string.IsNullOrWhiteSpace(extension)) {
+            extension = ".wav";
+        }
+
+        string resolvedOriginalFileName = string.IsNullOrWhiteSpace(originalFileName)
+            ? $"{LiveSessionAudioName}{extension}"
+            : originalFileName.Trim();
+        string storedRelativePath = Path.Combine("audio", SanitizeFileName(resolvedOriginalFileName));
+        string absolutePath = Path.Combine(GetSessionDirectoryPath(sessionId), storedRelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+        CopyFileAtomic(fullReplacementPath, absolutePath);
+
+        var info = new FileInfo(absolutePath);
+        document.Audio = new TranscriptSessionAudioDocument {
+            StorageKind = AudioStorageKinds.ImportedFile,
+            StoredRelativePath = NormalizeRelativePath(storedRelativePath),
+            OriginalFileName = resolvedOriginalFileName,
+            FileSizeBytes = info.Length,
+            DurationSeconds = TryGetAudioDurationSeconds(absolutePath),
+            Sha256 = ComputeSha256(absolutePath),
+        };
+        document.UpdatedUtc = DateTimeOffset.UtcNow;
+
+        Save(document);
+        Log(
+            $"ConvertLiveSessionToImportedAudio completed. sessionId='{sessionId}', " +
+            $"storedPath='{absolutePath}'.");
+        return LoadSession(sessionId);
+    }
+
+    public IReadOnlyList<TranscriptSessionSummary> ListRecentSessions(int? maxCount = null) {
         if (!Directory.Exists(_sessionsRootPath)) {
             return Array.Empty<TranscriptSessionSummary>();
         }
@@ -305,9 +351,7 @@ public sealed class TranscriptSessionStore {
 
                 summaries.Add(new TranscriptSessionSummary(
                     SessionId: document.SessionId,
-                    DisplayName: string.IsNullOrWhiteSpace(document.DisplayName)
-                        ? document.Audio.OriginalFileName
-                        : document.DisplayName,
+                    DisplayName: GetEffectiveDisplayName(document),
                     CreatedUtc: document.CreatedUtc,
                     UpdatedUtc: document.UpdatedUtc,
                     OriginalFileName: document.Audio.OriginalFileName,
@@ -318,10 +362,75 @@ public sealed class TranscriptSessionStore {
             }
         }
 
-        return summaries
-            .OrderByDescending(item => item.CreatedUtc)
-            .Take(Math.Max(maxCount, 1))
-            .ToArray();
+        IEnumerable<TranscriptSessionSummary> orderedSessions = summaries
+            .OrderByDescending(item => item.CreatedUtc);
+
+        if (maxCount is > 0) {
+            orderedSessions = orderedSessions.Take(maxCount.Value);
+        }
+
+        return orderedSessions.ToArray();
+    }
+
+    public bool SessionDisplayNameExists(string displayName, string? excludeSessionId = null) {
+        string normalizedDisplayName = displayName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedDisplayName)) {
+            return false;
+        }
+
+        if (!Directory.Exists(_sessionsRootPath)) {
+            return false;
+        }
+
+        foreach (string sessionFilePath in Directory.EnumerateFiles(_sessionsRootPath, "session.json", SearchOption.AllDirectories)) {
+            try {
+                TranscriptSessionDocument document = LoadDocument(sessionFilePath);
+                if (!string.IsNullOrWhiteSpace(excludeSessionId)
+                    && string.Equals(document.SessionId, excludeSessionId, StringComparison.OrdinalIgnoreCase)) {
+                    continue;
+                }
+
+                if (string.Equals(
+                        GetEffectiveDisplayName(document),
+                        normalizedDisplayName,
+                        StringComparison.OrdinalIgnoreCase)) {
+                    return true;
+                }
+            }
+            catch (Exception ex) {
+                Log($"Skipped malformed session '{sessionFilePath}' while checking display name uniqueness: {ex.Message}");
+            }
+        }
+
+        return false;
+    }
+
+    public string GetSessionDisplayName(string sessionId) {
+        if (string.IsNullOrWhiteSpace(sessionId)) {
+            throw new ArgumentException("Session id is required.", nameof(sessionId));
+        }
+
+        TranscriptSessionDocument document = LoadDocument(GetSessionFilePath(sessionId));
+        return GetEffectiveDisplayName(document);
+    }
+
+    public void RenameSessionDisplayName(string sessionId, string displayName) {
+        Log($"RenameSessionDisplayName started. sessionId='{sessionId}', displayName='{displayName}'.");
+        if (string.IsNullOrWhiteSpace(sessionId)) {
+            throw new ArgumentException("Session id is required.", nameof(sessionId));
+        }
+
+        string normalizedDisplayName = displayName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalizedDisplayName)) {
+            throw new ArgumentException("Session display name is required.", nameof(displayName));
+        }
+
+        TranscriptSessionDocument document = LoadDocument(GetSessionFilePath(sessionId));
+        document.DisplayName = normalizedDisplayName;
+        document.UpdatedUtc = DateTimeOffset.UtcNow;
+        Save(document);
+
+        Log($"RenameSessionDisplayName completed. sessionId='{sessionId}', displayName='{normalizedDisplayName}'.");
     }
 
     public void Save(TranscriptSessionDocument document) {
@@ -568,6 +677,12 @@ public sealed class TranscriptSessionStore {
             StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string GetEffectiveDisplayName(TranscriptSessionDocument document) {
+        return string.IsNullOrWhiteSpace(document.DisplayName)
+            ? document.Audio.OriginalFileName
+            : document.DisplayName;
+    }
+
     private void RepairMissingLiveRecordingManifestPath(TranscriptSessionDocument document) {
         if (!IsLiveRecordingManifest(document)
             || !string.IsNullOrWhiteSpace(document.Audio.StoredRelativePath)
@@ -644,6 +759,18 @@ public sealed class TranscriptSessionStore {
         catch (Exception ex) {
             Log($"Unable to read audio duration for '{filePath}': {ex.Message}");
             return null;
+        }
+    }
+
+    private static void EnsureReadableWaveFile(string filePath) {
+        try {
+            using var reader = new WaveFileReader(filePath);
+            _ = reader.TotalTime;
+        }
+        catch (Exception ex) {
+            throw new InvalidOperationException(
+                $"The replacement audio file '{filePath}' is not a valid WAV file.",
+                ex);
         }
     }
 

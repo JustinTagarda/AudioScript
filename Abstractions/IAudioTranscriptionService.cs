@@ -6,5 +6,6 @@ public interface IAudioTranscriptionService
         string audioFilePath,
         string model,
         CancellationToken cancellationToken,
-        IProgress<TranscriptionProgressSnapshot>? progress = null);
+        IProgress<TranscriptionProgressSnapshot>? progress = null,
+        string? diagnosticRoute = null);
 }

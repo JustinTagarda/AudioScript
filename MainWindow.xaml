@@ -139,11 +139,26 @@
                     <Setter Property="Background"
                             Value="{DynamicResource SessionsCardLoadedBackgroundBrush}"/>
                 </DataTrigger>
-                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=ContextMenu.IsOpen}"
-                             Value="True">
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding IsLoaded}"
+                                   Value="False"/>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=IsMouseOver}"
+                                   Value="True"/>
+                    </MultiDataTrigger.Conditions>
                     <Setter Property="Background"
                             Value="{DynamicResource SessionsCardContextMenuFocusBackgroundBrush}"/>
-                </DataTrigger>
+                </MultiDataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding IsLoaded}"
+                                   Value="False"/>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=ContextMenu.IsOpen}"
+                                   Value="True"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Background"
+                            Value="{DynamicResource SessionsCardContextMenuFocusBackgroundBrush}"/>
+                </MultiDataTrigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="SessionsCardTextBlockStyle"
@@ -938,6 +953,8 @@
                                                     <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                                                         <MenuItem Header="Open"
                                                                   Click="RecentSessionContextMenuOpen_Click"/>
+                                                        <MenuItem Header="Rename Session"
+                                                                  Click="RecentSessionContextMenuRename_Click"/>
                                                         <MenuItem Header="Close"
                                                                   IsEnabled="{Binding IsLoaded}"
                                                                   Click="RecentSessionContextMenuClose_Click"/>
@@ -955,7 +972,7 @@
 
                                                     <StackPanel Grid.Column="0">
                                                         <TextBlock Style="{StaticResource SessionsCardTextBlockStyle}"
-                                                                   Text="{Binding OriginalFileName}"
+                                                                   Text="{Binding DisplayName}"
                                                                    FontSize="12"
                                                                    FontWeight="SemiBold"
                                                                    TextTrimming="CharacterEllipsis"/>
@@ -1072,14 +1089,31 @@
                                     </Grid.Style>
                                     <StackPanel Orientation="Horizontal"
                                                 HorizontalAlignment="Left">
-                                        <Button x:Name="DetectSpeakerPrimaryActionButton"
-                                                Content="Detect Speaker"
+                                        <Button Content="Re-transcribe"
                                                 Margin="0"
                                                 Padding="8,0"
+                                                ToolTip="Re-transcribe the current session audio"
+                                                AutomationProperties.Name="Re-transcribe current session audio"
+                                                Tag="&#xE768;"
+                                                IsEnabled="{Binding CanRunReTranscribePrimaryAction, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Click="ReTranscribe_Click">
+                                            <Button.Style>
+                                                <Style TargetType="Button"
+                                                       BasedOn="{StaticResource ToolbarButtonStyle}"/>
+                                            </Button.Style>
+                                        </Button>
+                                        <Button x:Name="DetectSpeakerPrimaryActionButton"
+                                                Content="Detect Speaker"
+                                                Margin="2,0,0,0"
+                                                Padding="8,0"
                                                 Tag="&#xE716;"
-                                                IsEnabled="{Binding CanRunDetectSpeakerPrimaryAction}"
-                                                Style="{StaticResource ToolbarButtonStyle}"
-                                                Click="DetectSpeakerPrimaryAction_Click"/>
+                                                IsEnabled="{Binding IsDetectSpeakerPrimaryActionEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                Click="DetectSpeakerPrimaryAction_Click">
+                                            <Button.Style>
+                                                <Style TargetType="Button"
+                                                       BasedOn="{StaticResource ToolbarButtonStyle}"/>
+                                            </Button.Style>
+                                        </Button>
                                         <Button Content="Copy"
                                                 Margin="2,0,0,0"
                                                 VerticalAlignment="Center"
@@ -1090,16 +1124,26 @@
                                                 Style="{StaticResource ToolbarButtonStyle}"
                                                 IsEnabled="{Binding CanCopyTranscript}"
                                                 Click="CopyFinalizedToClipboard_Click"/>
-                                        <Button Content="Export"
+                                        <Button Content="Export Transcript"
                                                 Margin="2,0,0,0"
                                                 VerticalAlignment="Center"
                                                 Padding="8,0"
-                                                ToolTip="Export transcript to Word document"
-                                                AutomationProperties.Name="Export transcript"
+                                                ToolTip="Export transcript to a Word document"
+                                                AutomationProperties.Name="Export transcript to Word document"
                                                 Tag="&#xE8A5;"
                                                 Style="{StaticResource ToolbarButtonStyle}"
                                                 IsEnabled="{Binding CanCopyTranscript}"
                                                 Click="ExportTranscriptToDocument_Click"/>
+                                        <Button Content="Export MP3"
+                                                Margin="2,0,0,0"
+                                                VerticalAlignment="Center"
+                                                Padding="8,0"
+                                                ToolTip="Export audio to MP3"
+                                                AutomationProperties.Name="Export MP3"
+                                                Tag="&#xE8A5;"
+                                                Style="{StaticResource ToolbarButtonStyle}"
+                                                IsEnabled="{Binding CanExportAudio}"
+                                                Click="ExportAudioToMp3_Click"/>
                                         <Button Content="Close"
                                                 Margin="2,0,0,0"
                                                 VerticalAlignment="Center"
@@ -1111,7 +1155,8 @@
                                                 Margin="2,0,0,0"
                                                 Tag="&#xE74D;"
                                                 Style="{StaticResource ToolbarButtonStyle}"
-                                                Command="{Binding DeleteSelectedSessionCommand}"/>
+                                                Click="DeleteSelectedSessionToolbar_Click"
+                                                IsEnabled="{Binding IsDeleteSelectedSessionToolbarEnabled, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                     </StackPanel>
                                 </Grid>
 
@@ -1429,22 +1474,11 @@
                                         </StackPanel>
                                         </Border>
 
-                                        <Grid Margin="0,6,0,0">
+                                                <Grid Margin="0,6,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0"
-                                                        Orientation="Horizontal"
-                                                        VerticalAlignment="Center">
-                                                <CheckBox Content="Mute"
-                                                          IsChecked="{Binding IsPlaybackMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                          IsEnabled="{Binding IsTranscriptProcessingMuteEnabled, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                          VerticalAlignment="Center"
-                                                          Margin="0,0,8,0">
-                                                     
-                                                </CheckBox>
-                                            </StackPanel>
                                             <StackPanel Grid.Column="1"
                                                         Orientation="Horizontal"
                                                         HorizontalAlignment="Right">
@@ -1472,6 +1506,157 @@
                                                         Tag="&#xE768;"
                                                         Style="{StaticResource SessionActionPrimaryButtonStyle}"
                                                         Click="TranscribeAudioBatchStartStop_Click"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="1"
+                                MinHeight="100"
+                                Margin="0,8,0,0"
+                                Padding="6"
+                                CornerRadius="6"
+                                BorderThickness="0"
+                                BorderBrush="{x:Null}"
+                                Background="{x:Null}"
+                                IsHitTestVisible="True">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility"
+                                            Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ShouldShowDetectSpeakerPanel, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                     Value="True">
+                                            <Setter Property="Visibility"
+                                                    Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Border VerticalAlignment="Top"
+                                        Width="Auto"
+                                        Background="{x:Null}"
+                                        BorderBrush="{x:Null}"
+                                        BorderThickness="0"
+                                        CornerRadius="0"
+                                        Padding="0">
+                                    <StackPanel>
+                                        <Border Margin="0,0,0,0"
+                                                Style="{StaticResource SessionPanelRootBorderStyle}">
+                                            <StackPanel>
+                                                <TextBlock Text="Engine"
+                                                           Style="{StaticResource SessionSectionLabelTextStyle}"/>
+                                                <TextBlock Margin="0,4,0,0"
+                                                           Text="Pyannote Community-1"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Style="{StaticResource SessionPrimaryValueTextStyle}"/>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border Margin="0,6,0,0"
+                                                Style="{StaticResource SessionPanelRootBorderStyle}">
+                                            <StackPanel>
+                                                <ProgressBar Minimum="0"
+                                                             Maximum="{Binding DetectSpeakerProgressMaximum, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                             Style="{StaticResource SessionProgressBarStyle}"
+                                                             Value="{Binding DetectSpeakerProgressValue, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
+                                                             IsIndeterminate="False"/>
+                                                <StackPanel Margin="0,10,0,0">
+                                                    <TextBlock Text="{Binding TranscriptProcessingChunkText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               Style="{StaticResource SessionPrimaryValueTextStyle}"/>
+                                                    <TextBlock Text="{Binding TranscriptProcessingAudioText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               Margin="0,4,0,0"
+                                                               FontSize="12"
+                                                               Opacity="0.9"/>
+                                                    <Grid Margin="0,4,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="{Binding TranscriptProcessingElapsedText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   Style="{StaticResource SessionMetaTextStyle}"/>
+                                                        <TextBlock Grid.Column="1"
+                                                                   Text="{Binding TranscriptProcessingEtaText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   Margin="14,0,0,0"
+                                                                   Style="{StaticResource SessionMetaTextStyle}"/>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Grid Margin="0,6,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       VerticalAlignment="Center"
+                                                       Style="{StaticResource SessionMetaTextStyle}"
+                                                       Text=""/>
+                                            <StackPanel Grid.Column="1"
+                                                        Orientation="Horizontal">
+                                                <Button x:Name="DetectSpeakerCancelButton"
+                                                        Margin="0,0,8,0"
+                                                        Content="Cancel"
+                                                        Click="DetectSpeakerPanelCancel_Click">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button"
+                                                               BasedOn="{StaticResource SessionActionSecondaryButtonStyle}">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsDetectSpeakerCancelVisible, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             Value="True">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                                <Button x:Name="DetectSpeakerRestartButton"
+                                                        Margin="0,0,8,0"
+                                                        Content="Restart"
+                                                        Tag="&#xE72C;"
+                                                        Click="DetectSpeakerRestart_Click">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button"
+                                                               BasedOn="{StaticResource SessionActionSecondaryButtonStyle}">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsDetectSpeakerRestartVisible, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             Value="True">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                                <Button x:Name="DetectSpeakerStartStopButton"
+                                                        Content="Start"
+                                                        Tag="&#xE768;"
+                                                        Click="DetectSpeakerStartStop_Click">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button"
+                                                               BasedOn="{StaticResource SessionActionPrimaryButtonStyle}">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsDetectSpeakerPrimaryButtonVisible, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             Value="False">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
                                             </StackPanel>
                                         </Grid>
                                     </StackPanel>
