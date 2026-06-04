@@ -986,6 +986,7 @@
                                                     <Button Grid.Column="1"
                                                             Tag="&#xE8A7;"
                                                             ToolTip="Open session"
+                                                            VerticalAlignment="Top"
                                                             Click="RecentSessionOpenButton_Click">
                                                         <Button.Style>
                                                             <Style TargetType="Button"
@@ -1482,6 +1483,26 @@
                                             <StackPanel Grid.Column="1"
                                                         Orientation="Horizontal"
                                                         HorizontalAlignment="Right">
+                                                <Button x:Name="TranscribeAudioBatchCancelButton"
+                                                        Margin="0,0,8,0"
+                                                        Content="Cancel"
+                                                        Tag="&#xE711;"
+                                                        Click="TranscribeAudioReTranscribeCancel_Click">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button"
+                                                               BasedOn="{StaticResource SessionActionSecondaryButtonStyle}">
+                                                            <Setter Property="Visibility"
+                                                                    Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsTranscribeAudioCancelVisible, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                             Value="True">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
                                                 <Button Content="Restart"
                                                         Tag="&#xE711;"
                                                         Margin="0,0,8,0"

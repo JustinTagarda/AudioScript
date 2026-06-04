@@ -2229,7 +2229,7 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
-    public async Task ClosePendingTranscribeAudioWorkflow_ExistingSession_RestoresClearedTranscript()
+    public async Task ClosePendingTranscribeAudioWorkflow_ExistingSession_PreservesTranscriptBeforeStart()
     {
         await RunInStaAsync(async () =>
         {
@@ -2278,20 +2278,12 @@ public sealed class MainViewModelTests
                 {
                     await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
                     queuedContext.Drain();
-                    viewModel.ConfirmationRequested += ConfirmRequest;
+                    Assert.True(viewModel.TryPrepareTranscribeAudioWorkflow(forceRestart: true));
+                    Assert.True(viewModel.IsPreparedTranscribeAudioForceRestartRequested);
+                    Assert.Equal("original transcript", Assert.Single(viewModel.FinalizedTranscriptLines).Text);
 
-                    try
-                    {
-                        Assert.True(viewModel.TryPrepareTranscribeAudioWorkflow());
-                        Assert.Empty(viewModel.FinalizedTranscriptLines);
-
-                        viewModel.ClosePendingTranscribeAudioWorkflow();
-                        queuedContext.Drain();
-                    }
-                    finally
-                    {
-                        viewModel.ConfirmationRequested -= ConfirmRequest;
-                    }
+                    viewModel.ClosePendingTranscribeAudioWorkflow();
+                    queuedContext.Drain();
 
                     FinalizedTranscriptLineViewModel line = Assert.Single(viewModel.FinalizedTranscriptLines);
                     Assert.Equal("original transcript", line.Text);
@@ -2310,11 +2302,80 @@ public sealed class MainViewModelTests
                 File.Delete(audioPath);
             }
         });
+    }
 
-        static void ConfirmRequest(object? sender, ConfirmationRequest request)
+    [Fact]
+    public async Task TryCommitPreparedTranscribeAudioWorkflowStart_ForceRestartClearsTranscriptBeforeRun()
+    {
+        await RunInStaAsync(async () =>
         {
-            request.IsConfirmed = true;
-        }
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "original transcript",
+                    SpeakerLabel = "Speaker 1",
+                    StartSeconds = 0,
+                    EndSeconds = 1,
+                });
+                imported.Document.Transcript.FinalText = "Speaker 1: original transcript";
+                sessionStore.Save(imported.Document);
+
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+                    queuedContext.Drain();
+
+                    Assert.True(viewModel.TryPrepareTranscribeAudioWorkflow(forceRestart: true));
+                    Assert.True(viewModel.TryCommitPreparedTranscribeAudioWorkflowStart());
+                    queuedContext.Drain();
+
+                    Assert.Empty(viewModel.FinalizedTranscriptLines);
+                    TranscriptSessionLoadResult cleared = sessionStore.LoadSession(imported.Document.SessionId);
+                    Assert.Empty(cleared.Document.Transcript.Lines);
+                    Assert.True(string.IsNullOrWhiteSpace(cleared.Document.Transcript.FinalText));
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
     }
 
     [Fact]

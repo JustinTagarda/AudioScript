@@ -2416,12 +2416,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 TranscribeAudioWorkflowKind.NewFile,
                 sourcePath,
                 backupDocument: null,
-                resumeRequested: false);
+                resumeRequested: false,
+                forceRestartRequested: false);
             AppendLog("Transcribe Audio prepared for a new audio file.");
             return true;
         }
 
-        if (!forceRestart && TryConfirmTranscribeAudioResumeChoice(sourcePath, out bool shouldResume))
+        if (forceRestart)
+        {
+            _transcribeAudioWorkflow = new TranscribeAudioWorkflowState(
+                TranscribeAudioWorkflowKind.ExistingSession,
+                sourcePath,
+                backupDocument: null,
+                resumeRequested: false,
+                forceRestartRequested: true);
+            AppendLog("Transcribe Audio prepared for the current session restart.");
+            return true;
+        }
+
+        if (TryConfirmTranscribeAudioResumeChoice(sourcePath, out bool shouldResume))
         {
             _pendingTranscribeAudioResume = shouldResume;
             if (shouldResume)
@@ -2430,7 +2443,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     TranscribeAudioWorkflowKind.ExistingSession,
                     sourcePath,
                     backupDocument: null,
-                    resumeRequested: true);
+                    resumeRequested: true,
+                    forceRestartRequested: false);
                 AppendLog("Transcribe Audio prepared to resume the current session.");
                 return true;
             }
@@ -2439,16 +2453,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         bool hasExistingTranscript = HasExistingTranscriptContent(TranscriptGenerationMode.TranscribeAudio);
         if (hasExistingTranscript)
         {
-            if (forceRestart)
-            {
-                if (!ConfirmReTranscribeSession())
-                {
-                    return false;
-                }
-            }
-            else if (!ConfirmTranscriptReplacement(
-                operationName: "Transcribe Audio",
-                transcriptMode: TranscriptGenerationMode.TranscribeAudio))
+            if (!ConfirmTranscriptReplacement(
+                operationName: "Transcribe Audio"))
             {
                 return false;
             }
@@ -2482,9 +2488,48 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             TranscribeAudioWorkflowKind.ExistingSession,
             sourcePath,
             backupDocument,
-            resumeRequested: false);
+            resumeRequested: false,
+            forceRestartRequested: false);
         AppendLog("Transcribe Audio prepared for the current session.");
         return true;
+    }
+
+    public bool TryCommitPreparedTranscribeAudioWorkflowStart()
+    {
+        if (_transcribeAudioWorkflow is null || !_transcribeAudioWorkflow.ForceRestartRequested)
+        {
+            return true;
+        }
+
+        if (!HasExistingTranscriptContent(TranscriptGenerationMode.TranscribeAudio))
+        {
+            return true;
+        }
+
+        if (_transcribeAudioWorkflow.BackupDocument is null)
+        {
+            _transcribeAudioWorkflow.BackupDocument = CreateSessionSaveSnapshot(updatedTranscriptMode: null);
+        }
+
+        TranscriptSessionDocument? backupDocument = _transcribeAudioWorkflow.BackupDocument;
+        ResetCurrentSessionTranscriptState(TranscriptGenerationMode.TranscribeAudio);
+        ClearTranscriptAndLogs(unloadAudioPreview: false, transcriptMode: TranscriptGenerationMode.TranscribeAudio);
+
+        if (TrySaveCurrentSession(
+                updatedTranscriptMode: null,
+                showErrorDialog: true,
+                successLogMessage: "Existing transcript cleared before Transcribe Audio."))
+        {
+            return true;
+        }
+
+        if (backupDocument is not null)
+        {
+            RestoreTranscribeAudioBackup(backupDocument, saveRestoredSession: false);
+        }
+
+        AppendLog("Transcribe Audio aborted: existing transcript could not be cleared safely.");
+        return false;
     }
 
     public async Task<bool> RunPreparedTranscribeAudioWorkflowAsync(
@@ -2547,7 +2592,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         if (_transcribeAudioWorkflow.Kind == TranscribeAudioWorkflowKind.ExistingSession)
         {
-            RestorePreparedTranscribeAudioWorkflowBackup();
+            if (_transcribeAudioWorkflow.BackupDocument is not null)
+            {
+                RestorePreparedTranscribeAudioWorkflowBackup();
+            }
         }
         else
         {
@@ -2803,6 +2851,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     }
 
     public bool IsPreparedTranscribeAudioResumeRequested => _transcribeAudioWorkflow?.ResumeRequested == true;
+
+    public bool IsPreparedTranscribeAudioForceRestartRequested => _transcribeAudioWorkflow?.ForceRestartRequested == true;
 
     public TranscriptProcessingPanelSessionSnapshot GetTranscriptProcessingPanelSessionSnapshot()
     {
@@ -4252,6 +4302,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private Task CloseAsync()
     {
+        RaiseSessionLoadStarting();
         _sessionAutosaveTimer.Stop();
         TrySaveCurrentSession(
             updatedTranscriptMode: null,
@@ -4990,6 +5041,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         try
         {
+            RaiseSessionLoadStarting();
             ClearPendingImportedAudioSelection();
             _sessionAutosaveTimer.Stop();
             TrySaveCurrentSession(
@@ -5017,6 +5069,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         try
         {
+            RaiseSessionLoadStarting();
             _sessionAutosaveTimer.Stop();
             TrySaveCurrentSession(
                 updatedTranscriptMode: null,
@@ -5119,6 +5172,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         try
         {
+            RaiseSessionLoadStarting();
             AppendLog(
                 $"Ensuring current session. importSource='{sourcePathForSessionImport}', " +
                 "operation='TranscribeAudio'.");
@@ -5141,6 +5195,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         try
         {
+            RaiseSessionLoadStarting();
             _sessionAutosaveTimer.Stop();
             TrySaveCurrentSession(
                 updatedTranscriptMode: null,
@@ -5992,8 +6047,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     }
 
     private bool ConfirmTranscriptReplacement(
-        string operationName,
-        TranscriptGenerationMode transcriptMode)
+        string operationName)
     {
         EventHandler<ConfirmationRequest>? handler = ConfirmationRequested;
         if (handler is null)
@@ -6034,51 +6088,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         AppendLog($"{operationName} canceled: existing transcript was preserved.");
-        return false;
-    }
-
-    private bool ConfirmReTranscribeSession()
-    {
-        EventHandler<ConfirmationRequest>? handler = ConfirmationRequested;
-        if (handler is null)
-        {
-            RaiseError("The confirmation dialog is unavailable. The existing transcript was left unchanged.");
-            AppendLog("Re-transcribe canceled: confirmation dialog unavailable.");
-            return false;
-        }
-
-        var request = new ConfirmationRequest(
-            title: "Re-transcribe",
-            heading: "Re-transcribe this session?",
-            message: "This will run transcription again using this session's audio file and replace the existing transcription data.",
-            confirmButtonText: "Re-transcribe",
-            cancelButtonText: "Cancel");
-
-        try
-        {
-            if (SynchronizationContext.Current == _uiContext)
-            {
-                handler(this, request);
-            }
-            else
-            {
-                _uiContext.Send(_ => handler(this, request), null);
-            }
-        }
-        catch (Exception ex)
-        {
-            RaiseError($"Unable to confirm re-transcribe: {ex.Message}");
-            AppendLog($"Re-transcribe canceled: confirmation failed: {ex.Message}");
-            return false;
-        }
-
-        if (request.IsConfirmed)
-        {
-            AppendLog("Re-transcribe confirmed by user.");
-            return true;
-        }
-
-        AppendLog("Re-transcribe canceled: existing transcript was preserved.");
         return false;
     }
 
@@ -6874,21 +6883,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             TranscribeAudioWorkflowKind kind,
             string sourceAudioPath,
             TranscriptSessionDocument? backupDocument,
-            bool resumeRequested)
+            bool resumeRequested,
+            bool forceRestartRequested)
         {
             Kind = kind;
             SourceAudioPath = sourceAudioPath;
             BackupDocument = backupDocument;
             ResumeRequested = resumeRequested;
+            ForceRestartRequested = forceRestartRequested;
         }
 
         public TranscribeAudioWorkflowKind Kind { get; }
 
         public string SourceAudioPath { get; }
 
-        public TranscriptSessionDocument? BackupDocument { get; }
+        public TranscriptSessionDocument? BackupDocument { get; set; }
 
         public bool ResumeRequested { get; }
+
+        public bool ForceRestartRequested { get; }
 
         public string? CreatedSessionId { get; set; }
 

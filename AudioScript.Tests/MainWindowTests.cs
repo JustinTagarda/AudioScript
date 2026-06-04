@@ -1,5 +1,9 @@
 using System.Text;
 using System.Windows.Input;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Collections.Concurrent;
+using System.Threading;
 using AudioScript.Abstractions;
 using AudioScript.Audio;
 using AudioScript.Services;
@@ -21,7 +25,9 @@ public sealed class MainWindowTests
         Assert.Contains("<Button Content=\"Re-transcribe\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"ReTranscribe_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Tag=\"&#xE768;\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("IsEnabled=\"{Binding CanRunReTranscribePrimaryAction}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("CanRunReTranscribePrimaryAction", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"TranscribeAudioReTranscribeCancel_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsTranscribeAudioCancelVisible", xaml, StringComparison.Ordinal);
         Assert.True(
             xaml.IndexOf("Content=\"Re-transcribe\"", StringComparison.Ordinal)
             < xaml.IndexOf("Content=\"Detect Speaker\"", StringComparison.Ordinal));
@@ -38,12 +44,41 @@ public sealed class MainWindowTests
     }
 
     [Fact]
-    public void ReTranscribeEnablement_RequiresNonEmptyCurrentTranscriptionSession()
+    public void ReTranscribeClick_HandlerStagesOnly()
     {
         string codePath = FindRepoFile("MainWindow.xaml.cs");
         string code = File.ReadAllText(codePath);
 
-        Assert.Contains("vm.HasNonEmptyCurrentTranscriptionSession", code, StringComparison.Ordinal);
+        int handlerStart = code.IndexOf("private void ReTranscribe_Click", StringComparison.Ordinal);
+        int nextHandlerStart = code.IndexOf("private void CopyFinalizedToClipboard_Click", handlerStart, StringComparison.Ordinal);
+        string handlerBlock = nextHandlerStart > handlerStart
+            ? code[handlerStart..nextHandlerStart]
+            : code[handlerStart..];
+
+        Assert.Contains("OpenTranscribeAudioBatchDialog(vm, forceRestart: true)", handlerBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("RunTranscribeAudioAsync(vm)", handlerBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TranscribeAudioStart_PromptsBeforeDeletingExistingTranscript()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains("Delete existing transcript?", code, StringComparison.Ordinal);
+        Assert.Contains("Start will delete existing transcript data.", code, StringComparison.Ordinal);
+        Assert.Contains("ConfirmTranscribeAudioRestartDeleteExistingTranscript()", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TranscriptProcessingToolbar_DisablesReEnterActionsWhileAnyPanelVisible()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains("IsAnyTranscriptProcessingPanelVisible", code, StringComparison.Ordinal);
+        Assert.Contains("CanRunReTranscribePrimaryAction", code, StringComparison.Ordinal);
+        Assert.Contains("IsDetectSpeakerPrimaryActionEnabled", code, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -107,6 +142,117 @@ public sealed class MainWindowTests
             code,
             StringComparison.Ordinal);
         Assert.Contains("return;", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public Task SessionTransitionReset_ClearsStaleDetectSpeakerStagingState()
+    {
+        return RunInStaAsync(() =>
+        {
+            var window = (MainWindow)RuntimeHelpers.GetUninitializedObject(typeof(MainWindow));
+            SetPrivateField(
+                window,
+                "_activeTranscriptProcessingWorkflow",
+                Enum.Parse(
+                    typeof(MainWindow).GetNestedType("TranscriptProcessingWorkflowKind", BindingFlags.NonPublic)!,
+                    "DetectSpeakers"));
+            SetPrivateField(window, "_isTranscribeAudioBatchPendingStart", true);
+            SetPrivateField(window, "_isTranscribeAudioBatchTranscribing", false);
+            SetPrivateField(window, "_isTranscriptProcessingCanceling", false);
+
+            Assert.True(GetPrivateField<bool>(window, "_isTranscribeAudioBatchPendingStart"));
+            Assert.Equal("DetectSpeakers", GetPrivateField<object>(window, "_activeTranscriptProcessingWorkflow")!.ToString());
+            Assert.True(window.ShouldShowDetectSpeakerPanel);
+
+            window.ResetTranscriptProcessingStagingStateForSessionTransition();
+
+            Assert.False(GetPrivateField<bool>(window, "_isTranscribeAudioBatchPendingStart"));
+            Assert.Equal("None", GetPrivateField<object>(window, "_activeTranscriptProcessingWorkflow")!.ToString());
+            Assert.False(window.ShouldShowDetectSpeakerPanel);
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task SessionTransitionCleanup_ClosesStagedReTranscribeWorkflow()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+                TranscriptSessionLoadResult imported = sessionStore.ImportAudioFile(audioPath);
+                imported.Document.Transcript.Lines.Add(new TranscriptSessionLineDocument
+                {
+                    Text = "original transcript",
+                    SpeakerLabel = "Speaker 1",
+                    StartSeconds = 0,
+                    EndSeconds = 1,
+                });
+                imported.Document.Transcript.FinalText = "Speaker 1: original transcript";
+                sessionStore.Save(imported.Document);
+
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    await viewModel.LoadRecentSessionAsync(Assert.Single(sessionStore.ListRecentSessions()));
+                    queuedContext.Drain();
+                    Assert.True(viewModel.TryPrepareTranscribeAudioWorkflow(forceRestart: true));
+
+                    var window = (MainWindow)RuntimeHelpers.GetUninitializedObject(typeof(MainWindow));
+                    SetPrivateField(
+                        window,
+                        "_activeTranscriptProcessingWorkflow",
+                        Enum.Parse(
+                            typeof(MainWindow).GetNestedType("TranscriptProcessingWorkflowKind", BindingFlags.NonPublic)!,
+                            "TranscribeAudio"));
+                    SetPrivateField(window, "_isTranscribeAudioBatchPendingStart", true);
+                    SetPrivateField(window, "_isTranscribeAudioBatchTranscribing", false);
+                    SetPrivateField(window, "_isTranscriptProcessingCanceling", false);
+
+                    window.ClosePendingTranscribeAudioWorkflowForSessionTransition(viewModel);
+
+                    Assert.False(viewModel.IsPreparedTranscribeAudioForceRestartRequested);
+                    Assert.Equal("original transcript", Assert.Single(viewModel.FinalizedTranscriptLines).Text);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
     }
 
     [Fact]
@@ -1092,6 +1238,62 @@ public sealed class MainWindowTests
         }
 
         throw new FileNotFoundException($"Could not locate repo file '{fileName}' from '{AppContext.BaseDirectory}'.");
+    }
+
+    private static object? GetPrivateField(object target, string fieldName)
+    {
+        return target.GetType()
+            .GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(target);
+    }
+
+    private static T GetPrivateField<T>(object target, string fieldName)
+        where T : notnull
+    {
+        object? value = GetPrivateField(target, fieldName);
+        return value is T typedValue
+            ? typedValue
+            : throw new InvalidOperationException($"Field '{fieldName}' was not of expected type '{typeof(T).FullName}'.");
+    }
+
+    private static void SetPrivateField(object target, string fieldName, object? value)
+    {
+        FieldInfo? field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        if (field is null)
+        {
+            throw new MissingFieldException(target.GetType().FullName, fieldName);
+        }
+
+        field.SetValue(target, value);
+    }
+
+    private static void InvokePrivateMethod(object target, string methodName, params object?[]? parameters)
+    {
+        MethodInfo? method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+        if (method is null)
+        {
+            throw new MissingMethodException(target.GetType().FullName, methodName);
+        }
+
+        method.Invoke(target, parameters);
+    }
+
+    private sealed class QueuedSynchronizationContext : SynchronizationContext
+    {
+        private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _queue = new();
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            _queue.Enqueue((d, state));
+        }
+
+        public void Drain()
+        {
+            while (_queue.TryDequeue(out (SendOrPostCallback Callback, object? State) workItem))
+            {
+                workItem.Callback(workItem.State);
+            }
+        }
     }
 
     private static FinalizedTranscriptLineViewModel CreateTimedLine(
