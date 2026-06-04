@@ -736,6 +736,34 @@
             <Setter Property="KeyboardNavigation.DirectionalNavigation"
                     Value="Contained"/>
         </Style>
+        <Style x:Key="RecentSessionsFilterTextBoxStyle"
+               TargetType="{x:Type TextBox}"
+               BasedOn="{StaticResource WorkspaceGridEditorTextBoxStyle}">
+            <Setter Property="MinHeight"
+                    Value="24"/>
+            <Setter Property="Padding"
+                    Value="4,3,17,3"/>
+            <Setter Property="Background"
+                    Value="{x:Null}"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <Setter Property="BorderBrush"
+                    Value="{x:Null}"/>
+            <Setter Property="BorderThickness"
+                    Value="0"/>
+            <Setter Property="TextAlignment"
+                    Value="Left"/>
+            <Setter Property="VerticalContentAlignment"
+                    Value="Center"/>
+            <Setter Property="CaretBrush"
+                    Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <Setter Property="SelectionBrush"
+                    Value="#FF0078D4"/>
+            <Setter Property="SelectionTextBrush"
+                    Value="White"/>
+            <Setter Property="KeyboardNavigation.DirectionalNavigation"
+                    Value="Contained"/>
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="MainRootGrid">
@@ -994,18 +1022,112 @@
                                                         Value="0.5"/>
                                             </DataTrigger>
                                         </Style.Triggers>
-                                    </Style>
-                                </Grid.Style>
-                                <ListBox ItemsSource="{Binding RecentSessions}"
-                                         SelectedItem="{Binding SelectedRecentSession, Mode=TwoWay}"
-                                         Margin="2,0"
-                                         HorizontalContentAlignment="Stretch"
-                                         Background="{x:Null}"
-                                         ItemContainerStyle="{StaticResource SessionsListBoxItemStyle}"
-                                         PreviewMouseLeftButtonDown="RecentSessionsList_PreviewMouseLeftButtonDown"
-                                         PreviewMouseRightButtonDown="RecentSessionsList_PreviewMouseRightButtonDown"
-                                         MouseDoubleClick="RecentSessionsList_MouseDoubleClick"
-                                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                </Style>
+                            </Grid.Style>
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Border Grid.Row="0"
+                                            Margin="2,0,2,6"
+                                            Padding="0"
+                                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                            BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6">
+                                        <Grid>
+                                            <TextBlock Text="Search recent sessions"
+                                                       Margin="10,0,34,0"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="#66FFFFFF"
+                                                       IsHitTestVisible="False">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility"
+                                                                Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Text, ElementName=RecentSessionsFilterTextBox}"
+                                                                         Value="">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+
+                                            <TextBox x:Name="RecentSessionsFilterTextBox"
+                                                     Style="{StaticResource RecentSessionsFilterTextBoxStyle}"
+                                                     Text="{Binding RecentSessionsFilterText, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Filter recent sessions"
+                                                     AutomationProperties.Name="Filter recent sessions"/>
+
+                                            <Button HorizontalAlignment="Right"
+                                                    VerticalAlignment="Center"
+                                                    Click="RecentSessionsFilterClearButton_Click"
+                                                    Width="24"
+                                                    Height="24"
+                                                    Padding="6"
+                                                    Margin="0,0,6,0"
+                                                    ToolTip="Clear filter"
+                                                    AutomationProperties.Name="Clear filter"
+                                                    Tag="{x:Null}">
+                                                <Button.Style>
+                                                    <Style TargetType="Button"
+                                                           BasedOn="{StaticResource CompactToolbarButtonStyle}">
+                                                        <Setter Property="Background"
+                                                                Value="Transparent"/>
+                                                        <Setter Property="BorderThickness"
+                                                                Value="0"/>
+                                                        <Setter Property="Width"
+                                                                Value="24"/>
+                                                        <Setter Property="Height"
+                                                                Value="24"/>
+                                                        <Setter Property="Padding"
+                                                                Value="6"/>
+                                                        <Setter Property="Margin"
+                                                                Value="0,0,6,0"/>
+                                                        <Setter Property="VerticalAlignment"
+                                                                Value="Center"/>
+                                                        <Setter Property="Visibility"
+                                                                Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasRecentSessionsFilterText}"
+                                                                         Value="True">
+                                                                <Setter Property="Visibility"
+                                                                        Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                                <Button.Content>
+                                                    <Viewbox Width="12"
+                                                             Height="12">
+                                                        <Path Data="M4,4 L12,12 M12,4 L4,12"
+                                                              Stroke="{DynamicResource TextFillColorPrimaryBrush}"
+                                                              StrokeThickness="1.7"
+                                                              StrokeStartLineCap="Round"
+                                                            StrokeEndLineCap="Round"
+                                                            StrokeLineJoin="Round"/>
+                                                    </Viewbox>
+                                                </Button.Content>
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+
+                                    <ListBox Grid.Row="1"
+                                             ItemsSource="{Binding RecentSessions}"
+                                             SelectedItem="{Binding SelectedRecentSession, Mode=TwoWay}"
+                                             Margin="2,0"
+                                             HorizontalContentAlignment="Stretch"
+                                             Background="{x:Null}"
+                                             ItemContainerStyle="{StaticResource SessionsListBoxItemStyle}"
+                                             PreviewMouseLeftButtonDown="RecentSessionsList_PreviewMouseLeftButtonDown"
+                                             PreviewMouseRightButtonDown="RecentSessionsList_PreviewMouseRightButtonDown"
+                                             MouseDoubleClick="RecentSessionsList_MouseDoubleClick"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto">
 
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
@@ -1079,38 +1201,39 @@
                                             </Border>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
-                                </ListBox>
+                                    </ListBox>
 
-                                <Border
-                                    Padding="10">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Visibility"
-                                                    Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding HasRecentSessions}"
-                                                             Value="False">
-                                                    <Setter Property="Visibility"
-                                                            Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
+                                    <Border Grid.Row="1"
+                                            Padding="10">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility"
+                                                        Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasRecentSessions}"
+                                                                 Value="False">
+                                                        <Setter Property="Visibility"
+                                                                Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
 
-                                    <StackPanel HorizontalAlignment="Center"
-                                                VerticalAlignment="Center">
-                                        <TextBlock Text="No saved sessions yet"
-                                                   HorizontalAlignment="Center"
-                                                   FontSize="12"
-                                                   FontWeight="SemiBold"/>
-                                        <TextBlock Text="Import an audio file to create your first transcript session."
-                                                   Margin="0,4,0,0"
-                                                   HorizontalAlignment="Center"
-                                                   FontSize="10.5"
-                                                   TextWrapping="Wrap"
-                                                   TextAlignment="Center"/>
-                                    </StackPanel>
-                                </Border>
+                                        <StackPanel HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding RecentSessionsEmptyStateTitle}"
+                                                       HorizontalAlignment="Center"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding RecentSessionsEmptyStateMessage}"
+                                                       Margin="0,4,0,0"
+                                                       HorizontalAlignment="Center"
+                                                       FontSize="10.5"
+                                                       TextWrapping="Wrap"
+                                                       TextAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
                             </Grid>
                         </Grid>
                     </Border>
@@ -1240,7 +1363,7 @@
                                         <DataGrid x:Name="FinalizedTranscriptGrid"
                                                   ItemsSource="{Binding CurrentTranscriptLines}"
                                                   Style="{StaticResource FluentDataGridStyle}"
-                                                  IsReadOnly="{Binding IsTranscriptionInteractionLocked, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  IsReadOnly="{Binding IsTranscriptGridReadOnly, RelativeSource={RelativeSource AncestorType=Window}}"
                                                   BorderThickness="0,0,0,1"
                                                   AutoGenerateColumns="False"
                                                   CanUserAddRows="False"
@@ -1295,7 +1418,7 @@
                                                                     <TextBlock.Style>
                                                                         <Style TargetType="TextBlock">
                                                                             <Setter Property="Foreground"
-                                                                                    Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                                                    Value="{Binding RelativeSource={RelativeSource AncestorType={x:Type DataGridCell}}, Path=Foreground}"/>
                                                                             <Style.Triggers>
                                                                                 <DataTrigger Binding="{Binding IsPlaybackTimelineMatch}"
                                                                                              Value="True">

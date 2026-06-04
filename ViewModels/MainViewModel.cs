@@ -71,6 +71,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private readonly EngineOptionViewModel _autoTranscribeEngine;
     private EngineOptionViewModel? _selectedEngine;
     private TranscriptSessionSummary? _selectedRecentSession;
+    private IReadOnlyList<TranscriptSessionSummary> _allRecentSessions = Array.Empty<TranscriptSessionSummary>();
     private TranscriptSessionDocument? _currentSessionDocument;
     private bool _lastSpeakerDetectionUsedHeuristicFallback;
     private TranscribeAudioWorkflowState? _transcribeAudioWorkflow;
@@ -81,11 +82,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private bool _isCurrentSessionAudioMissing;
     private string _loadedAudioFilePath = string.Empty;
     private bool _isAudioPlaying;
+    private bool _isMediaPlayerPanelVisible;
     private double _audioSeekMaximumSeconds;
     private double _audioSeekPositionSeconds;
     private string _audioElapsedText = "00:00";
     private string _audioRemainingText = "-00:00";
     private bool _autoPlayTimelineSelection;
+    private string _recentSessionsFilterText = string.Empty;
     private RecentSessionsSortMode _recentSessionsSortMode;
     private bool _recentSessionsSortDescending;
     private bool _isGenerationRunning;
@@ -280,6 +283,42 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand CheckForAppUpdateCommand { get; }
 
     public IAppUpdateService? AppUpdateService => _appUpdateService;
+
+    public string RecentSessionsFilterText
+    {
+        get => _recentSessionsFilterText;
+        set
+        {
+            string normalized = value?.Trim() ?? string.Empty;
+            if (string.Equals(_recentSessionsFilterText, normalized, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _recentSessionsFilterText = normalized;
+            NotifyPropertyChanged();
+            NotifyPropertyChanged(nameof(HasRecentSessionsFilterText));
+            NotifyPropertyChanged(nameof(RecentSessionsEmptyStateTitle));
+            NotifyPropertyChanged(nameof(RecentSessionsEmptyStateMessage));
+
+            string? highlightedSessionId = SelectedRecentSession?.SessionId
+                ?? _currentSessionDocument?.SessionId;
+            RefreshRecentSessionsView(highlightedSessionId);
+        }
+    }
+
+    public bool HasRecentSessionsFilterText =>
+        !string.IsNullOrWhiteSpace(_recentSessionsFilterText);
+
+    public string RecentSessionsEmptyStateTitle =>
+        HasRecentSessionsFilterText
+            ? "No matching sessions"
+            : "No saved sessions yet";
+
+    public string RecentSessionsEmptyStateMessage =>
+        HasRecentSessionsFilterText
+            ? "Clear the filter to see all saved sessions."
+            : "Import an audio file to create your first transcript session.";
 
     public void RefreshEngines(
         IEnumerable<TranscriptionModelOption> models,
@@ -597,6 +636,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool HasSpeakerLabels =>
         FinalizedTranscriptLines.Any(line => !string.IsNullOrWhiteSpace(line.SpeakerLabel));
 
+    public bool IsCurrentTranscriptionJobIncomplete =>
+        _currentSessionDocument?.Transcript.TranscriptionJob is TranscriptionJobDocument job
+        && IsIncompleteTranscriptionJob(job);
+
     public bool LastSpeakerDetectionUsedHeuristicFallback => _lastSpeakerDetectionUsedHeuristicFallback;
 
     public bool IsTranscriptEmptyStateVisible =>
@@ -887,6 +930,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             if (!SetProperty(ref _isAudioPlaying, value))
             {
                 return;
+            }
+
+            RefreshCommandStates();
+        }
+    }
+
+    public bool IsMediaPlayerPanelVisible
+    {
+        get => _isMediaPlayerPanelVisible;
+        set
+        {
+            if (!SetProperty(ref _isMediaPlayerPanelVisible, value))
+            {
+                return;
+            }
+
+            if (!value && IsAudioPlaying)
+            {
+                EnsureAudioPreviewPaused();
             }
 
             RefreshCommandStates();
@@ -3298,6 +3360,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         job.Status = status;
         job.LastUpdatedUtc = DateTimeOffset.UtcNow;
         job.LastError = error?.Trim() ?? string.Empty;
+        NotifyPropertyChanged(nameof(IsCurrentTranscriptionJobIncomplete));
     }
 
     private void ApplyTranscriptionChunkCommit(TranscriptionJobDocument job, TranscriptionChunkCommit chunkCommit)
@@ -4417,7 +4480,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private Task PlayAudioAsync()
     {
-        if (!IsAudioFileLoaded)
+        if (!IsAudioFileLoaded || !IsMediaPlayerPanelVisible)
         {
             return Task.CompletedTask;
         }
@@ -4491,15 +4554,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private void RemoveSessionFromRecentSessions(string sessionId)
     {
-        for (int index = RecentSessions.Count - 1; index >= 0; index--)
-        {
-            if (string.Equals(RecentSessions[index].SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
-            {
-                RecentSessions.RemoveAt(index);
-            }
-        }
-
-        NotifyPropertyChanged(nameof(HasRecentSessions));
+        _allRecentSessions = _allRecentSessions
+            .Where(item => !string.Equals(item.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        RefreshRecentSessionsView();
     }
 
     private string BuildRecentSessionsSnapshot()
@@ -4525,7 +4583,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     private bool CanPlayAudio()
     {
-        return IsAudioFileLoaded && !IsAudioPlaying;
+        return IsAudioFileLoaded && IsMediaPlayerPanelVisible && !IsAudioPlaying;
     }
 
     private bool CanPauseAudio()
@@ -4951,6 +5009,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptViewSelected));
         NotifyPropertyChanged(nameof(HasSpeakerLabels));
+        NotifyPropertyChanged(nameof(IsCurrentTranscriptionJobIncomplete));
         NotifyPropertyChanged(nameof(TranscriptEmptyStateTitle));
         NotifyPropertyChanged(nameof(TranscriptEmptyStateMessage));
         NotifyPropertyChanged(nameof(IsCurrentSessionLiveTranscriptionSession));
@@ -5977,24 +6036,61 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
         string? loadedSessionId = _currentSessionDocument?.SessionId;
 
-        RecentSessions.Clear();
-
-        foreach (TranscriptSessionSummary session in sessions)
-        {
-            RecentSessions.Add(session with
+        _allRecentSessions = sessions
+            .Select(session => session with
             {
                 IsLoaded = !string.IsNullOrWhiteSpace(loadedSessionId)
                     && string.Equals(session.SessionId, loadedSessionId, StringComparison.OrdinalIgnoreCase)
-            });
-        }
+            })
+            .ToArray();
 
-        NotifyPropertyChanged(nameof(HasRecentSessions));
         string? highlightedSessionId = !string.IsNullOrWhiteSpace(selectSessionId)
             ? selectSessionId
             : _currentSessionDocument?.SessionId;
-        SelectedRecentSession = !string.IsNullOrWhiteSpace(highlightedSessionId)
-            ? RecentSessions.FirstOrDefault(item => string.Equals(item.SessionId, highlightedSessionId, StringComparison.OrdinalIgnoreCase))
+        RefreshRecentSessionsView(highlightedSessionId);
+    }
+
+    private void RefreshRecentSessionsView(string? highlightedSessionId = null)
+    {
+        highlightedSessionId ??= SelectedRecentSession?.SessionId
+            ?? _currentSessionDocument?.SessionId;
+
+        IEnumerable<TranscriptSessionSummary> sessions = _allRecentSessions;
+        if (HasRecentSessionsFilterText)
+        {
+            string filter = _recentSessionsFilterText;
+            sessions = sessions.Where(session => SessionMatchesRecentSessionsFilter(session, filter));
+        }
+
+        List<TranscriptSessionSummary> visibleSessions = sessions.ToList();
+        TranscriptSessionSummary? selectedSession = !string.IsNullOrWhiteSpace(highlightedSessionId)
+            ? visibleSessions.FirstOrDefault(item => string.Equals(item.SessionId, highlightedSessionId, StringComparison.OrdinalIgnoreCase))
             : null;
+
+        RecentSessions.Clear();
+        foreach (TranscriptSessionSummary session in visibleSessions)
+        {
+            RecentSessions.Add(session);
+        }
+
+        NotifyPropertyChanged(nameof(HasRecentSessions));
+        NotifyPropertyChanged(nameof(RecentSessionsEmptyStateTitle));
+        NotifyPropertyChanged(nameof(RecentSessionsEmptyStateMessage));
+
+        SelectedRecentSession = selectedSession;
+    }
+
+    private static bool SessionMatchesRecentSessionsFilter(TranscriptSessionSummary session, string filter)
+    {
+        return ContainsIgnoreCase(session.DisplayName, filter)
+            || ContainsIgnoreCase(session.OriginalFileName, filter)
+            || ContainsIgnoreCase(session.SummaryText, filter);
+    }
+
+    private static bool ContainsIgnoreCase(string? value, string filter)
+    {
+        return !string.IsNullOrWhiteSpace(value)
+            && value.Contains(filter, StringComparison.OrdinalIgnoreCase);
     }
 
     private bool ShouldPinSelectedSessionToTop(string? selectSessionId, bool pinSelectedToTop)

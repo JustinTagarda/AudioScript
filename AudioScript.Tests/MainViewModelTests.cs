@@ -175,6 +175,145 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task PlayAudioCommand_RequiresVisibleMediaPlayerPanel()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            string audioPath = CreateSilentWaveFile(16000);
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    Assert.True(viewModel.TryImportAudioFileFromPath(audioPath));
+                    Assert.False(viewModel.IsAudioPlaying);
+
+                    Assert.False(viewModel.IsMediaPlayerPanelVisible);
+                    Assert.False(viewModel.PlayAudioCommand.CanExecute(null));
+                    viewModel.PlayAudioCommand.Execute(null);
+                    Assert.False(viewModel.IsAudioPlaying);
+                    Assert.False(playbackService.IsPlaying);
+
+                    viewModel.IsMediaPlayerPanelVisible = true;
+                    Assert.True(viewModel.PlayAudioCommand.CanExecute(null));
+                    viewModel.PlayAudioCommand.Execute(null);
+                    Assert.True(viewModel.IsAudioPlaying);
+                    Assert.True(playbackService.IsPlaying);
+
+                    viewModel.IsMediaPlayerPanelVisible = false;
+                    Assert.False(viewModel.IsAudioPlaying);
+                    Assert.False(playbackService.IsPlaying);
+                    Assert.False(viewModel.PlayAudioCommand.CanExecute(null));
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+                File.Delete(audioPath);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task IsCurrentTranscriptionJobIncomplete_ReflectsJobStatus()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var playbackService = new FakeAudioPlaybackService();
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var viewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService),
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    var session = new TranscriptSessionDocument
+                    {
+                        Transcript = new TranscriptSessionTranscriptDocument
+                        {
+                            TranscriptionJob = new TranscriptionJobDocument
+                            {
+                                Status = TranscriptionJobStatuses.Running,
+                            },
+                        },
+                    };
+
+                    typeof(MainViewModel)
+                        .GetField("_currentSessionDocument", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .SetValue(viewModel, session);
+
+                    Assert.True(viewModel.IsCurrentTranscriptionJobIncomplete);
+
+                    session.Transcript.TranscriptionJob.Status = TranscriptionJobStatuses.Completed;
+
+                    Assert.False(viewModel.IsCurrentTranscriptionJobIncomplete);
+                }
+                finally
+                {
+                    await viewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
     public async Task TryImportAudioFileFromPath_NewAudio_RaisesTranscribeAudioStagedEvent()
     {
         await RunInStaAsync(async () =>

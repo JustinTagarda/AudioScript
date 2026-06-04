@@ -137,6 +137,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private TimeSpan? _editLoopStartOffset;
     private TimeSpan? _editLoopRepeatOffset;
     private bool _nonTranscriptCellEditShouldResumePlayback;
+    private bool _transcriptContextMenuShouldResumePlayback;
     private FinalizedTranscriptLineViewModel? _transcriptTextEditLine;
     private string _transcriptTextEditOriginalText = string.Empty;
     private FinalizedTranscriptLineViewModel? _speakerEditLine;
@@ -234,6 +235,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _isTranscribeAudioBatchTranscribing = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            SyncMediaPlayerPanelVisibility();
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
             OnPropertyChanged(nameof(ShouldShowDetectSpeakerPanel));
             OnPropertyChanged(nameof(IsTranscribeAudioProcessingUiBusy));
@@ -261,6 +263,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _isLiveTranscribing = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            SyncMediaPlayerPanelVisibility();
             OnPropertyChanged(nameof(CanRunReTranscribePrimaryAction));
             OnPropertyChanged(nameof(IsDetectSpeakerPrimaryActionEnabled));
             UpdateTranscriptionInteractionLockState();
@@ -271,6 +274,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IsTranscribeAudioBatchTranscribing
         || IsLiveTranscribing
         || _isLiveTranscriptionStopping;
+
+    public bool IsTranscriptGridReadOnly =>
+        IsTranscriptionInteractionLocked
+        || (DataContext is MainViewModel vm && vm.IsCurrentTranscriptionJobIncomplete);
 
     public bool ShouldShowMediaPlayerPanel =>
         DataContext is MainViewModel vm
@@ -340,6 +347,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _isTranscriptionInteractionLocked = isLocked;
         OnPropertyChanged(nameof(IsTranscriptionInteractionLocked));
+        OnPropertyChanged(nameof(IsTranscriptGridReadOnly));
 
         if (!isLocked || DataContext is not MainViewModel vm)
         {
@@ -378,6 +386,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(IsTranscribeAudioBatchStartEnabled));
             OnPropertyChanged(nameof(TranscriptProcessingDismissButtonText));
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            SyncMediaPlayerPanelVisibility();
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
             OnPropertyChanged(nameof(ShouldShowDetectSpeakerPanel));
             OnPropertyChanged(nameof(IsTranscribeAudioProcessingUiBusy));
@@ -622,6 +631,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         vm.ApplyRecentSessionsSort(RecentSessionsSortMode.Name);
+        e.Handled = true;
+    }
+
+    private void RecentSessionsFilterClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        vm.RecentSessionsFilterText = string.Empty;
+        RecentSessionsFilterTextBox.Focus();
+        RecentSessionsFilterTextBox.CaretIndex = 0;
         e.Handled = true;
     }
 
@@ -2789,6 +2811,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (_boundViewModel is not null)
         {
+            _boundViewModel.IsMediaPlayerPanelVisible = false;
             StopActivePlaybackEditTranscription(
                 _boundViewModel,
                 pausePlayback: false,
@@ -2825,6 +2848,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             UpdateLivePrimaryActionButtonState();
             SyncTranscriptProcessingPanelFromSession(vm);
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            SyncMediaPlayerPanelVisibility();
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
             OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
             OnPropertyChanged(nameof(CanRunReTranscribePrimaryAction));
@@ -2843,6 +2867,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             SetTranscriptRowActionsLine(null);
             UpdateLivePrimaryActionButtonState();
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            SyncMediaPlayerPanelVisibility();
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
             OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
             OnPropertyChanged(nameof(CanRunReTranscribePrimaryAction));
@@ -2876,6 +2901,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         border.ClearValue(Border.BackgroundProperty);
         border.ClearValue(Border.BorderBrushProperty);
+    }
+
+    private void SyncMediaPlayerPanelVisibility()
+    {
+        if (_boundViewModel is null)
+        {
+            return;
+        }
+
+        _boundViewModel.IsMediaPlayerPanelVisible = ShouldShowMediaPlayerPanel;
     }
 
     private static string? GetDroppedAudioFilePath(System.Windows.DragEventArgs e)
@@ -3802,6 +3837,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (e.PropertyName == nameof(MainViewModel.IsCurrentTranscriptionJobIncomplete))
+        {
+            OnPropertyChanged(nameof(IsTranscriptGridReadOnly));
+            return;
+        }
+
         if (e.PropertyName == nameof(MainViewModel.SelectedTranscriptViewIndex))
         {
             StopActivePlaybackEditTranscription(
@@ -3819,6 +3860,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             or nameof(MainViewModel.IsAudioFileLoaded))
         {
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            SyncMediaPlayerPanelVisibility();
             OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
             OnPropertyChanged(nameof(CanRunReTranscribePrimaryAction));
             OnPropertyChanged(nameof(IsDetectSpeakerPrimaryActionEnabled));
@@ -3848,6 +3890,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             or nameof(MainViewModel.IsAudioFileLoaded))
         {
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            SyncMediaPlayerPanelVisibility();
             OnPropertyChanged(nameof(ShouldShowAudioTranscriptionPanel));
             OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
             OnPropertyChanged(nameof(CanRunReTranscribePrimaryAction));
@@ -3869,6 +3912,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             or nameof(MainViewModel.IsCurrentSessionLiveTranscriptionSession))
         {
             OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+            SyncMediaPlayerPanelVisibility();
             OnPropertyChanged(nameof(CanPrimeTranscribeAudioFromCurrentSession));
             OnPropertyChanged(nameof(CanRunReTranscribePrimaryAction));
             OnPropertyChanged(nameof(IsDetectSpeakerPrimaryActionEnabled));
@@ -4355,6 +4399,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetLiveSessionReadyToStartActivity();
         UpdateLiveControlState();
         OnPropertyChanged(nameof(ShouldShowMediaPlayerPanel));
+        SyncMediaPlayerPanelVisibility();
     }
 
     private static T? FindAncestor<T>(DependencyObject? current)
@@ -5209,6 +5254,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (clickedCell?.DataContext is FinalizedTranscriptLineViewModel line
             && clickedCell.Column is DataGridColumn column)
         {
+            if (_boundViewModel is MainViewModel vm && vm.IsAudioPlaying)
+            {
+                _transcriptContextMenuShouldResumePlayback = true;
+                vm.EnsureAudioPreviewPaused();
+            }
+            else
+            {
+                _transcriptContextMenuShouldResumePlayback = false;
+            }
+
             var clickedInfo = new DataGridCellInfo(line, column);
             FinalizedTranscriptGrid.SelectedCells.Clear();
             FinalizedTranscriptGrid.CurrentCell = clickedInfo;
@@ -5231,18 +5286,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             targetColumn = FinalizedTranscriptGrid.CurrentCell.Column;
         }
 
-        _transcriptContextMenuScope = ResolveTranscriptContextMenuScope(targetColumn);
-
-        if (FinalizedTranscriptGrid.CurrentCell.Item is not FinalizedTranscriptLineViewModel currentLine)
+        if (DataContext is not MainViewModel vm
+            || FinalizedTranscriptGrid.CurrentCell.Item is not FinalizedTranscriptLineViewModel currentLine)
         {
+            e.Handled = true;
             return;
         }
+
+        bool hasIncompleteTranscriptLines = vm.CurrentTranscriptLines.Any(line =>
+            line.IsTranscriptionPartial
+            || line.IsProvisional);
+
+        if (ShouldBlockTranscriptTableContextMenu(
+                IsAnyTranscriptProcessingPanelVisible,
+                _isRowFileTranscriptionRunning,
+                hasIncompleteTranscriptLines))
+        {
+            if (_transcriptContextMenuShouldResumePlayback
+                && _boundViewModel is MainViewModel vmForBlockedMenu
+                && !vmForBlockedMenu.IsAudioPlaying
+                && vmForBlockedMenu.IsMediaPlayerPanelVisible
+                && vmForBlockedMenu.PlayAudioCommand.CanExecute(null))
+            {
+                vmForBlockedMenu.PlayAudioCommand.Execute(null);
+            }
+
+            _transcriptContextMenuShouldResumePlayback = false;
+            e.Handled = true;
+            return;
+        }
+
+        _transcriptContextMenuScope = ResolveTranscriptContextMenuScope(targetColumn);
 
         DataGridRow? row = FinalizedTranscriptGrid.ItemContainerGenerator.ContainerFromItem(currentLine) as DataGridRow;
         if (row?.ContextMenu is not System.Windows.Controls.ContextMenu contextMenu)
         {
             return;
         }
+
+        contextMenu.Closed -= FinalizedTranscriptGrid_ContextMenuClosed;
+        contextMenu.Closed += FinalizedTranscriptGrid_ContextMenuClosed;
 
         bool isSpeakerCellMenu = _transcriptContextMenuScope == TranscriptContextMenuScope.SpeakerCell;
         bool isTextCellMenu = _transcriptContextMenuScope == TranscriptContextMenuScope.TextCell;
@@ -5273,6 +5356,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 isTextCellMenu,
                 canRenameSpeaker);
         }
+    }
+
+    private void FinalizedTranscriptGrid_ContextMenuClosed(object? sender, RoutedEventArgs e)
+    {
+        if (!_transcriptContextMenuShouldResumePlayback)
+        {
+            return;
+        }
+
+        _transcriptContextMenuShouldResumePlayback = false;
+
+        if (_boundViewModel is not MainViewModel vm
+            || !vm.IsMediaPlayerPanelVisible
+            || vm.IsAudioPlaying
+            || !vm.PlayAudioCommand.CanExecute(null))
+        {
+            return;
+        }
+
+        vm.PlayAudioCommand.Execute(null);
+    }
+
+    internal static bool ShouldBlockTranscriptTableContextMenu(
+        bool isAnyTranscriptProcessingPanelVisible,
+        bool isRowFileTranscriptionRunning,
+        bool hasIncompleteTranscriptLines)
+    {
+        return isAnyTranscriptProcessingPanelVisible
+            || isRowFileTranscriptionRunning
+            || hasIncompleteTranscriptLines;
     }
 
     private void SeparateRowCommand_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -6488,7 +6601,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (IsTranscriptionInteractionLocked)
+        if (IsTranscriptGridReadOnly)
         {
             ClearTranscriptTextEditState();
             e.Cancel = true;
@@ -7330,6 +7443,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (!ShouldShowMediaPlayerPanel)
+        {
+            ClearTranscriptEditPlaybackLoop();
+            vm.EnsureAudioPreviewPaused();
+            return;
+        }
+
         try
         {
             vm.SeekAudioPreview(line.StartOffset.Value);
@@ -7377,6 +7497,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ResumePlaybackAfterNonTranscriptCellEdit(MainViewModel vm)
     {
+        if (!ShouldShowMediaPlayerPanel)
+        {
+            return;
+        }
+
         if (!IsTranscriptionInteractionLocked
             && _nonTranscriptCellEditShouldResumePlayback
             && vm.PlayAudioCommand.CanExecute(null))
@@ -9038,6 +9163,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (DataContext is not MainViewModel vm
             || !vm.IsTranscribeAudioTranscriptViewSelected
             || !vm.IsAudioFileLoaded
+            || _transcriptContextMenuShouldResumePlayback
             || IsTranscriptionInteractionLocked
             || _activePlaybackEditTranscription is not null)
         {
@@ -9054,6 +9180,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (ReferenceEquals(_lastPlaybackSyncedLine, currentLine))
         {
+            return;
+        }
+
+        if (!ShouldShowMediaPlayerPanel)
+        {
+            vm.EnsureAudioPreviewPaused();
             return;
         }
 

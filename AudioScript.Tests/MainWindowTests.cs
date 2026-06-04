@@ -82,6 +82,89 @@ public sealed class MainWindowTests
     }
 
     [Fact]
+    public void TranscriptGrid_UsesCompletionReadOnlyBinding()
+    {
+        string xamlPath = FindRepoFile("MainWindow.xaml");
+        string xaml = File.ReadAllText(xamlPath);
+
+        Assert.Contains(
+            "IsReadOnly=\"{Binding IsTranscriptGridReadOnly, RelativeSource={RelativeSource AncestorType=Window}}\"",
+            xaml,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TranscriptGridBeginningEdit_UsesCompletionReadOnlyState()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains("if (IsTranscriptGridReadOnly)", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TranscriptTableContextMenu_IsBlockedUntilTranscriptionCompletes()
+    {
+        Assert.True(MainWindow.ShouldBlockTranscriptTableContextMenu(true, false, false));
+        Assert.True(MainWindow.ShouldBlockTranscriptTableContextMenu(false, true, false));
+        Assert.True(MainWindow.ShouldBlockTranscriptTableContextMenu(false, false, true));
+        Assert.False(MainWindow.ShouldBlockTranscriptTableContextMenu(false, false, false));
+    }
+
+    [Fact]
+    public void TranscriptTableContextMenuOpening_BlocksWhileTranscriptionIsIncomplete()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains("ShouldBlockTranscriptTableContextMenu(", code, StringComparison.Ordinal);
+        Assert.Contains("e.Handled = true;", code, StringComparison.Ordinal);
+        Assert.Contains("IsAnyTranscriptProcessingPanelVisible", code, StringComparison.Ordinal);
+        Assert.Contains("_isRowFileTranscriptionRunning", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TranscriptTableContextMenu_PausesAndResumesPlaybackOnOpenAndClose()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        Assert.Contains("vm.EnsureAudioPreviewPaused();", code, StringComparison.Ordinal);
+        Assert.Contains("_transcriptContextMenuShouldResumePlayback = true;", code, StringComparison.Ordinal);
+        Assert.Contains("contextMenu.Closed -= FinalizedTranscriptGrid_ContextMenuClosed;", code, StringComparison.Ordinal);
+        Assert.Contains("contextMenu.Closed += FinalizedTranscriptGrid_ContextMenuClosed;", code, StringComparison.Ordinal);
+        Assert.Contains("_transcriptContextMenuShouldResumePlayback", code, StringComparison.Ordinal);
+        Assert.Contains("FinalizedTranscriptGrid_ContextMenuClosed", code, StringComparison.Ordinal);
+        Assert.Contains("vm.PlayAudioCommand.Execute(null);", code, StringComparison.Ordinal);
+        Assert.Contains("|| _transcriptContextMenuShouldResumePlayback", code, StringComparison.Ordinal);
+        Assert.Contains("vmForBlockedMenu.PlayAudioCommand.Execute(null);", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TranscriptPlaybackSync_RequiresVisibleMediaPlayerPanel()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        int currentRowStart = code.IndexOf("private void SyncPlaybackToCurrentTranscriptRow", StringComparison.Ordinal);
+        int currentRowEnd = code.IndexOf("private bool TryGetCurrentTranscriptGridLine", currentRowStart, StringComparison.Ordinal);
+        string currentRowBlock = currentRowEnd > currentRowStart
+            ? code[currentRowStart..currentRowEnd]
+            : code[currentRowStart..];
+
+        int editSyncStart = code.IndexOf("private void SyncPlaybackForTranscriptEdit", StringComparison.Ordinal);
+        int editSyncEnd = code.IndexOf("private void BeginNonTranscriptCellEdit", editSyncStart, StringComparison.Ordinal);
+        string editSyncBlock = editSyncEnd > editSyncStart
+            ? code[editSyncStart..editSyncEnd]
+            : code[editSyncStart..];
+
+        Assert.Contains("ShouldShowMediaPlayerPanel", currentRowBlock, StringComparison.Ordinal);
+        Assert.Contains("EnsureAudioPreviewPaused()", currentRowBlock, StringComparison.Ordinal);
+        Assert.Contains("ShouldShowMediaPlayerPanel", editSyncBlock, StringComparison.Ordinal);
+        Assert.Contains("EnsureAudioPreviewPaused()", editSyncBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DetectSpeakerRoute_DoesNotShowGenericDidNotCompleteDialog()
     {
         string codePath = FindRepoFile("MainWindow.xaml.cs");
