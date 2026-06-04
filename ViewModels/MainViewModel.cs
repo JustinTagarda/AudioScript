@@ -1185,28 +1185,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             throw new InvalidOperationException("The current live session does not have recorded audio to convert.");
         }
 
-        string convertedAudioFileName = BuildConvertedLiveSessionAudioFileName();
-        (string materializedAudioPath, bool deleteMaterializedAudioFile) =
-            PrepareAudioFilePathForTranscription(liveManifestPath);
-
-        try
-        {
-            TranscriptSessionLoadResult loadResult = _sessionStore.ConvertLiveSessionToImportedAudio(
-                _currentSessionDocument.SessionId,
-                materializedAudioPath,
-                convertedAudioFileName);
-            LoadSessionResult(loadResult, showAudioIssueDialog: true);
-            LoadRecentSessions(loadResult.Document.SessionId);
-            AppendLog("Completed live transcription session converted to audio transcription session.");
-            return true;
-        }
-        finally
-        {
-            if (deleteMaterializedAudioFile)
-            {
-                DeleteTemporaryTranscriptionAudioFile(materializedAudioPath);
-            }
-        }
+        TranscriptSessionLoadResult loadResult = ConvertLiveSessionToImportedAudio(
+            _currentSessionDocument,
+            liveManifestPath);
+        LoadSessionResult(loadResult, showAudioIssueDialog: true);
+        LoadRecentSessions(loadResult.Document.SessionId);
+        AppendLog("Completed live transcription session converted to audio transcription session.");
+        return true;
     }
 
     public bool InitializeNewLiveTranscriptSession(string inputDeviceName)
@@ -2970,11 +2955,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             && normalizedPath.Contains("/audio/live/", StringComparison.OrdinalIgnoreCase);
     }
 
-    private string BuildConvertedLiveSessionAudioFileName()
+    private string BuildConvertedLiveSessionAudioFileName(string? displayName)
     {
-        string baseName = string.IsNullOrWhiteSpace(_currentSessionDocument?.DisplayName)
+        string baseName = string.IsNullOrWhiteSpace(displayName)
             ? TranscriptSessionStore.LiveSessionAudioName
-            : _currentSessionDocument.DisplayName;
+            : displayName.Trim();
         return $"{baseName}.wav";
     }
 
@@ -5163,6 +5148,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 successLogMessage: string.Empty);
 
             TranscriptSessionLoadResult loadResult = _sessionStore.LoadSession(sessionId);
+            loadResult = ConvertLegacyCompletedLiveSessionIfNeeded(loadResult);
             LoadSessionResult(loadResult, showAudioIssueDialog: false);
             TryRestoreCurrentSessionAudioAfterOpen();
             LoadRecentSessions(sessionId);
@@ -5176,6 +5162,60 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         return Task.CompletedTask;
+    }
+
+    private TranscriptSessionLoadResult ConvertLegacyCompletedLiveSessionIfNeeded(TranscriptSessionLoadResult loadResult)
+    {
+        if (!ShouldConvertLegacyCompletedLiveSessionOnOpen(loadResult))
+        {
+            return loadResult;
+        }
+
+        if (string.IsNullOrWhiteSpace(loadResult.AudioFilePath) || !File.Exists(loadResult.AudioFilePath))
+        {
+            return loadResult;
+        }
+
+        return ConvertLiveSessionToImportedAudio(loadResult.Document, loadResult.AudioFilePath);
+    }
+
+    private bool ShouldConvertLegacyCompletedLiveSessionOnOpen(TranscriptSessionLoadResult loadResult)
+    {
+        return string.Equals(
+                loadResult.Document.Audio.StorageKind,
+                AudioStorageKinds.LiveRecordingManifest,
+                StringComparison.OrdinalIgnoreCase)
+            && HasTranscriptContent(loadResult.Document.Transcript);
+    }
+
+    private static bool HasTranscriptContent(TranscriptSessionTranscriptDocument transcript)
+    {
+        return !string.IsNullOrWhiteSpace(transcript.FinalText)
+            || transcript.Lines.Any(line => !string.IsNullOrWhiteSpace(line.Text));
+    }
+
+    private TranscriptSessionLoadResult ConvertLiveSessionToImportedAudio(
+        TranscriptSessionDocument sessionDocument,
+        string liveManifestPath)
+    {
+        string convertedAudioFileName = BuildConvertedLiveSessionAudioFileName(sessionDocument.DisplayName);
+        (string materializedAudioPath, bool deleteMaterializedAudioFile) =
+            PrepareAudioFilePathForTranscription(liveManifestPath);
+
+        try
+        {
+            return _sessionStore.ConvertLiveSessionToImportedAudio(
+                sessionDocument.SessionId,
+                materializedAudioPath,
+                convertedAudioFileName);
+        }
+        finally
+        {
+            if (deleteMaterializedAudioFile)
+            {
+                DeleteTemporaryTranscriptionAudioFile(materializedAudioPath);
+            }
+        }
     }
 
     private void LoadSessionResult(TranscriptSessionLoadResult loadResult, bool showAudioIssueDialog)

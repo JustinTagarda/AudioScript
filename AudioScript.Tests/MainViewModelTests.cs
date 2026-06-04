@@ -1625,6 +1625,137 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public async Task LoadRecentSessionAsync_ConvertsLegacyCompletedLiveSessionBeforeOpening()
+    {
+        await RunInStaAsync(async () =>
+        {
+            string rootPath = CreateTempDirectory();
+            var queuedContext = new QueuedSynchronizationContext();
+            SynchronizationContext? previousContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(queuedContext);
+
+            try
+            {
+                var processLogService = new ProcessLogService();
+                var transcriptionService = new StubAudioTranscriptionService([]);
+                var sessionStore = new TranscriptSessionStore(Path.Combine(rootPath, "sessions"), processLogService);
+
+                string legacySessionId;
+
+                var capturePlaybackService = new FakeAudioPlaybackService();
+                var captureViewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    capturePlaybackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                Assert.True(captureViewModel.InitializeNewLiveTranscriptSession("Test Source"));
+                await using (LiveRecordingSession recording = captureViewModel.CreateLiveRecordingSession(
+                                 "Test Source",
+                                 TimeSpan.FromMilliseconds(100)))
+                {
+                    recording.Start();
+                    recording.WriteFrame(new LoopbackAudioFrameEventArgs(
+                        new byte[3200],
+                        StandardizingAudioCaptureService.StandardFormat));
+                    recording.CompleteAsync().GetAwaiter().GetResult();
+                }
+
+                captureViewModel.RefreshLiveRecordingMetadata();
+                captureViewModel.SaveLiveTranscriptSession();
+
+                legacySessionId = Assert.Single(sessionStore.ListRecentSessions()).SessionId;
+                await captureViewModel.DisposeAsync();
+
+                TranscriptSessionLoadResult legacySession = sessionStore.LoadSession(legacySessionId);
+                legacySession.Document.Transcript.FinalText = "Legacy live session transcript.";
+                legacySession.Document.Transcript.Lines =
+                [
+                    new TranscriptSessionLineDocument
+                    {
+                        Text = "Legacy live session transcript.",
+                        StartSeconds = 0,
+                        EndSeconds = 1,
+                    },
+                ];
+                sessionStore.Save(legacySession.Document);
+
+                TranscriptSessionLoadResult verifiedLegacySession = sessionStore.LoadSession(legacySessionId);
+                Assert.True(verifiedLegacySession.AudioAvailable);
+                Assert.Equal(AudioStorageKinds.LiveRecordingManifest, verifiedLegacySession.Document.Audio.StorageKind);
+                Assert.NotEmpty(verifiedLegacySession.Document.Transcript.Lines);
+                Assert.Equal("Legacy live session transcript.", verifiedLegacySession.Document.Transcript.FinalText);
+
+                var playbackService = new FakeAudioPlaybackService();
+                var openViewModel = new MainViewModel(
+                    TranscriptionModelCatalog.Models,
+                    transcriptionService,
+                    CreateChunkedSpeakerDiarizationService(transcriptionService, processLogService),
+                    playbackService,
+                    processLogService,
+                    sessionStore,
+                    new AppPreferencesStore(Path.Combine(rootPath, "app-preferences.json")),
+                    new AppThemeService(),
+                    new AppPreferencesSnapshot(
+                        CopyFinalizedWithTimeline: false,
+                        AutoTranscribeWithAi: false,
+                        ThemePreference: AppThemePreference.System,
+                        AutoPlayTimelineSelection: true,
+                        LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
+                        LiveAudioDeviceNumber: -1,
+                        SelectedEngineId: TranscriptionModelCatalog.WhisperSmall));
+
+                try
+                {
+                    TranscriptSessionSummary summary = sessionStore.ListRecentSessions()
+                        .Single(session => string.Equals(session.SessionId, legacySessionId, StringComparison.OrdinalIgnoreCase));
+
+                    await openViewModel.LoadRecentSessionAsync(summary);
+
+                    Assert.True(
+                        openViewModel.IsCurrentSessionAudioTranscriptionSession,
+                        $"live={openViewModel.IsCurrentSessionLiveTranscriptionSession}, " +
+                        $"empty={openViewModel.IsTranscriptDataEmpty}, " +
+                        $"audioIssue='{openViewModel.CurrentSessionAudioIssue}'");
+                    Assert.Equal(1, playbackService.LoadFileCallCount);
+                    Assert.NotNull(playbackService.LoadedFilePath);
+                    Assert.EndsWith(".wav", playbackService.LoadedFilePath!, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain("manifest.json", playbackService.LoadedFilePath!, StringComparison.OrdinalIgnoreCase);
+                    byte[] storedAudioBytes = File.ReadAllBytes(playbackService.LoadedFilePath!);
+                    Assert.True(storedAudioBytes.Length >= 4);
+                    Assert.Equal("RIFF", Encoding.ASCII.GetString(storedAudioBytes, 0, 4));
+
+                    TranscriptSessionLoadResult reloaded = sessionStore.LoadSession(legacySessionId);
+                    Assert.Equal(AudioStorageKinds.ImportedFile, reloaded.Document.Audio.StorageKind);
+                    Assert.EndsWith(".wav", reloaded.Document.Audio.StoredRelativePath, StringComparison.OrdinalIgnoreCase);
+                    Assert.Equal("Legacy live session transcript.", reloaded.Document.Transcript.FinalText);
+                }
+                finally
+                {
+                    await openViewModel.DisposeAsync();
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                DeleteDirectory(rootPath);
+            }
+        });
+    }
+
+    [Fact]
     public async Task GenerateTranscribeAudioTranscriptAsync_LiveRecording_UsesPreparedWaveFile()
     {
         await RunInStaAsync(async () =>
