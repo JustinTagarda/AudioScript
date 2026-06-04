@@ -355,7 +355,8 @@ public sealed class TranscriptSessionStore {
                     CreatedUtc: document.CreatedUtc,
                     UpdatedUtc: document.UpdatedUtc,
                     OriginalFileName: document.Audio.OriginalFileName,
-                    HasStoredAudio: hasStoredAudio));
+                    HasStoredAudio: hasStoredAudio,
+                    SummaryText: BuildRecentSessionSummaryText(document)));
             }
             catch (Exception ex) {
                 Log($"Skipped malformed session '{sessionFilePath}': {ex.Message}");
@@ -412,6 +413,72 @@ public sealed class TranscriptSessionStore {
 
         TranscriptSessionDocument document = LoadDocument(GetSessionFilePath(sessionId));
         return GetEffectiveDisplayName(document);
+    }
+
+    internal static string BuildRecentSessionSummaryText(TranscriptSessionDocument document) {
+        string transcriptionState = GetRecentSessionTranscriptionState(document.Transcript);
+        string? speakerState = GetRecentSessionSpeakerState(document.Transcript);
+        string durationText = GetRecentSessionDurationText(document.Audio.DurationSeconds);
+        var summaryParts = new List<string> { transcriptionState };
+
+        if (!string.IsNullOrWhiteSpace(speakerState)) {
+            summaryParts.Add(speakerState);
+        }
+
+        summaryParts.Add($"Duration {durationText}");
+        return string.Join(" | ", summaryParts);
+    }
+
+    private static string GetRecentSessionTranscriptionState(TranscriptSessionTranscriptDocument transcript) {
+        TranscriptionJobDocument job = transcript.TranscriptionJob;
+
+        if (string.Equals(job.Status, TranscriptionJobStatuses.Completed, StringComparison.OrdinalIgnoreCase)) {
+            return "Transcribed";
+        }
+
+        if (string.Equals(job.Status, TranscriptionJobStatuses.NotStarted, StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(transcript.FinalText)
+            && transcript.Lines.Count == 0) {
+            return "Empty";
+        }
+
+        if (IsRecentSessionIncompleteTranscriptionJob(job)
+            && (job.LastCompletedChunkIndex >= 0
+                || job.TotalChunks > 0
+                || !string.IsNullOrWhiteSpace(transcript.FinalText)
+                || transcript.Lines.Count > 0)) {
+            return "Incomplete";
+        }
+
+        return string.IsNullOrWhiteSpace(transcript.FinalText) && transcript.Lines.Count == 0
+            ? "Empty"
+            : "Incomplete";
+    }
+
+    private static string? GetRecentSessionSpeakerState(TranscriptSessionTranscriptDocument transcript) {
+        bool hasSpeakerColumnData = transcript.Lines.Any(line =>
+            !string.IsNullOrWhiteSpace(line.SpeakerLabel)
+            || !string.IsNullOrWhiteSpace(line.SpeakerLabelSource));
+
+        return hasSpeakerColumnData
+            ? "Speakers"
+            : null;
+    }
+
+    private static string GetRecentSessionDurationText(double? durationSeconds) {
+        TimeSpan duration = durationSeconds is > 0
+            ? TimeSpan.FromSeconds(durationSeconds.Value)
+            : TimeSpan.Zero;
+
+        return duration.TotalHours >= 1
+            ? duration.ToString(@"hh\:mm\:ss")
+            : duration.ToString(@"mm\:ss");
+    }
+
+    private static bool IsRecentSessionIncompleteTranscriptionJob(TranscriptionJobDocument job) {
+        return string.Equals(job.Status, TranscriptionJobStatuses.Running, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(job.Status, TranscriptionJobStatuses.Paused, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(job.Status, TranscriptionJobStatuses.Failed, StringComparison.OrdinalIgnoreCase);
     }
 
     public void RenameSessionDisplayName(string sessionId, string displayName) {
@@ -1045,6 +1112,7 @@ public sealed record TranscriptSessionSummary(
     DateTimeOffset UpdatedUtc,
     string OriginalFileName,
     bool HasStoredAudio,
+    string SummaryText,
     bool IsLoaded = false
 );
 

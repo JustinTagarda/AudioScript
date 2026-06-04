@@ -525,6 +525,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
+    private void RecentSessionsSortButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button || button.ContextMenu is not System.Windows.Controls.ContextMenu menu)
+        {
+            return;
+        }
+
+        menu.PlacementTarget = button;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
     private async void LiveTranscriptionPrimaryAction_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm)
@@ -588,6 +601,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             return;
         }
+    }
+
+    private void RecentSessionsSortCreatedDate_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        vm.ApplyRecentSessionsSort(RecentSessionsSortMode.CreatedDate);
+        e.Handled = true;
+    }
+
+    private void RecentSessionsSortName_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        vm.ApplyRecentSessionsSort(RecentSessionsSortMode.Name);
+        e.Handled = true;
     }
 
     private async void DetectSpeakerPrimaryAction_Click(object sender, RoutedEventArgs e)

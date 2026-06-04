@@ -5,6 +5,11 @@ using AudioScript.Audio;
 
 namespace AudioScript.Services;
 
+public enum RecentSessionsSortMode {
+    CreatedDate,
+    Name,
+}
+
 public sealed class AppPreferencesStore {
     private static readonly JsonSerializerOptions JsonOptions = new() {
         WriteIndented = true,
@@ -28,6 +33,8 @@ public sealed class AppPreferencesStore {
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.System,
                 AutoPlayTimelineSelection: true,
+                RecentSessionsSortMode: RecentSessionsSortMode.CreatedDate,
+                RecentSessionsSortDescending: true,
                 LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                 LiveAudioDeviceNumber: -1,
                 SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
@@ -46,6 +53,8 @@ public sealed class AppPreferencesStore {
                     AutoTranscribeWithAi: false,
                     ThemePreference: AppThemePreference.System,
                     AutoPlayTimelineSelection: true,
+                    RecentSessionsSortMode: RecentSessionsSortMode.CreatedDate,
+                    RecentSessionsSortDescending: true,
                     LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                     LiveAudioDeviceNumber: -1,
                     SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
@@ -54,11 +63,16 @@ public sealed class AppPreferencesStore {
                     TranscriptExportDirectory: string.Empty);
             }
 
+            RecentSessionsSortMode recentSessionsSortMode = ParseRecentSessionsSortMode(persisted.RecentSessionsSortMode);
+
             return new AppPreferencesSnapshot(
                 CopyFinalizedWithTimeline: persisted.CopyFinalizedWithTimeline,
                 AutoTranscribeWithAi: persisted.AutoTranscribeWithAi,
                 ThemePreference: ParseThemePreference(persisted.ThemePreference),
                 AutoPlayTimelineSelection: persisted.AutoPlayTimelineSelection ?? true,
+                RecentSessionsSortMode: recentSessionsSortMode,
+                RecentSessionsSortDescending: persisted.RecentSessionsSortDescending
+                    ?? GetDefaultRecentSessionsSortDescending(recentSessionsSortMode),
                 LiveAudioSourceKind: ParseLiveAudioSourceKind(persisted.LiveAudioSourceKind),
                 LiveAudioDeviceNumber: persisted.LiveAudioDeviceNumber ?? -1,
                 SelectedEngineId: NormalizeSelectedEngineId(persisted.SelectedEngineId),
@@ -72,6 +86,8 @@ public sealed class AppPreferencesStore {
                 AutoTranscribeWithAi: false,
                 ThemePreference: AppThemePreference.System,
                 AutoPlayTimelineSelection: true,
+                RecentSessionsSortMode: RecentSessionsSortMode.CreatedDate,
+                RecentSessionsSortDescending: true,
                 LiveAudioSourceKind: LiveAudioSourceKind.DefaultPlayback,
                 LiveAudioDeviceNumber: -1,
                 SelectedEngineId: TranscriptionModelCatalog.WhisperSmall,
@@ -91,6 +107,8 @@ public sealed class AppPreferencesStore {
                 AutoTranscribeWithAi = snapshot.AutoTranscribeWithAi,
                 ThemePreference = snapshot.ThemePreference.ToString(),
                 AutoPlayTimelineSelection = snapshot.AutoPlayTimelineSelection,
+                RecentSessionsSortMode = snapshot.RecentSessionsSortMode.ToString(),
+                RecentSessionsSortDescending = snapshot.RecentSessionsSortDescending,
                 LiveAudioSourceKind = snapshot.LiveAudioSourceKind.ToString(),
                 LiveAudioDeviceNumber = snapshot.LiveAudioDeviceNumber,
                 SelectedEngineId = snapshot.SelectedEngineId,
@@ -141,6 +159,16 @@ public sealed class AppPreferencesStore {
             : LiveAudioSourceKind.DefaultPlayback;
     }
 
+    private static RecentSessionsSortMode ParseRecentSessionsSortMode(string? value) {
+        return Enum.TryParse(value, ignoreCase: true, out RecentSessionsSortMode mode)
+            ? mode
+            : RecentSessionsSortMode.CreatedDate;
+    }
+
+    private static bool GetDefaultRecentSessionsSortDescending(RecentSessionsSortMode mode) {
+        return mode == RecentSessionsSortMode.CreatedDate;
+    }
+
     private static string NormalizeSelectedEngineId(string? value) {
         string trimmed = value?.Trim() ?? string.Empty;
         if (string.Equals(trimmed, BuildLegacyMinimumWhisperId(), StringComparison.OrdinalIgnoreCase)) {
@@ -180,6 +208,10 @@ public sealed class AppPreferencesStore {
 
         public bool? AutoPlayTimelineSelection { get; init; }
 
+        public string? RecentSessionsSortMode { get; init; }
+
+        public bool? RecentSessionsSortDescending { get; init; }
+
         public string? LiveAudioSourceKind { get; init; }
 
         public int? LiveAudioDeviceNumber { get; init; }
@@ -199,8 +231,10 @@ public sealed record AppPreferencesSnapshot(
     bool AutoTranscribeWithAi,
     AppThemePreference ThemePreference,
     bool AutoPlayTimelineSelection,
-    LiveAudioSourceKind LiveAudioSourceKind,
-    int LiveAudioDeviceNumber,
+    RecentSessionsSortMode RecentSessionsSortMode = RecentSessionsSortMode.CreatedDate,
+    bool RecentSessionsSortDescending = true,
+    LiveAudioSourceKind LiveAudioSourceKind = LiveAudioSourceKind.DefaultPlayback,
+    int LiveAudioDeviceNumber = -1,
     string SelectedEngineId = TranscriptionModelCatalog.WhisperSmall,
     bool LiveAudioAutoGainEnabled = true,
     double LiveAudioGainLevel = LiveAudioGainOptions.DefaultManualGainLevel,

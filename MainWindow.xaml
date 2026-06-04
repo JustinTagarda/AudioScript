@@ -912,6 +912,69 @@
                                             Tag="&#xE713;"
                                             Style="{StaticResource ToolbarButtonStyle}"
                                             Click="Settings_Click"/>
+                                    <Button Grid.Column="2"
+                                            Content="{x:Null}"
+                                            Margin="2,0,0,0"
+                                            HorizontalAlignment="Left"
+                                            VerticalAlignment="Center"
+                                            ToolTip="Sort recent sessions"
+                                            AutomationProperties.Name="Sort recent sessions"
+                                            Tag="&#xE8CB;"
+                                            Style="{StaticResource ToolbarButtonStyle}"
+                                            Click="RecentSessionsSortButton_Click">
+                                        <Button.ContextMenu>
+                                            <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                                <MenuItem Header="Created date"
+                                                          Click="RecentSessionsSortCreatedDate_Click">
+                                                    <MenuItem.Icon>
+                                                        <Ellipse Width="6"
+                                                                 Height="6"
+                                                                 Margin="0,0,8,0"
+                                                                 VerticalAlignment="Center"
+                                                                 Fill="{DynamicResource TextFillColorPrimaryBrush}">
+                                                            <Ellipse.Style>
+                                                                <Style TargetType="{x:Type Ellipse}">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsRecentSessionsSortByCreatedDateSelected}"
+                                                                                     Value="True">
+                                                                            <Setter Property="Visibility"
+                                                                                    Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Ellipse.Style>
+                                                        </Ellipse>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="Name"
+                                                          Click="RecentSessionsSortName_Click">
+                                                    <MenuItem.Icon>
+                                                        <Ellipse Width="6"
+                                                                 Height="6"
+                                                                 Margin="0,0,8,0"
+                                                                 VerticalAlignment="Center"
+                                                                 Fill="{DynamicResource TextFillColorPrimaryBrush}">
+                                                            <Ellipse.Style>
+                                                                <Style TargetType="{x:Type Ellipse}">
+                                                                    <Setter Property="Visibility"
+                                                                            Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsRecentSessionsSortByNameSelected}"
+                                                                                     Value="True">
+                                                                            <Setter Property="Visibility"
+                                                                                    Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Ellipse.Style>
+                                                        </Ellipse>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                            </ContextMenu>
+                                        </Button.ContextMenu>
+                                    </Button>
                                 </Grid>
                             </Grid>
 
@@ -977,7 +1040,7 @@
                                                                    FontWeight="SemiBold"
                                                                    TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock Style="{StaticResource SessionsCardTextBlockStyle}"
-                                                                   Text="{Binding UpdatedUtc, StringFormat=Updated {0:MMM dd, yyyy h:mm tt}}"
+                                                                   Text="{Binding SummaryText}"
                                                                    Margin="0,3,0,0"
                                                                    FontSize="10.5"
                                                                    TextTrimming="CharacterEllipsis"/>
@@ -986,14 +1049,23 @@
                                                     <Button Grid.Column="1"
                                                             Tag="&#xE8A7;"
                                                             ToolTip="Open session"
-                                                            VerticalAlignment="Top"
                                                             Click="RecentSessionOpenButton_Click">
                                                         <Button.Style>
                                                             <Style TargetType="Button"
                                                                    BasedOn="{StaticResource SessionsCardOpenButtonStyle}">
                                                                 <Setter Property="Visibility"
-                                                                        Value="Visible"/>
+                                                                        Value="Collapsed"/>
                                                                 <Style.Triggers>
+                                                                    <MultiDataTrigger>
+                                                                        <MultiDataTrigger.Conditions>
+                                                                            <Condition Binding="{Binding IsLoaded}"
+                                                                                       Value="False"/>
+                                                                            <Condition Binding="{Binding IsMouseOver, ElementName=SessionCardBorder}"
+                                                                                       Value="True"/>
+                                                                        </MultiDataTrigger.Conditions>
+                                                                        <Setter Property="Visibility"
+                                                                                Value="Visible"/>
+                                                                    </MultiDataTrigger>
                                                                     <DataTrigger Binding="{Binding IsLoaded}"
                                                                                  Value="True">
                                                                         <Setter Property="Visibility"

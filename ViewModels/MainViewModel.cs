@@ -86,6 +86,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     private string _audioElapsedText = "00:00";
     private string _audioRemainingText = "-00:00";
     private bool _autoPlayTimelineSelection;
+    private RecentSessionsSortMode _recentSessionsSortMode;
+    private bool _recentSessionsSortDescending;
     private bool _isGenerationRunning;
     private bool _isLiveTranscriptionRunning;
     private LiveAudioSourceKind _preferredLiveAudioSourceKind;
@@ -145,6 +147,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             : speakerDiarizationRuntimeStatusMessage.Trim();
 
         _autoPlayTimelineSelection = appPreferencesSnapshot.AutoPlayTimelineSelection;
+        _recentSessionsSortMode = appPreferencesSnapshot.RecentSessionsSortMode;
+        _recentSessionsSortDescending = appPreferencesSnapshot.RecentSessionsSortDescending;
         _selectedThemePreference = appPreferencesSnapshot.ThemePreference;
         _preferredLiveAudioSourceKind = appPreferencesSnapshot.LiveAudioSourceKind;
         _preferredLiveAudioDeviceNumber = appPreferencesSnapshot.LiveAudioDeviceNumber;
@@ -376,6 +380,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool HasRecentSessions => RecentSessions.Count > 0;
 
     public bool HasProcessLogs => ProcessLogs.Count > 0;
+
+    public void ApplyRecentSessionsSort(RecentSessionsSortMode sortMode)
+    {
+        bool sortChanged = _recentSessionsSortMode != sortMode;
+        if (!sortChanged)
+        {
+            _recentSessionsSortDescending = !_recentSessionsSortDescending;
+        }
+        else
+        {
+            _recentSessionsSortMode = sortMode;
+            _recentSessionsSortDescending = sortMode == RecentSessionsSortMode.CreatedDate;
+        }
+
+        NotifyPropertyChanged(nameof(IsRecentSessionsSortByCreatedDateSelected));
+        NotifyPropertyChanged(nameof(IsRecentSessionsSortByNameSelected));
+        SaveAppPreferences();
+
+        string? highlightedSessionId = SelectedRecentSession?.SessionId
+            ?? _currentSessionDocument?.SessionId;
+        LoadRecentSessions(highlightedSessionId, pinSelectedToTop: false);
+    }
 
     public string CurrentSessionDisplayName
     {
@@ -750,6 +776,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             return _entitlementSnapshot.HasPremium ? "Premium" : "Basic";
         }
     }
+
+    public bool IsRecentSessionsSortByCreatedDateSelected =>
+        _recentSessionsSortMode == RecentSessionsSortMode.CreatedDate;
+
+    public bool IsRecentSessionsSortByNameSelected =>
+        _recentSessionsSortMode == RecentSessionsSortMode.Name;
 
     public bool IsApplicationAccessTierVisible =>
         !IsDevelopmentUnpackagedMode
@@ -4932,6 +4964,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             AutoTranscribeWithAi: true,
             ThemePreference: _selectedThemePreference,
             AutoPlayTimelineSelection: _autoPlayTimelineSelection,
+            RecentSessionsSortMode: _recentSessionsSortMode,
+            RecentSessionsSortDescending: _recentSessionsSortDescending,
             LiveAudioSourceKind: _preferredLiveAudioSourceKind,
             LiveAudioDeviceNumber: _preferredLiveAudioDeviceNumber,
             SelectedEngineId: SelectedEngineId,
@@ -5926,6 +5960,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             }
         }
 
+        sessions = SortRecentSessions(sessions);
+
+        if (ShouldPinSelectedSessionToTop(selectSessionId, pinSelectedToTop))
+        {
+            TranscriptSessionSummary? selectedSession = sessions.FirstOrDefault(item =>
+                string.Equals(item.SessionId, selectSessionId, StringComparison.OrdinalIgnoreCase));
+            if (selectedSession is not null)
+            {
+                sessions = sessions
+                    .Where(item => !string.Equals(item.SessionId, selectSessionId, StringComparison.OrdinalIgnoreCase))
+                    .Prepend(selectedSession)
+                    .ToArray();
+            }
+        }
+
         string? loadedSessionId = _currentSessionDocument?.SessionId;
 
         RecentSessions.Clear();
@@ -5948,6 +5997,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             : null;
     }
 
+    private bool ShouldPinSelectedSessionToTop(string? selectSessionId, bool pinSelectedToTop)
+    {
+        return pinSelectedToTop
+            && !string.IsNullOrWhiteSpace(selectSessionId)
+            && _recentSessionsSortMode == RecentSessionsSortMode.CreatedDate
+            && _recentSessionsSortDescending;
+    }
+
+    private IReadOnlyList<TranscriptSessionSummary> SortRecentSessions(IReadOnlyList<TranscriptSessionSummary> sessions)
+    {
+        IOrderedEnumerable<TranscriptSessionSummary> orderedSessions = _recentSessionsSortMode switch
+        {
+            RecentSessionsSortMode.Name => _recentSessionsSortDescending
+                ? sessions.OrderByDescending(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                : sessions.OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase),
+            _ => _recentSessionsSortDescending
+                ? sessions.OrderByDescending(item => item.CreatedUtc)
+                : sessions.OrderBy(item => item.CreatedUtc),
+        };
+
+        return (_recentSessionsSortMode == RecentSessionsSortMode.Name
+                ? orderedSessions.ThenByDescending(item => item.CreatedUtc)
+                : orderedSessions.ThenBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+            .ToArray();
+    }
+
     private static TranscriptSessionSummary CreateRecentSessionSummary(TranscriptSessionLoadResult loadResult)
     {
         TranscriptSessionDocument document = loadResult.Document;
@@ -5962,7 +6037,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             CreatedUtc: document.CreatedUtc,
             UpdatedUtc: document.UpdatedUtc,
             OriginalFileName: document.Audio.OriginalFileName,
-            HasStoredAudio: hasStoredAudio);
+            HasStoredAudio: hasStoredAudio,
+            SummaryText: TranscriptSessionStore.BuildRecentSessionSummaryText(document));
     }
 
     private void ScheduleSessionAutosave()
