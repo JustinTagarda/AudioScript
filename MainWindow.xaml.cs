@@ -119,6 +119,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool? _lastLoggedDetectSpeakerCanceling;
     private TranscriptProcessingWorkflowKind _activeTranscriptProcessingWorkflow = TranscriptProcessingWorkflowKind.None;
     private double _transcriptProcessingPercent;
+    private double _transcribeAudioProgressMaximum = 100;
+    private double _transcribeAudioProgressValue;
     private double _detectSpeakerProgressMaximum = 2;
     private double _detectSpeakerProgressValue = 1;
     private string _transcriptProcessingElapsedText = "Elapsed 00:00";
@@ -630,6 +632,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         TranscriptProcessingElapsedText = "Elapsed 00:00";
         TranscriptProcessingEtaText = "ETA calculating";
         IsTranscriptProcessingIndeterminate = false;
+        TranscribeAudioProgressMaximum = 100;
+        TranscribeAudioProgressValue = 0;
         IsTranscribeAudioBatchPendingStart = true;
         ApplyTranscribeAudioBatchInteractionLock();
         return true;
@@ -722,9 +726,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         IsTranscribeAudioBatchPendingStart = false;
-        IsTranscriptProcessingIndeterminate = false;
+        IsTranscriptProcessingIndeterminate = true;
+        TranscribeAudioProgressMaximum = 100;
+        TranscribeAudioProgressValue = 0;
         IsTranscribeAudioBatchTranscribing = true;
-        DetectSpeakerProgressValue = 1;
         vm.SetGenerationRunning(isRunning: true);
         _transcribeAudioBatchTranscriptionCts = new CancellationTokenSource();
         CancellationToken cancellationToken = _transcribeAudioBatchTranscriptionCts.Token;
@@ -908,6 +913,38 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             _transcriptProcessingPercent = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public double TranscribeAudioProgressMaximum
+    {
+        get => _transcribeAudioProgressMaximum;
+        private set
+        {
+            double normalized = Math.Max(1, value);
+            if (Math.Abs(_transcribeAudioProgressMaximum - normalized) < 0.01)
+            {
+                return;
+            }
+
+            _transcribeAudioProgressMaximum = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    public double TranscribeAudioProgressValue
+    {
+        get => _transcribeAudioProgressValue;
+        private set
+        {
+            double normalized = Math.Clamp(value, 0, Math.Max(1, TranscribeAudioProgressMaximum));
+            if (Math.Abs(_transcribeAudioProgressValue - normalized) < 0.01)
+            {
+                return;
+            }
+
+            _transcribeAudioProgressValue = normalized;
             OnPropertyChanged();
         }
     }
@@ -4233,6 +4270,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IsTranscriptProcessingCanceling = false;
         IsTranscriptProcessingIndeterminate = true;
         TranscriptProcessingPercent = 0;
+        TranscribeAudioProgressMaximum = 100;
+        TranscribeAudioProgressValue = 0;
         TranscriptProcessingChunkText = "Progress 0%";
         TranscriptProcessingAudioText = "Audio 00:00 / 00:00";
         TranscriptProcessingElapsedText = "Elapsed 00:00";
@@ -4258,8 +4297,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         TranscriptProcessingEtaText = snapshot.EstimatedRemaining is null
             ? "ETA calculating"
             : $"ETA {FormatProgressDuration(snapshot.EstimatedRemaining.Value)}";
+        TranscriptProcessingChunkText = _activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.TranscribeAudio
+            ? FormatTranscribeAudioChunkText(snapshot)
+            : FormatProgressChunkText(snapshot);
 
-        if (_activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.DetectSpeakers)
+        if (_activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.TranscribeAudio)
+        {
+            UpdateTranscribeAudioProgress(snapshot);
+        }
+        else if (_activeTranscriptProcessingWorkflow == TranscriptProcessingWorkflowKind.DetectSpeakers)
         {
             if (snapshot.Phase == TranscriptionProgressPhase.Completed)
             {
@@ -4270,6 +4316,74 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 DetectSpeakerProgressValue = currentChunk;
             }
         }
+    }
+
+    private void UpdateTranscribeAudioProgress(TranscriptionProgressSnapshot snapshot)
+    {
+        if (snapshot.TotalChunks is not int totalChunks || totalChunks <= 0)
+        {
+            IsTranscriptProcessingIndeterminate = true;
+            TranscribeAudioProgressValue = 0;
+            return;
+        }
+
+        if (totalChunks == 1)
+        {
+            TranscribeAudioProgressMaximum = 100;
+            IsTranscriptProcessingIndeterminate = false;
+            TranscribeAudioProgressValue = snapshot.Phase == TranscriptionProgressPhase.Completed
+                ? 100
+                : snapshot.Percent;
+            return;
+        }
+
+        TranscribeAudioProgressMaximum = totalChunks;
+        IsTranscriptProcessingIndeterminate = false;
+
+        if (snapshot.Phase == TranscriptionProgressPhase.Completed)
+        {
+            TranscribeAudioProgressValue = TranscribeAudioProgressMaximum;
+            return;
+        }
+
+        if (snapshot.CurrentChunk is int currentChunk)
+        {
+            TranscribeAudioProgressValue = currentChunk;
+            return;
+        }
+
+        TranscribeAudioProgressValue = 0;
+    }
+
+    private static string FormatTranscribeAudioChunkText(TranscriptionProgressSnapshot snapshot)
+    {
+        string overallPercentText = $"{snapshot.OverallPercent:0}% overall";
+
+        if (snapshot.Phase == TranscriptionProgressPhase.PreparingAudio)
+        {
+            return $"Preparing audio - {overallPercentText}";
+        }
+
+        if (snapshot.Phase == TranscriptionProgressPhase.Chunking)
+        {
+            return snapshot.TotalChunks is int totalChunks && totalChunks > 0
+                ? $"Determining chunks - {totalChunks:N0} found, {overallPercentText}"
+                : $"Determining chunks - {overallPercentText}";
+        }
+
+        if (snapshot.TotalChunks is int chunkCount
+            && chunkCount > 0
+            && snapshot.CurrentChunk is int currentChunk)
+        {
+            return $"Chunk {currentChunk:N0} of {chunkCount:N0} - {overallPercentText}";
+        }
+
+        if (snapshot.Phase == TranscriptionProgressPhase.Completed)
+        {
+            return $"Completed - {overallPercentText}";
+        }
+
+        return $"Progress - {overallPercentText}";
     }
 
     private void ApplyTranscriptProcessingCancelingState()
@@ -4635,6 +4749,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             TranscriptProcessingPercent = 0;
             IsTranscriptProcessingIndeterminate = false;
+            TranscribeAudioProgressMaximum = 100;
+            TranscribeAudioProgressValue = 0;
             TranscriptProcessingChunkText = "Progress 0%";
             TranscriptProcessingAudioText = "Audio 00:00 / 00:00";
             TranscriptProcessingElapsedText = "Elapsed 00:00";
@@ -4644,6 +4760,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         TranscriptProcessingPercent = snapshot.ProgressPercent;
         IsTranscriptProcessingIndeterminate = false;
+        TranscribeAudioProgressMaximum = 100;
+        TranscribeAudioProgressValue = snapshot.ProgressPercent;
         TranscriptProcessingChunkText = $"Progress {snapshot.ProgressPercent:0}%";
 
         if (snapshot.TotalAudioDuration is TimeSpan totalAudio && totalAudio > TimeSpan.Zero)

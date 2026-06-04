@@ -1446,9 +1446,9 @@
                                         <StackPanel>
                                             
                                             <ProgressBar Minimum="0"
-                                                         Maximum="100"
+                                                         Maximum="{Binding TranscribeAudioProgressMaximum, RelativeSource={RelativeSource AncestorType=Window}}"
                                                          Style="{StaticResource SessionProgressBarStyle}"
-                                                         Value="{Binding TranscriptProcessingPercent, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
+                                                         Value="{Binding TranscribeAudioProgressValue, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}"
                                                          IsIndeterminate="{Binding IsTranscriptProcessingIndeterminate, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                             <StackPanel Margin="0,10,0,0">
                                                 <TextBlock Text="{Binding TranscriptProcessingChunkText, RelativeSource={RelativeSource AncestorType=Window}}"
