@@ -200,6 +200,8 @@ public interface IAppUpdateCoordinator
 
 public interface IMicrosoftStoreUpdateProvider
 {
+    event EventHandler<StoreQueueRecoveryState>? QueueStateChanged;
+
     bool IsStoreUpdateSupported();
 
     Task<StoreUpdateQueryResult> GetAvailableUpdatesAsync(CancellationToken cancellationToken = default);

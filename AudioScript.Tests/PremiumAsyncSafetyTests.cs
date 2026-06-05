@@ -12,6 +12,7 @@ public sealed class PremiumAsyncSafetyTests
         string[] scopedFiles =
         {
             Path.Combine(repoRoot, "MainWindow.xaml.cs"),
+            Path.Combine(repoRoot, "SettingsWindow.xaml.cs"),
             Path.Combine(repoRoot, "Services", "AppEntitlementModels.cs"),
         };
 
@@ -29,6 +30,17 @@ public sealed class PremiumAsyncSafetyTests
                 Assert.DoesNotContain(pattern, text);
             }
         }
+    }
+
+    [Fact]
+    public void PremiumUiFlow_SettingsWindow_UsesConfirmationAndOwnerBinding()
+    {
+        string repoRoot = ResolveRepoRoot();
+        string code = File.ReadAllText(Path.Combine(repoRoot, "SettingsWindow.xaml.cs"));
+
+        Assert.Contains("ConfirmationDialogWindow(", code, StringComparison.Ordinal);
+        Assert.Contains("StorePurchaseOwnerWindowBinding.BeginScope", code, StringComparison.Ordinal);
+        Assert.Contains("StoreWindowAccessibilityRecovery.RecoverAfterStoreFlow", code, StringComparison.Ordinal);
     }
 
     private static string ResolveRepoRoot()

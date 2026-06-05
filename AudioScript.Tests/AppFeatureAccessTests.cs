@@ -17,12 +17,21 @@ public sealed class AppFeatureAccessTests
     }
 
     [Fact]
-    public void CanAccessFeature_RequiresPremiumForLiveAndSpeakerFeatures()
+    public void CanAccessFeature_AllowsBasicLiveAndSpeakerFeaturesButRequiresPremiumForModelInstall()
     {
-        Assert.False(AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, hasPremium: false));
-        Assert.False(AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, hasPremium: false));
+        Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, hasPremium: false));
+        Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, hasPremium: false));
+        Assert.False(AppFeatureAccess.CanAccessFeature(AppFeature.PremiumModelInstall, hasPremium: false));
         Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, hasPremium: true));
         Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, hasPremium: true));
+        Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.PremiumModelInstall, hasPremium: true));
+    }
+
+    [Fact]
+    public void GetSpeakerDiarizationLimit_IsFiveMinutesForBasicAndUnlimitedForPremium()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(5), AppFeatureAccess.GetSpeakerDiarizationLimit(hasPremium: false));
+        Assert.Null(AppFeatureAccess.GetSpeakerDiarizationLimit(hasPremium: true));
     }
 
     [Fact]

@@ -37,6 +37,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
     private const int BasicSessionLimit = 10;
     private const string SessionLimitUpsellMessage = "Basic is limited to 10 sessions. Delete sessions or upgrade to Premium to add more.";
+    private const string SpeakerDiarizationLimitUpsellMessage = "Basic Detect Speaker stops after 5 minutes of audio. Upgrade to Premium to continue.";
     private const string AudioFileDialogFilter = "Audio Files|*.wav;*.mp3;*.flac;*.aac;*.m4a;*.ogg;*.wma;*.mp4|All Files|*.*";
     private const string SpeakerDiarizationEngineId = "pyannote-community-1";
     private const int SpeakerDiarizationJobVersion = 1;
@@ -540,10 +541,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         !IsDevelopmentUnpackagedMode
         && _entitlementSnapshot.State == PremiumEntitlementState.VerifiedBasic;
 
-    public bool IsPremiumStatusBannerVisible =>
-        !IsDevelopmentUnpackagedMode
-        && _entitlementSnapshot.State != PremiumEntitlementState.VerifiedPremium;
-
     public string PremiumProductDisplayName =>
         _entitlementSnapshot.PremiumProductDisplayName;
 
@@ -558,6 +555,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         HasUnlimitedLiveTranscription
             ? null
             : AppFeatureAccess.GetLiveTranscriptionLimit(HasPremium);
+
+    public bool HasUnlimitedSpeakerDiarization =>
+        IsDevelopmentUnpackagedMode
+        || SpeakerDiarizationLimit is null;
+
+    public TimeSpan? SpeakerDiarizationLimit =>
+        IsDevelopmentUnpackagedMode
+            ? null
+            : AppFeatureAccess.GetSpeakerDiarizationLimit(HasPremium);
 
     public bool CanUseLiveTranscription =>
         IsDevelopmentUnpackagedMode
@@ -863,9 +869,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public bool IsApplicationFooterDefaultVisible =>
         !IsApplicationFooterCompactMode;
-
-    public string PremiumStatusText =>
-        _entitlementSnapshot.StatusMessage;
 
     public string LoadedAudioFilePath
     {
@@ -2930,6 +2933,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         _pendingSpeakerDiarizationResume = false;
         if (shouldResume)
         {
+            if (!EnsureSpeakerDiarizationResumeAllowed())
+            {
+                return false;
+            }
+
             _pendingSpeakerDiarizationResume = true;
             AppendLog("Detect Speaker will resume the incomplete speaker diarization job.");
             return true;
@@ -3035,8 +3043,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             transcriptFingerprint,
             expectedTotalChunks: null);
         bool restartAvailable = IsCurrentSpeakerDiarizationJob(job, audioFingerprint, transcriptFingerprint)
-            && (resumeAvailable
-                || string.Equals(job.Status, SpeakerDiarizationJobStatuses.Completed, StringComparison.OrdinalIgnoreCase));
+            && !string.Equals(job.Status, SpeakerDiarizationJobStatuses.NotStarted, StringComparison.OrdinalIgnoreCase);
 
         return new SpeakerDiarizationPanelSessionSnapshot(
             ResumeAvailable: resumeAvailable,
@@ -3159,12 +3166,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             string transcriptFingerprint = BuildSpeakerDiarizationTranscriptFingerprint();
             using ChunkedAudioFile chunkedAudio = _speakerDiarizationService.PrepareIncrementalDiarizationChunks(audioFilePath);
             SpeakerDiarizationJobDocument job = ResolveSpeakerDiarizationJob();
+            TimeSpan? speakerDiarizationLimit = SpeakerDiarizationLimit;
             bool resume = _pendingSpeakerDiarizationResume
                 && IsSpeakerDiarizationResumeEligible(
                     job,
                     audioFingerprint,
                     transcriptFingerprint,
                     chunkedAudio.Chunks.Count);
+
+            if (resume
+                && speakerDiarizationLimit is TimeSpan resumeLimit
+                && GetSpeakerDiarizationCoveredDuration(job, chunkedAudio.SourceInfo.Duration) >= resumeLimit)
+            {
+                return StopSpeakerDiarizationForBasicLimit(
+                    GetSpeakerDiarizationCoveredDuration(job, chunkedAudio.SourceInfo.Duration));
+            }
 
             if (!resume)
             {
@@ -3236,6 +3252,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                         AppendLog($"Detect Speaker aborted: checkpoint save failed after chunk {chunkIndex + 1:N0}.");
                         return false;
                     }
+                }
+
+                if (speakerDiarizationLimit is TimeSpan limit
+                    && chunk.Plan.KeepEnd >= limit)
+                {
+                    return StopSpeakerDiarizationForBasicLimit(chunk.Plan.KeepEnd);
                 }
             }
 
@@ -3913,6 +3935,87 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return string.Equals(job.Status, SpeakerDiarizationJobStatuses.Running, StringComparison.OrdinalIgnoreCase)
             || string.Equals(job.Status, SpeakerDiarizationJobStatuses.Canceled, StringComparison.OrdinalIgnoreCase)
             || string.Equals(job.Status, SpeakerDiarizationJobStatuses.Failed, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool EnsureSpeakerDiarizationResumeAllowed()
+    {
+        if (SpeakerDiarizationLimit is not TimeSpan limit
+            || _currentSessionDocument?.Transcript.SpeakerDiarizationJob is not SpeakerDiarizationJobDocument job)
+        {
+            return true;
+        }
+
+        TimeSpan coveredDuration = GetCurrentSpeakerDiarizationCoveredDuration(job);
+        if (coveredDuration < limit)
+        {
+            return true;
+        }
+
+        AppendLog($"Detect Speaker resume blocked: Basic limit reached at {FormatTimeSpanForUi(coveredDuration)}.");
+        PremiumUpsellRequested?.Invoke(
+            this,
+            new PremiumUpsellRequest(
+                "Detect Speaker",
+                SpeakerDiarizationLimitUpsellMessage));
+        return false;
+    }
+
+    private bool StopSpeakerDiarizationForBasicLimit(TimeSpan coveredDuration)
+    {
+        MarkSpeakerDiarizationJobStopped(SpeakerDiarizationJobStatuses.Canceled, string.Empty);
+        AppendLog($"Detect Speaker stopped: Basic limit reached at {FormatTimeSpanForUi(coveredDuration)}.");
+        if (!SaveSpeakerDiarizationCheckpoint("Speaker diarization stopped at the Basic 5-minute limit; completed chunks were kept."))
+        {
+            AppendLog("Speaker diarization limit state could not be saved.");
+        }
+
+        PremiumUpsellRequested?.Invoke(
+            this,
+            new PremiumUpsellRequest(
+                "Detect Speaker",
+                SpeakerDiarizationLimitUpsellMessage));
+        return false;
+    }
+
+    private TimeSpan GetCurrentSpeakerDiarizationCoveredDuration(SpeakerDiarizationJobDocument job)
+    {
+        double totalAudioSeconds = Math.Max(0, _currentSessionDocument?.Audio?.DurationSeconds ?? 0);
+        return GetSpeakerDiarizationCoveredDuration(job, TimeSpan.FromSeconds(totalAudioSeconds));
+    }
+
+    private static TimeSpan GetSpeakerDiarizationCoveredDuration(
+        SpeakerDiarizationJobDocument job,
+        TimeSpan totalAudioDuration)
+    {
+        if (job.LastCompletedChunkIndex < 0 || totalAudioDuration <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        double chunkDurationSeconds = job.ChunkDurationSeconds > 0
+            ? job.ChunkDurationSeconds
+            : ChunkedSpeakerDiarizationService.SpeakerDiarizationChunkDuration.TotalSeconds;
+        if (chunkDurationSeconds <= 0)
+        {
+            return TimeSpan.Zero;
+        }
+
+        double coveredSeconds = Math.Min(
+            totalAudioDuration.TotalSeconds,
+            (job.LastCompletedChunkIndex + 1d) * chunkDurationSeconds);
+        return TimeSpan.FromSeconds(Math.Max(0, coveredSeconds));
+    }
+
+    private static string FormatTimeSpanForUi(TimeSpan value)
+    {
+        if (value < TimeSpan.Zero)
+        {
+            value = TimeSpan.Zero;
+        }
+
+        return value.TotalHours >= 1
+            ? value.ToString(@"hh\:mm\:ss")
+            : value.ToString(@"mm\:ss");
     }
 
     private static bool IsIncompleteTranscriptionJob(TranscriptionJobDocument job)
@@ -4971,14 +5074,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(IsPremiumEntitlementChecking));
         NotifyPropertyChanged(nameof(IsPremiumEntitlementVerificationFailed));
         NotifyPropertyChanged(nameof(CanPromptPremiumPurchase));
-        NotifyPropertyChanged(nameof(IsPremiumStatusBannerVisible));
         NotifyPropertyChanged(nameof(IsDevelopmentUnpackagedMode));
         NotifyPropertyChanged(nameof(PremiumProductDisplayName));
         NotifyPropertyChanged(nameof(HasUnlimitedLiveTranscription));
         NotifyPropertyChanged(nameof(LiveTranscriptionLimit));
+        NotifyPropertyChanged(nameof(HasUnlimitedSpeakerDiarization));
+        NotifyPropertyChanged(nameof(SpeakerDiarizationLimit));
         NotifyPropertyChanged(nameof(CanUseLiveTranscription));
         NotifyPropertyChanged(nameof(CanUseSpeakerDiarization));
-        NotifyPropertyChanged(nameof(PremiumStatusText));
         NotifyPropertyChanged(nameof(ApplicationAccessTierText));
         NotifyPropertyChanged(nameof(IsTranscribeAudioTranscriptionEnabled));
         NotifyPropertyChanged(nameof(IsTranscriptGenerationEnabled));
@@ -6915,11 +7018,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
 
         await _entitlementService.RefreshAsync(cancellationToken);
-    }
-
-    public async Task RestorePremiumPurchaseAsync(CancellationToken cancellationToken = default)
-    {
-        await RefreshPremiumEntitlementAsync(cancellationToken);
     }
 
     private IEnumerable<TranscriptionModelOption> FilterAccessibleEngines(IEnumerable<TranscriptionModelOption> models)

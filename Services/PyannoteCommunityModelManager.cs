@@ -22,11 +22,11 @@ public sealed class PyannoteCommunityModelManager
         _architectureResolver = architectureResolver ?? (() => RuntimeInformation.ProcessArchitecture);
     }
 
-    public string ModelDirectoryPath => Path.Combine(_paths.PyannoteAssetsPath, "speaker-diarization-community-1");
+    public string ModelDirectoryPath => _assetProvisioningService.ResolveInstallPath(PyannoteModelAssetId);
 
-    public string RunnerScriptPath => Path.Combine(_paths.PyannoteAssetsPath, "run_community_diarization.py");
+    public string RunnerScriptPath => Path.Combine(ModelDirectoryPath, "run_community_diarization.py");
 
-    public string RuntimeDirectoryPath => Path.Combine(_paths.PythonRuntimesPath, ResolveRuntimeDirectoryName());
+    public string RuntimeDirectoryPath => _assetProvisioningService.ResolveInstallPath(PyannotePythonX64AssetId);
 
     public string PythonExecutablePath => Path.Combine(RuntimeDirectoryPath, "python.exe");
 
@@ -39,7 +39,7 @@ public sealed class PyannoteCommunityModelManager
         if (!Directory.Exists(ModelDirectoryPath))
         {
             throw new DirectoryNotFoundException(
-                $"Pyannote Community-1 model is not installed. Download the speaker detection files and try again. Path: {ModelDirectoryPath}");
+                $"Pyannote Community-1 model is missing from the AudioScript installation. Reinstall AudioScript from Microsoft Store. Path: {ModelDirectoryPath}");
         }
 
         EnsureRunnerScriptExists();
@@ -47,13 +47,13 @@ public sealed class PyannoteCommunityModelManager
         if (!Directory.Exists(RuntimeDirectoryPath))
         {
             throw new DirectoryNotFoundException(
-                $"Pyannote Python runtime is not installed. Download the speaker detection files and try again. Path: {RuntimeDirectoryPath}");
+                $"Pyannote Python runtime is missing from the AudioScript installation. Reinstall AudioScript from Microsoft Store. Path: {RuntimeDirectoryPath}");
         }
 
         if (!File.Exists(PythonExecutablePath))
         {
             throw new FileNotFoundException(
-                "Pyannote Python executable is not installed. Download the speaker detection files and try again.",
+                "Pyannote Python executable is missing from the AudioScript installation. Reinstall AudioScript from Microsoft Store.",
                 PythonExecutablePath);
         }
     }
@@ -73,10 +73,9 @@ public sealed class PyannoteCommunityModelManager
         IProgress<AssetProvisioningProgress>? progress,
         CancellationToken cancellationToken)
     {
+        await Task.Yield();
         EnsureSupportedArchitecture();
-        await InstallAssetAsync(PyannoteModelAssetId, progress, cancellationToken);
-        await InstallAssetAsync(PyannotePythonX64AssetId, progress, cancellationToken);
-        EnsureRunnerScriptExists();
+        EnsureInstalled();
     }
 
     private void EnsureRunnerScriptExists()
@@ -186,17 +185,4 @@ print("completed", file=sys.stderr, flush=True)
         }
     }
 
-    private async Task InstallAssetAsync(
-        string assetId,
-        IProgress<AssetProvisioningProgress>? progress,
-        CancellationToken cancellationToken)
-    {
-        AssetProvisioningStatus status = _assetProvisioningService.GetStatus(assetId);
-        if (status.State == AssetProvisioningState.Ready)
-        {
-            return;
-        }
-
-        await _assetProvisioningService.InstallAssetAsync(assetId, progress, cancellationToken);
-    }
 }

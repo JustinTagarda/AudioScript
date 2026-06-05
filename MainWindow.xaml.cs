@@ -647,7 +647,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
-    private async void DetectSpeakerPrimaryAction_Click(object sender, RoutedEventArgs e)
+    private void DetectSpeakerPrimaryAction_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm || IsTranscribeAudioBatchTranscribing || IsTranscribeAudioBatchPendingStart)
         {
@@ -656,30 +656,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         LogDetectSpeakerRoute("Detect Speaker primary action clicked.");
 
-        if (!vm.CanUseSpeakerDiarization)
+        if (!vm.IsSpeakerDiarizationRuntimeAvailable)
         {
-            if (!vm.IsSpeakerDiarizationRuntimeAvailable)
-            {
-                ShowBlockingMessage(
-                    "Speaker detection unavailable",
-                    vm.SpeakerDiarizationRuntimeStatusMessage);
-                return;
-            }
-
-            if (vm.IsDevelopmentUnpackagedMode)
-            {
-                ShowBlockingMessage(
-                    "Feature unavailable in local debug run",
-                    "Speaker diarization upgrade/purchase prompts are disabled outside the Microsoft Store package.");
-                return;
-            }
-
-            if (!await PromptPremiumFeatureAsync(
-                "Detect Speaker",
-                $"Detect Speaker is available with {vm.PremiumProductDisplayName}. Upgrade in Microsoft Store to unlock this feature."))
-            {
-                return;
-            }
+            ShowBlockingMessage(
+                "Speaker detection unavailable",
+                vm.SpeakerDiarizationRuntimeStatusMessage);
+            return;
         }
 
         OpenDetectSpeakersDialog(vm);
@@ -929,7 +911,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     ? "Speaker labels applied"
                     : "Speaker detection completed",
                 vm.LastSpeakerDetectionUsedHeuristicFallback
-                    ? "Pyannote Community-1 is unavailable, so heuristic speaker labels were applied."
+                    ? "The bundled speaker detection runtime was unavailable. Reinstall AudioScript from Microsoft Store."
                     : "Speaker labels are ready.",
                 vm.LastSpeakerDetectionUsedHeuristicFallback
                     ? ToastNotificationType.Warning
@@ -2616,10 +2598,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             && TranscriptionModelCatalog.IsLocalWhisper(selectedEngineId)
             && !_whisperModelManager.IsModelInstalled(selectedEngineId))
         {
+            WhisperEngineModelDefinition? selectedDefinition = null;
+            try
+            {
+                selectedDefinition = _whisperModelManager.GetDefinition(selectedEngineId);
+            }
+            catch
+            {
+                // Leave the generic recovery path below.
+            }
+
+            string recoveryMessage = selectedDefinition?.IsBundled == true
+                ? "Reinstall AudioScript from Microsoft Store if the bundled runtime is missing."
+                : "Install it in Settings and try again.";
             ShowBlockingMessage(
                 "Transcription model required",
-                $"{operationName} was stopped because {ResolveCurrentEngineLabel(vm)} is not installed yet. Install it in Settings and try again.");
-            OpenSettingsDialog(vm, selectedEngineId);
+                $"{operationName} was stopped because {ResolveCurrentEngineLabel(vm)} is not installed yet. {recoveryMessage}");
+            if (selectedDefinition?.IsBundled != true)
+            {
+                OpenSettingsDialog(vm, selectedEngineId);
+            }
             return false;
         }
 
@@ -2776,35 +2774,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void RecoverWindowAccessibility(Window? initiatingWindow)
     {
-        try
-        {
-            if (initiatingWindow is not null)
-            {
-                initiatingWindow.IsEnabled = true;
-                initiatingWindow.Activate();
-                _ = initiatingWindow.Focus();
-            }
-        }
-        catch (Exception ex)
-        {
-            _boundViewModel?.LogHandledException("premium initiating window recovery", ex);
-        }
-
-        try
-        {
-            if (!IsLoaded)
-            {
-                return;
-            }
-
-            IsEnabled = true;
-            Activate();
-            _ = Focus();
-        }
-        catch (Exception ex)
-        {
-            _boundViewModel?.LogHandledException("premium main window recovery", ex);
-        }
+        StoreWindowAccessibilityRecovery.RecoverAfterStoreFlow(
+            initiatingWindow,
+            IsLoaded ? this : null,
+            (context, ex) => _boundViewModel?.LogHandledException(context, ex));
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -3408,9 +3381,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             || combinedMessages.Contains("model", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("asset", StringComparison.OrdinalIgnoreCase))
         {
+            string selectedEngineId = vm.SelectedEngine?.Id ?? string.Empty;
+            string recoveryMessage = string.Equals(selectedEngineId, TranscriptionModelCatalog.WhisperSmall, StringComparison.OrdinalIgnoreCase)
+                ? "Reinstall AudioScript from Microsoft Store."
+                : "Reinstall the engine in Settings and try again.";
             return (
                 "Transcription files missing",
-                "Required engine files are missing or unavailable. Reinstall the engine in Settings and try again.");
+                $"Required engine files are missing or unavailable. {recoveryMessage}");
         }
 
         if (root is IOException)
@@ -3471,20 +3448,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (combinedMessages.Contains("torchcodec", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase))
         {
-            return "Speaker detection runtime is installed but audio decoding dependencies are not compatible yet. The app will continue with fallback speaker labeling.";
+            return "The bundled speaker detection runtime is incompatible or corrupted. Reinstall AudioScript from Microsoft Store.";
         }
 
         if (combinedMessages.Contains("DiarizeOutput", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("itertracks", StringComparison.OrdinalIgnoreCase))
         {
-            return "Speaker detection runtime is installed but the diarization runtime API changed. The app will continue with fallback speaker labeling.";
+            return "The bundled speaker detection runtime is incompatible or corrupted. Reinstall AudioScript from Microsoft Store.";
         }
 
         if (combinedMessages.Contains("pyannote", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("model", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("asset", StringComparison.OrdinalIgnoreCase))
         {
-            return "Required speaker detection files are missing or unavailable. Download the speaker detection files and try again.";
+            return "The bundled speaker detection runtime is missing or corrupted. Reinstall AudioScript from Microsoft Store.";
         }
 
         if (root is FileNotFoundException or IOException)
@@ -3527,6 +3504,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async Task<bool> EnsureSpeakerDetectionAssetsReadyAsync(CancellationToken cancellationToken)
     {
+        await Task.Yield();
+
         if (_pyannoteCommunityModelManager is null)
         {
             ShowTranscribeAudioErrorDialog("Speaker detection is not configured in this build.");
@@ -3544,30 +3523,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return true;
         }
 
-        TranscriptProcessingEngineText = "Pyannote Community-1";
-        TranscriptProcessingChunkText = "Progress 0%";
-        TranscriptProcessingAudioText = "Download 0 B / unknown size";
-        TranscriptProcessingElapsedText = "Elapsed 00:00";
-        TranscriptProcessingEtaText = "ETA calculating";
-        IsTranscriptProcessingIndeterminate = true;
-        TranscriptProcessingPercent = 0;
-
-        var progress = new Progress<AssetProvisioningProgress>(assetProgress =>
-        {
-            TranscriptProcessingPercent = assetProgress.Percent;
-            IsTranscriptProcessingIndeterminate = assetProgress.TotalBytes is not > 0;
-            TranscriptProcessingChunkText = $"Progress {assetProgress.Percent:0}%";
-            TranscriptProcessingAudioText = $"Download {FormatDownloadBytes(assetProgress.BytesReceived)} / {FormatDownloadBytes(assetProgress.TotalBytes)}";
-        });
-
         try
         {
-            await _pyannoteCommunityModelManager.EnsureProvisionedAsync(progress, cancellationToken);
-            TranscriptProcessingChunkText = "Progress 100%";
-            TranscriptProcessingAudioText = "Download completed";
-            TranscriptProcessingPercent = 100;
-            IsTranscriptProcessingIndeterminate = false;
-            return true;
+            _pyannoteCommunityModelManager.EnsureInstalled();
+            return _pyannoteCommunityModelManager.IsInstalled();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -3578,31 +3537,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ShowTranscribeAudioErrorDialog(message);
             return false;
         }
-    }
-
-    private static string FormatDownloadBytes(long? bytes)
-    {
-        if (bytes is null || bytes <= 0)
-        {
-            return "unknown size";
-        }
-
-        if (bytes >= 1_000_000_000)
-        {
-            return $"{bytes.Value / 1_000_000_000d:F2} GB";
-        }
-
-        if (bytes >= 1_000_000)
-        {
-            return $"{bytes.Value / 1_000_000d:F1} MB";
-        }
-
-        if (bytes >= 1_000)
-        {
-            return $"{bytes.Value / 1_000d:F1} KB";
-        }
-
-        return $"{bytes:N0} B";
     }
 
     private static IEnumerable<Exception> EnumerateExceptionChain(Exception ex)
@@ -3985,12 +3919,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (_updateProgressWindow is null)
             {
-                _updateProgressWindow = new DeferredUpdateInstallWindow(vm.AppUpdateService!)
+                DeferredUpdateInstallWindow progressWindow = new(vm.AppUpdateService!)
                 {
                     Owner = this,
                 };
-                _updateProgressWindow.Closed += (_, _) => _updateProgressWindow = null;
-                _updateProgressWindow.Show();
+                _updateProgressWindow = progressWindow;
+                progressWindow.Closed += (_, _) => _updateProgressWindow = null;
+                Dispatcher.BeginInvoke(
+                    new Action(() =>
+                    {
+                        if (!ReferenceEquals(_updateProgressWindow, progressWindow)
+                            || progressWindow.IsVisible
+                            || progressWindow.IsDismissalAllowed)
+                        {
+                            if (ReferenceEquals(_updateProgressWindow, progressWindow)
+                                && progressWindow.IsDismissalAllowed)
+                            {
+                                _updateProgressWindow = null;
+                            }
+
+                            return;
+                        }
+
+                        progressWindow.ShowDialog();
+                    }),
+                    DispatcherPriority.Background);
             }
             return;
         }

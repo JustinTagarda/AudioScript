@@ -138,7 +138,7 @@
                 </Style>
             </Button.Style>
         </Button>
-        <TextBlock Text="{Binding AppVersionText}"
+        <TextBlock Text="{Binding StorePackageVersionText, RelativeSource={RelativeSource AncestorType=Window}}"
                    Margin="8,0,0,0"
                    FontSize="11"
                    Opacity="0.72"

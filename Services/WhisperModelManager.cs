@@ -16,13 +16,13 @@ public sealed class WhisperModelManager
             DisplayName: "Whisper small",
             FileName: "ggml-small.bin",
             SizeText: "about 466 MB",
-            Description: "Required default offline model downloaded into local app storage on first use.",
+            Description: "Required default offline model bundled with AudioScript.",
             Benefits: "Good minimum quality for local transcription while staying smaller than medium.",
-            Notes: "Install from Settings before using Whisper transcription on a new device.",
+            Notes: "Included with the packaged app for first-use offline transcription.",
             GgmlType: WhisperModelVariant.Small,
             ExpectedBytes: 487_601_967,
-            IsBundled: false,
-            IsFixedInstalled: false),
+            IsBundled: true,
+            IsFixedInstalled: true),
         new WhisperEngineModelDefinition(
             Id: TranscriptionModelCatalog.WhisperMedium,
             DisplayName: "Whisper medium",
@@ -103,8 +103,11 @@ public sealed class WhisperModelManager
         string modelPath = ResolveModelPath(definition);
         if (!File.Exists(modelPath))
         {
+            string recoveryMessage = definition.IsBundled
+                ? "Reinstall AudioScript from Microsoft Store if the bundled runtime is missing."
+                : "Open Settings to install the model.";
             throw new FileNotFoundException(
-                $"Whisper model '{definition.DisplayName}' is not installed. Open Settings to install the model and try again.",
+                $"Whisper model '{definition.DisplayName}' is not installed. {recoveryMessage}",
                 modelPath);
         }
 
@@ -142,6 +145,11 @@ public sealed class WhisperModelManager
     public WhisperModelUninstallResult UninstallModel(string modelId)
     {
         WhisperEngineModelDefinition definition = GetDefinition(modelId);
+        if (IsPackagedRequiredModel(definition.Id))
+        {
+            throw new InvalidOperationException($"{definition.DisplayName} is bundled with AudioScript and cannot be removed.");
+        }
+
         if (definition.IsFixedInstalled)
         {
             throw new InvalidOperationException($"{definition.DisplayName} cannot be removed.");
@@ -193,7 +201,17 @@ public sealed class WhisperModelManager
 
     private string ResolveModelPath(WhisperEngineModelDefinition definition)
     {
+        if (IsPackagedRequiredModel(definition.Id) && _assetProvisioningService is not null)
+        {
+            return _assetProvisioningService.ResolveInstallPath(WhisperSmallAssetId);
+        }
+
         return Path.Combine(_optionalModelsDirectoryPath, definition.FileName);
+    }
+
+    private static bool IsPackagedRequiredModel(string modelId)
+    {
+        return string.Equals(modelId, TranscriptionModelCatalog.WhisperSmall, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryResolveProvisionedAssetId(string modelId, out string assetId)

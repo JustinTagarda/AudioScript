@@ -51,6 +51,10 @@
       <Link>Assets\SplashScreen.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="..\assets\prebuilt\**\*">
+      <Link>assets\prebuilt\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -59,11 +63,29 @@
 
   <UsingTask TaskName="XmlPeek" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll" />
 
+  <Target Name="CleanStorePackageOutputs" BeforeTargets="GenerateAppxPackageOnBuild;_GenerateAppxPackageRecipeFile;CreateAppxPackage">
+    <ItemGroup>
+      <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\AppPackages" />
+      <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\AppPackages" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_StorePackageCleanupDirs)" Condition="Exists('%(Identity)')" />
+    <Delete Files="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*.msix;$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*.msixbundle;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msix;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msixbundle" TreatErrorsAsWarnings="true" />
+  </Target>
+
   <Target Name="ValidateStorePublisherDisplayName" BeforeTargets="GenerateAppxPackageOnBuild;_GenerateAppxPackageRecipeFile;CreateAppxPackage">
+    <XmlPeek XmlInputPath="Package.appxmanifest" Query="/*[local-name()='Package']/*[local-name()='Identity']/@Version">
+      <Output TaskParameter="Result" PropertyName="ManifestIdentityVersion" />
+    </XmlPeek>
     <XmlPeek XmlInputPath="Package.appxmanifest" Query="/*[local-name()='Package']/*[local-name()='Properties']/*[local-name()='PublisherDisplayName']/text()">
       <Output TaskParameter="Result" PropertyName="ManifestPublisherDisplayName" />
     </XmlPeek>
+    <Error Condition="'$(ManifestIdentityVersion)' == ''" Text="Store packaging blocked: Package.appxmanifest Identity Version is missing." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ManifestIdentityVersion)', '^\d+\.\d+\.\d+\.0$'))" Text="Store packaging blocked: Package.appxmanifest Identity Version must use Major.Minor.Build.0 format. Current value: '$(ManifestIdentityVersion)'." />
     <Error Condition="'$(ManifestPublisherDisplayName)' != 'JustinTagarda'" Text="Store packaging blocked: Package.appxmanifest PublisherDisplayName must be exactly 'JustinTagarda'. Current value: '$(ManifestPublisherDisplayName)'" />
+  </Target>
+
+  <Target Name="VerifyPackagedEnginePayload" AfterTargets="CreateAppxPackage">
+    <Exec Command='powershell -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\Verify-PackagedEnginePayload.ps1&quot; -RepoRoot &quot;$(MSBuildProjectDirectory)\..&quot; -PackageArtifactRoot &quot;$(MSBuildProjectDirectory)\AppPackages&quot;' />
   </Target>
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets" />
 </Project>

@@ -18,10 +18,15 @@ public partial class DeferredUpdateInstallWindow : Window
         ApplySnapshot(_appUpdateService.CurrentSnapshot);
     }
 
+    public bool IsDismissalAllowed => _allowClose;
+
     public void CloseAfterOperation()
     {
         _allowClose = true;
-        Close();
+        if (IsLoaded)
+        {
+            Close();
+        }
     }
 
     protected override void OnClosing(CancelEventArgs e)

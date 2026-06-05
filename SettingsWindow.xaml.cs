@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Interop;
 using AudioScript.Services;
+using AudioScript.Services.Store;
 using AudioScript.ViewModels;
 
 namespace AudioScript;
@@ -25,7 +27,9 @@ public partial class SettingsWindow : Window
         _modelManager = modelManager;
         _processLogService = processLogService;
         Items = new ObservableCollection<SettingsItemViewModel>(
-            _modelManager.Models.Select(model =>
+            _modelManager.Models
+                .Where(model => !model.IsBundled)
+                .Select(model =>
                 new SettingsItemViewModel(
                     model,
                     _modelManager.IsModelInstalled(model.Id),
@@ -191,20 +195,6 @@ public partial class SettingsWindow : Window
         await RequestPremiumPurchaseAsync(item.DisplayName);
     }
 
-    private async void RecheckPremiumButton_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await _viewModel.RestorePremiumPurchaseAsync();
-            RefreshPremiumAccess();
-        }
-        catch (Exception ex)
-        {
-            _processLogService.LogException("Premium", "Manual premium entitlement re-check failed.", ex);
-            ShowError($"Unable to re-check {_viewModel.PremiumProductDisplayName} entitlement: {ex.Message}");
-        }
-    }
-
     private void SetOperationState(SettingsItemViewModel activeItem, bool isBusy)
     {
         activeItem.IsBusy = isBusy;
@@ -281,14 +271,48 @@ public partial class SettingsWindow : Window
                 return;
             }
 
-            PremiumPurchaseResult result = await _viewModel.RequestPremiumPurchaseAsync();
-            RefreshPremiumAccess();
-            if (result.Status is PremiumPurchaseStatus.Succeeded or PremiumPurchaseStatus.AlreadyOwned)
+            var confirmation = new ConfirmationDialogWindow(
+                "Premium feature",
+                $"{_viewModel.PremiumProductDisplayName} unlocks all premium features. Upgrade in Microsoft Store to continue.",
+                "Get Premium",
+                "Not now")
+            {
+                Owner = this,
+            };
+
+            if (confirmation.ShowDialog() != true)
             {
                 return;
             }
 
-            if (result.Status == PremiumPurchaseStatus.Canceled)
+            Window? initiatingWindow = GetInitiatingWindow();
+            PremiumPurchaseResult result = null!;
+            try
+            {
+                IntPtr initiatingWindowHandle = IntPtr.Zero;
+                try
+                {
+                    initiatingWindowHandle = new WindowInteropHelper(initiatingWindow).Handle;
+                }
+                catch (Exception ex)
+                {
+                    _processLogService.LogException("Premium", $"Unable to resolve owner window handle for '{featureName}'.", ex);
+                }
+
+                using IDisposable scope = StorePurchaseOwnerWindowBinding.BeginScope(initiatingWindowHandle);
+                result = await _viewModel.RequestPremiumPurchaseAsync();
+            }
+            finally
+            {
+                StoreWindowAccessibilityRecovery.RecoverAfterStoreFlow(
+                    initiatingWindow ?? this,
+                    System.Windows.Application.Current?.MainWindow,
+                    (context, ex) => _processLogService.LogException("Premium", context, ex));
+            }
+
+            RefreshPremiumAccess();
+            if (result.Status is PremiumPurchaseStatus.Succeeded or PremiumPurchaseStatus.AlreadyOwned
+                || result.Status == PremiumPurchaseStatus.Canceled)
             {
                 return;
             }
@@ -300,6 +324,13 @@ public partial class SettingsWindow : Window
             _processLogService.LogException("Premium", $"Unable to open Premium purchase flow for '{featureName}'.", ex);
             ShowError($"Unable to open Microsoft Store for {_viewModel.PremiumProductDisplayName}: {ex.Message}");
         }
+    }
+
+    private Window GetInitiatingWindow()
+    {
+        return System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(window => window.IsActive)
+            ?? System.Windows.Application.Current?.MainWindow
+            ?? this;
     }
 
     private void ShowError(string message)

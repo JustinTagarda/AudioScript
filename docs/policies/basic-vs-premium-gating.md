@@ -36,11 +36,11 @@ This policy applies to:
 - File transcription using `whisper-small`.
 - Manual transcription mode (`manual-transcription`).
 - Live Transcription, limited to 10 minutes per active run. When the 10-minute limit is reached, the app must stop the live session and surface the Premium upsell flow.
+- Speaker Diarization / Detect Speaker, limited to 5 minutes of diarized audio per run. When the 5-minute limit is reached, the app must stop the diarization run and surface the Premium upsell flow.
 - Session management up to 10 sessions.
 
 ### Basic (must be blocked)
 
-- Speaker Diarization / Detect Speaker.
 - Installing or using premium models:
   - `whisper-medium`
   - `whisper-large-v3`
@@ -88,7 +88,7 @@ When restoring or validating gating:
 
 1. Confirm packaged startup wires a non-null `IEntitlementService` into `MainViewModel` and refreshes entitlement after initial render.
 2. Confirm Basic can start Live Transcription and is auto-stopped at 10 minutes with Premium upsell messaging.
-3. Confirm Basic cannot run Speaker Diarization.
+3. Confirm Basic can start Speaker Diarization, is auto-stopped at 5 minutes of diarized audio, and cannot resume once the 5-minute Basic cap has already been reached.
 4. Confirm Basic cannot install/use premium models.
 5. Confirm Basic session creation blocks at 10 and raises Premium upsell.
 6. Confirm Premium has no Live Transcription time limit and can access all other gated features.

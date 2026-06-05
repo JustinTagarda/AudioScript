@@ -11,6 +11,7 @@ public sealed class AppDataPathProvider
 
     public AppDataPathProvider(string? localAppDataPath = null, string? packageFamilyName = null)
     {
+        string packagedAssetsRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "assets", "prebuilt"));
         string localAppData = string.IsNullOrWhiteSpace(localAppDataPath)
             ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
             : Path.GetFullPath(localAppDataPath);
@@ -34,6 +35,11 @@ public sealed class AppDataPathProvider
         TempPath = Path.Combine(RootPath, "Temp");
         SettingsPath = Path.Combine(RootPath, "Settings");
         SettingsFilePath = Path.Combine(SettingsPath, "app-preferences.json");
+        PackagedAssetsPath = packagedAssetsRoot;
+        PackagedModelsPath = Path.Combine(packagedAssetsRoot, "models");
+        PackagedPyannotePath = Path.Combine(packagedAssetsRoot, "pyannote");
+        PackagedPythonPath = Path.Combine(packagedAssetsRoot, "python");
+        PackagedToolsPath = Path.Combine(packagedAssetsRoot, "tools");
     }
 
     public string RootPath { get; }
@@ -59,6 +65,16 @@ public sealed class AppDataPathProvider
     public string SettingsPath { get; }
 
     public string SettingsFilePath { get; }
+
+    public string PackagedAssetsPath { get; }
+
+    public string PackagedModelsPath { get; }
+
+    public string PackagedPyannotePath { get; }
+
+    public string PackagedPythonPath { get; }
+
+    public string PackagedToolsPath { get; }
 
     public bool IsPackaged { get; }
 

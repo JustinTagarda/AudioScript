@@ -20,7 +20,7 @@ public sealed class PyannoteCommunityModelManagerTests
             CreatePyannoteAssets(paths, Architecture.X64);
 
             var manager = new PyannoteCommunityModelManager(
-                new StubAssetProvisioningService(),
+                new StubAssetProvisioningService(paths),
                 paths,
                 architectureResolver: () => Architecture.X64);
 
@@ -43,7 +43,7 @@ public sealed class PyannoteCommunityModelManagerTests
             CreateRunnerScript(paths);
             CreatePythonRuntime(paths, "win-x64");
             var manager = new PyannoteCommunityModelManager(
-                new StubAssetProvisioningService(),
+                new StubAssetProvisioningService(paths),
                 paths,
                 architectureResolver: () => Architecture.X64);
 
@@ -66,7 +66,7 @@ public sealed class PyannoteCommunityModelManagerTests
             CreatePyannoteAssets(paths, Architecture.X64);
 
             var manager = new PyannoteCommunityModelManager(
-                new StubAssetProvisioningService(),
+                new StubAssetProvisioningService(paths),
                 paths,
                 architectureResolver: () => Architecture.X64);
 
@@ -89,7 +89,7 @@ public sealed class PyannoteCommunityModelManagerTests
         try
         {
             var manager = new PyannoteCommunityModelManager(
-                new StubAssetProvisioningService(),
+                new StubAssetProvisioningService(paths),
                 paths,
                 architectureResolver: () => Architecture.X86);
 
@@ -112,7 +112,7 @@ public sealed class PyannoteCommunityModelManagerTests
         {
             CreatePyannoteAssets(paths, Architecture.X64);
             var manager = new PyannoteCommunityModelManager(
-                new StubAssetProvisioningService(),
+                new StubAssetProvisioningService(paths),
                 paths,
                 architectureResolver: () => Architecture.X64);
             var runner = new StubPyannoteCommunityProcessRunner(
@@ -153,7 +153,7 @@ public sealed class PyannoteCommunityModelManagerTests
         {
             CreatePyannoteAssets(paths, Architecture.X64);
             var manager = new PyannoteCommunityModelManager(
-                new StubAssetProvisioningService(),
+                new StubAssetProvisioningService(paths),
                 paths,
                 architectureResolver: () => Architecture.X64);
             var runner = new StubPyannoteCommunityProcessRunner(
@@ -304,6 +304,13 @@ public sealed class PyannoteCommunityModelManagerTests
 
     private sealed class StubAssetProvisioningService : IAssetProvisioningService
     {
+        private readonly AppDataPathProvider _paths;
+
+        public StubAssetProvisioningService(AppDataPathProvider paths)
+        {
+            _paths = paths;
+        }
+
         public IReadOnlyList<ProvisionedAssetDescriptor> GetManifestAssets()
         {
             return Array.Empty<ProvisionedAssetDescriptor>();
@@ -316,7 +323,12 @@ public sealed class PyannoteCommunityModelManagerTests
 
         public string ResolveInstallPath(string assetId)
         {
-            return string.Empty;
+            return assetId switch
+            {
+                PyannoteCommunityModelManager.PyannoteModelAssetId => Path.Combine(_paths.PyannoteAssetsPath, "speaker-diarization-community-1"),
+                PyannoteCommunityModelManager.PyannotePythonX64AssetId => Path.Combine(_paths.PythonRuntimesPath, "win-x64"),
+                _ => string.Empty,
+            };
         }
 
         public bool IsInstalled(string assetId)

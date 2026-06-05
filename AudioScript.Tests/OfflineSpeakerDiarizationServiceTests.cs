@@ -72,7 +72,7 @@ public sealed class OfflineSpeakerDiarizationServiceTests {
     }
 
     [Fact]
-    public async Task DiarizeAudioFileAsync_FallsBackToHeuristic_WhenRealDiarizationAssetsFail() {
+    public async Task DiarizeAudioFileAsync_Throws_WhenRealDiarizationAssetsFail() {
         TranscriptionResult transcriptionResult = CreateTranscriptionResult([
             new TranscriptionTimedLine("hello.", TimeSpan.Zero, TimeSpan.FromSeconds(1), false),
             new TranscriptionTimedLine("reply", TimeSpan.FromSeconds(1.8), TimeSpan.FromSeconds(2.5), false),
@@ -81,16 +81,15 @@ public sealed class OfflineSpeakerDiarizationServiceTests {
             new FailingSpeakerDiarizationEngine(new FileNotFoundException("missing bundled pyannote asset")),
             new ProcessLogService());
 
-        SpeakerDiarizationResult result = await service.ApplySpeakerLabelsAsync(
-            "test.wav",
-            transcriptionResult,
-            CancellationToken.None);
-
-        Assert.Equal(new[] { "speaker_1", "speaker_2" }, result.Segments.Select(segment => segment.Speaker).ToArray());
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            service.ApplySpeakerLabelsAsync(
+                "test.wav",
+                transcriptionResult,
+                CancellationToken.None));
     }
 
     [Fact]
-    public async Task DiarizeAudioFileAsync_FallsBackToHeuristic_WhenBundledPyannoteDirectoryIsMissing() {
+    public async Task DiarizeAudioFileAsync_Throws_WhenBundledPyannoteDirectoryIsMissing() {
         TranscriptionResult transcriptionResult = CreateTranscriptionResult([
             new TranscriptionTimedLine("hello.", TimeSpan.Zero, TimeSpan.FromSeconds(1), false),
             new TranscriptionTimedLine("reply", TimeSpan.FromSeconds(1.8), TimeSpan.FromSeconds(2.5), false),
@@ -99,12 +98,11 @@ public sealed class OfflineSpeakerDiarizationServiceTests {
             new FailingSpeakerDiarizationEngine(new DirectoryNotFoundException("Bundled pyannote Community-1 model was not found.")),
             new ProcessLogService());
 
-        SpeakerDiarizationResult result = await service.ApplySpeakerLabelsAsync(
-            "test.wav",
-            transcriptionResult,
-            CancellationToken.None);
-
-        Assert.Equal(new[] { "speaker_1", "speaker_2" }, result.Segments.Select(segment => segment.Speaker).ToArray());
+        await Assert.ThrowsAsync<DirectoryNotFoundException>(() =>
+            service.ApplySpeakerLabelsAsync(
+                "test.wav",
+                transcriptionResult,
+                CancellationToken.None));
     }
 
     [Fact]

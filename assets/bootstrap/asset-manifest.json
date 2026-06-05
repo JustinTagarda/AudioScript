@@ -12,6 +12,8 @@
         "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
       ],
       "developmentSourceRelativePath": "assets/models/ggml-small.bin",
+      "packagedSourceRelativePath": "assets/prebuilt/models/ggml-small.bin",
+      "deliveryMode": "PackagedRequired",
       "installKind": "File",
       "installRoot": "Models",
       "installRelativePath": "ggml-small.bin",
@@ -29,6 +31,8 @@
         "https://huggingface.co/api/models/DroolingPanda/speaker-diarization-community-1"
       ],
       "developmentSourceRelativePath": "assets/pyannote/speaker-diarization-community-1",
+      "packagedSourceRelativePath": "assets/prebuilt/pyannote/speaker-diarization-community-1",
+      "deliveryMode": "PackagedRequired",
       "installKind": "Directory",
       "installRoot": "Pyannote",
       "installRelativePath": "speaker-diarization-community-1",
@@ -48,6 +52,8 @@
         "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip"
       ],
       "developmentSourceRelativePath": "assets/python/win-x64",
+      "packagedSourceRelativePath": "assets/prebuilt/python/win-x64",
+      "deliveryMode": "PackagedRequired",
       "installKind": "Directory",
       "installRoot": "Python",
       "installRelativePath": "win-x64",
@@ -64,13 +70,15 @@
       "downloadSources": [
         "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.4/whisper-bin-x64.zip"
       ],
+      "packagedSourceRelativePath": "assets/prebuilt/tools/whisper.cpp/win-x64",
+      "deliveryMode": "PackagedRequired",
       "installKind": "Directory",
       "installRoot": "Tools",
       "installRelativePath": "whisper.cpp/win-x64",
       "supportedArchitectures": [
         "x64"
       ],
-      "required": false
+      "required": true
     },
     {
       "id": "whisper-medium",

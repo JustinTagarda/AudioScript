@@ -6,7 +6,7 @@ AudioScript is a Windows desktop WPF app for local/offline audio transcription, 
 
 - Imports local audio files for playback and transcription
 - Captures live audio from playback and/or microphone
-- Runs transcription locally with installed Whisper models
+- Runs transcription locally with a bundled `whisper-small` model and optional premium Whisper models
 - Processes live transcription in parallel chunk workers with adaptive dispatch
 - Runs speaker diarization locally with bundled `pyannote-community-1` assets
 - Supports transcript editing, row operations, autosave, and restore
@@ -89,6 +89,7 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
   - `Identity Name=JustinTagardaSoftware.AudioScript`
   - `Identity Publisher=CN=68EC506E-4B5E-416B-93E8-BA707CA3BE0F`
   - `TargetDeviceFamily Name=Windows.Desktop`
+- Footer version display: derived from the Store package version and normalized to `Major.Minor.Build.0`
 - Store package target architecture: `x64` only
 - Upload mode: `StoreUpload`
 
@@ -101,18 +102,30 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 ### Expected Output Location
 
 - `AudioScript.Package\AppPackages\*.msixupload`
+- Current Store package version: `2.0.20.0`
 
 ## Premium Entitlement Model
 
 - Basic mode remains usable forever.
 - Basic can run Live Transcription for up to 10 minutes per active run. When that limit is reached, the app stops the live session and surfaces the Premium upsell flow.
-- Basic cannot use Speaker Diarization / Detect Speaker.
+- Basic can use Speaker Diarization / Detect Speaker for up to 5 minutes of diarized audio per run.
 - Basic cannot install or use premium models: `whisper-medium`, `whisper-large-v3`, `whisper-large-v3-turbo`.
 - Premium is unlocked only by Microsoft Store durable add-on ownership.
 - Premium removes the 10-minute Live Transcription cap and unlocks the premium-only features above.
 - Add-on catalog source of truth: `Services/Store/StorePremiumAddonCatalog.cs`
 - Entitlement verification and fallback cache: `Services/AppEntitlementModels.cs`
-- Premium CTA convergence uses shared in-app purchase flow (`StoreContext.RequestPurchaseAsync(addOnStoreId)`), including the footer `AppStatusDisplay` Upgrade button.
+- Premium CTA convergence uses the shared in-app purchase flow (`StoreContext.RequestPurchaseAsync(addOnStoreId)`), including the footer `AppStatusDisplay` Upgrade button and the Settings window premium upsell path.
+
+## Bundled Engine Runtime
+
+- Production packages are expected to include the required/basic engine runtime:
+  - `whisper-small`
+  - `whisper.cpp` CLI runtime
+  - `pyannote-community-1` model
+  - bundled Python x64 runtime and required diarization modules
+- Premium Whisper models remain optional installs and are not bundled by default.
+- Packaged production builds do not repair or re-download required bundled engines at runtime.
+- If the bundled runtime is missing or corrupted in production, reinstall AudioScript from Microsoft Store.
 
 ## Microsoft Store App Update Flow
 

@@ -281,9 +281,9 @@ public sealed class WhisperAudioTranscriptionService : IConfigurableAudioTranscr
 
         if (!_assetProvisioningService.IsInstalled(WhisperCliAssetId))
         {
-            Log("whisper.cpp CLI runtime is missing. Installing on demand.");
-            _processLogService.UpdateCrashContext("whispercpp.runtime.installing");
-            await _assetProvisioningService.InstallAssetAsync(WhisperCliAssetId, progress: null, cancellationToken);
+            throw new FileNotFoundException(
+                "The bundled whisper.cpp runtime is missing or corrupted. Reinstall AudioScript from Microsoft Store.",
+                Path.Combine(_assetProvisioningService.ResolveInstallPath(WhisperCliAssetId), WhisperCliExecutableRelativePath));
         }
 
         string installDirectory = _assetProvisioningService.ResolveInstallPath(WhisperCliAssetId);

@@ -104,7 +104,9 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
                 descriptor.DisplayName,
                 AssetProvisioningState.Unconfigured,
                 installPath,
-                "Asset source is not configured.");
+                descriptor.IsPackagedRequired
+                    ? "Required packaged asset was not found in this installation."
+                    : "Asset source is not configured.");
         }
 
         return new AssetProvisioningStatus(
@@ -117,6 +119,11 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
     public string ResolveInstallPath(string assetId)
     {
         ProvisionedAssetDescriptor descriptor = GetDescriptor(assetId);
+        if (descriptor.IsPackagedRequired && IsProductionContext())
+        {
+            return ResolvePackagedPath(descriptor);
+        }
+
         string root = descriptor.InstallRoot switch
         {
             ProvisioningInstallRoot.Models => _paths.ModelsPath,
@@ -138,13 +145,12 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
         }
 
         string installPath = ResolveInstallPath(descriptor.Id);
-        bool pathExists = descriptor.InstallKind switch
+        if (descriptor.IsPackagedRequired && IsProductionContext())
         {
-            ProvisioningInstallKind.File => File.Exists(installPath),
-            ProvisioningInstallKind.Directory => Directory.Exists(installPath),
-            _ => false,
-        };
+            return DoesInstallPathExist(descriptor, installPath);
+        }
 
+        bool pathExists = DoesInstallPathExist(descriptor, installPath);
         if (!pathExists)
         {
             return false;
@@ -173,6 +179,12 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
         {
             throw new PlatformNotSupportedException(
                 $"{descriptor.DisplayName} is not supported on this architecture.");
+        }
+
+        if (descriptor.IsPackagedRequired && IsProductionContext())
+        {
+            throw new InvalidOperationException(
+                $"{descriptor.DisplayName} is a bundled production asset. Reinstall AudioScript from Microsoft Store if this asset is missing or corrupted.");
         }
 
         if (!CanResolveSource(descriptor, out _))
@@ -271,6 +283,17 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
         }
     }
 
+    private bool DoesInstallPathExist(ProvisionedAssetDescriptor descriptor, string installPath)
+    {
+        bool pathExists = descriptor.InstallKind switch
+        {
+            ProvisioningInstallKind.File => File.Exists(installPath),
+            ProvisioningInstallKind.Directory => Directory.Exists(installPath),
+            _ => false,
+        };
+        return pathExists;
+    }
+
     public async Task RemoveAssetAsync(string assetId, CancellationToken cancellationToken)
     {
         ProvisionedAssetDescriptor descriptor = GetDescriptor(assetId);
@@ -347,6 +370,17 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
 
             if (asset.Required)
             {
+                if (asset.IsPackagedRequired)
+                {
+                    if (string.IsNullOrWhiteSpace(asset.PackagedSourceRelativePath))
+                    {
+                        throw new InvalidOperationException(
+                            $"Required packaged asset '{asset.Id}' must define packagedSourceRelativePath.");
+                    }
+
+                    continue;
+                }
+
                 if (sources.Length == 0)
                 {
                     throw new InvalidOperationException(
@@ -559,6 +593,23 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
     {
         var candidates = new List<string>();
 
+        if (descriptor.IsPackagedRequired && IsProductionContext())
+        {
+            string packagedPath = ResolvePackagedPath(descriptor);
+            bool packagedExists = descriptor.InstallKind == ProvisioningInstallKind.File
+                ? File.Exists(packagedPath)
+                : Directory.Exists(packagedPath);
+            if (packagedExists)
+            {
+                candidates.Add(packagedPath);
+                sourceCandidates = candidates;
+                return true;
+            }
+
+            sourceCandidates = candidates;
+            return false;
+        }
+
         if (ShouldUseDevelopmentSources() && !string.IsNullOrWhiteSpace(descriptor.DevelopmentSourceRelativePath))
         {
             string developmentPath = Path.GetFullPath(Path.Combine(_repoRootPath, descriptor.DevelopmentSourceRelativePath));
@@ -580,6 +631,17 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
 
         sourceCandidates = candidates;
         return candidates.Count > 0;
+    }
+
+    private string ResolvePackagedPath(ProvisionedAssetDescriptor descriptor)
+    {
+        if (string.IsNullOrWhiteSpace(descriptor.PackagedSourceRelativePath))
+        {
+            throw new InvalidOperationException(
+                $"Packaged asset '{descriptor.Id}' is missing packagedSourceRelativePath.");
+        }
+
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, descriptor.PackagedSourceRelativePath));
     }
 
     private static IEnumerable<string> EnumerateRemoteSources(ProvisionedAssetDescriptor descriptor)

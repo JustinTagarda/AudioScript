@@ -37,6 +37,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         _options = options ?? new StoreUpdateOptions();
         ValidateProductionPolicy(_options);
         _currentSnapshot = AppUpdateSnapshot.Idle(_versionProvider.InstalledVersion);
+        _storeUpdateProvider.QueueStateChanged += OnQueueStateChanged;
     }
 
     public event EventHandler<AppUpdateSnapshot>? SnapshotChanged;
@@ -93,6 +94,8 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
             _lifetimeCts?.Cancel();
             startupTask = _startupTask;
         }
+
+        _storeUpdateProvider.QueueStateChanged -= OnQueueStateChanged;
 
         if (startupTask is not null)
         {
@@ -214,17 +217,7 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         StoreQueueRecoveryState queueState = await _storeUpdateProvider.TryGetActiveQueueStateAsync(cancellationToken).ConfigureAwait(false);
         if (queueState.HasActiveQueueItem)
         {
-            Publish(new AppUpdateSnapshot(
-                AppUpdateState.Installing,
-                queueState.PhaseText ?? "Installing",
-                queueState.PhaseText ?? "Installing",
-                IsMandatoryUpdateAvailable: false,
-                IsProgressVisible: true,
-                ProgressValue: queueState.ProgressValue,
-                InstalledVersion: installedVersion,
-                AvailableVersion: null,
-                HasActiveQueueItem: true,
-                PackageDetailText: queueState.PackageDetailText));
+            PublishQueueState(queueState, installedVersion, availableVersion: null);
             return;
         }
 
@@ -390,6 +383,16 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
         Publish(Failed("Failed", BuildFailureGuidance(result.State)));
     }
 
+    private void OnQueueStateChanged(object? sender, StoreQueueRecoveryState queueState)
+    {
+        if (!queueState.HasActiveQueueItem)
+        {
+            return;
+        }
+
+        PublishQueueState(queueState, _versionProvider.InstalledVersion, _lastKnownAvailableVersion);
+    }
+
     private void ScheduleOneHourRetry(CancellationToken lifetimeToken)
     {
         lock (_sync)
@@ -479,6 +482,24 @@ public sealed class AppUpdateService : IAppUpdateService, IAppUpdateCoordinator
                 cancellationToken).ConfigureAwait(false);
             Publish(AppUpdateSnapshot.Idle(installedVersion));
         }
+    }
+
+    private void PublishQueueState(
+        StoreQueueRecoveryState queueState,
+        string installedVersion,
+        string? availableVersion)
+    {
+        Publish(new AppUpdateSnapshot(
+            AppUpdateState.Installing,
+            queueState.PhaseText ?? "Installing",
+            queueState.PhaseText ?? "Installing",
+            IsMandatoryUpdateAvailable: false,
+            IsProgressVisible: true,
+            ProgressValue: queueState.ProgressValue,
+            installedVersion,
+            availableVersion,
+            HasActiveQueueItem: true,
+            PackageDetailText: queueState.PackageDetailText));
     }
 
     private async Task<bool> HasDeferredInstallOnExitAsyncCore(CancellationToken cancellationToken)

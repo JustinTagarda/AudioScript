@@ -77,7 +77,6 @@ public partial class App : System.Windows.Application
             processLogService);
         var startupDependencyHealthCoordinator = new StartupDependencyHealthCoordinator(
             startupProvisioningCoordinator,
-            assetProvisioningService,
             pythonDependencyRepairService,
             processLogService);
 
@@ -131,9 +130,9 @@ public partial class App : System.Windows.Application
             startupProvisioningCoordinator,
             startupDependencyHealthCoordinator,
             processLogService);
-        if (!startupDependencyHealthResult.Succeeded && !startupDependencyHealthResult.Degraded)
+        if (!startupDependencyHealthResult.Succeeded)
         {
-            processLogService.UpdateCrashContext("app.startup.provisioning.aborted");
+            processLogService.UpdateCrashContext("app.startup.dependency_validation.aborted");
             Shutdown();
             return;
         }
@@ -254,126 +253,49 @@ public partial class App : System.Windows.Application
         IStartupDependencyHealthCoordinator startupDependencyHealthCoordinator,
         ProcessLogService processLogService)
     {
-        IReadOnlyList<ProvisionedAssetDescriptor> requiredAssetsForDisplay = startupProvisioningCoordinator.GetRequiredAssetsForStartupDisplay();
-        var startupWindow = new StartupProvisioningWindow();
-        var pythonDependencies = new (string Id, string DisplayName)[]
+        processLogService.Log("StartupProvisioning", "Running startup dependency validation before opening the main window.");
+
+        StartupDependencyHealthResult healthResult;
+        try
         {
-            ("torch", "torch"),
-            ("torchaudio", "torchaudio"),
-            ("pyannote.audio", "pyannote.audio"),
-        };
-        var dependencyDisplayItems = requiredAssetsForDisplay
-            .Select(asset => (asset.Id, asset.DisplayName))
-            .Concat(pythonDependencies)
-            .ToArray();
-        var viewModel = new StartupProvisioningWindowViewModel(dependencyDisplayItems);
-        foreach (ProvisionedAssetDescriptor asset in requiredAssetsForDisplay)
-        {
-            AssetProvisioningStatus status = startupProvisioningCoordinator.GetAssetStatus(asset.Id);
-            (string statusLabel, double percent) = status.State switch
-            {
-                AssetProvisioningState.Ready => ("Ready", 100),
-                AssetProvisioningState.Unsupported => ("Unsupported", 0),
-                AssetProvisioningState.Unconfigured => ("Unconfigured", 0),
-                _ => ("Waiting...", 0),
-            };
-            viewModel.SetAssetStatus(asset.Id, statusLabel, percent);
+            healthResult = startupDependencyHealthCoordinator
+                .RunAsync(progress: null, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
         }
-
-        startupWindow.DataContext = viewModel;
-        processLogService.Log("StartupProvisioning", "Startup dependency check dialog opened modally.");
-
-        StartupDependencyHealthResult? healthResult = null;
-        var cancellationTokenSource = new CancellationTokenSource();
-        startupWindow.CancellationTokenSource = cancellationTokenSource;
-        startupWindow.ContentRendered += async (_, _) =>
+        catch (Exception ex)
         {
-            try
-            {
-                var progress = new Progress<StartupDependencyHealthProgress>(dependencyProgress =>
-                {
-                    viewModel.UpdateProgress(dependencyProgress);
-                });
-
-                StartupDependencyHealthResult result = await startupDependencyHealthCoordinator
-                    .RunAsync(progress, cancellationTokenSource.Token)
-                    .ConfigureAwait(true);
-                healthResult = result;
-
-                if (result.Succeeded)
-                {
-                    viewModel.MarkCompleted();
-                }
-                else
-                {
-                    viewModel.MarkFailed("Startup dependency check finished with unresolved items. AudioScript will continue in degraded mode.");
-                }
-
-                startupWindow.CloseWithResult(true);
-            }
-            catch (OperationCanceledException)
-            {
-                viewModel.MarkCanceled();
-                startupWindow.CloseWithResult(false);
-            }
-            catch (Exception ex)
-            {
-                processLogService.LogException("StartupDependency", "Startup dependency check failed.", ex);
-                viewModel.MarkFailed("Startup dependency check failed unexpectedly. AudioScript will continue with degraded functionality where possible.");
-                healthResult = new StartupDependencyHealthResult(
-                    Succeeded: false,
-                    Degraded: true,
-                    FailedItems:
-                    [
-                        new DependencyHealthItem(
-                            "startup-dependency-check",
-                            "Startup dependency health check",
-                            DependencyHealthCategory.Asset,
-                            DependencyHealthStatus.Failed,
-                            ex.Message,
-                            "Some features may be unavailable.",
-                            [])
-                    ],
-                    AttemptedRepairs: []);
-                startupWindow.CloseWithResult(false);
-            }
-        };
-
-        bool? dialogResult = startupWindow.ShowDialog();
-        cancellationTokenSource.Dispose();
-
-        if (dialogResult != true)
-        {
-            return new StartupDependencyHealthResult(
+            processLogService.LogException("StartupDependency", "Startup dependency check failed.", ex);
+            healthResult = new StartupDependencyHealthResult(
                 Succeeded: false,
-                Degraded: false,
+                Degraded: true,
                 FailedItems:
                 [
                     new DependencyHealthItem(
-                        "startup-canceled",
-                        "Startup initialization",
+                        "startup-dependency-check",
+                        "Startup dependency health check",
                         DependencyHealthCategory.Asset,
                         DependencyHealthStatus.Failed,
-                        "Startup dependency initialization was canceled.",
-                        "Application startup was canceled.",
+                        ex.Message,
+                        "Some features may be unavailable.",
                         [])
                 ],
                 AttemptedRepairs: []);
         }
 
-        if (healthResult is not null && healthResult.FailedItems.Count > 0)
+        if (healthResult.FailedItems.Count > 0)
         {
             ShowStartupDependencyFailureSummary(healthResult.FailedItems);
         }
 
-        return healthResult ?? new StartupDependencyHealthResult(true, false, [], []);
+        return healthResult;
     }
 
     private static void ShowStartupDependencyFailureSummary(
         IReadOnlyList<DependencyHealthItem> failures)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("One or more required startup dependencies could not be installed:");
+        builder.AppendLine("One or more required bundled runtime components are missing or corrupted:");
         builder.AppendLine();
 
         foreach (DependencyHealthItem failure in failures)
@@ -389,7 +311,7 @@ public partial class App : System.Windows.Application
         }
 
         var dialog = new ErrorDialogWindow(builder.ToString().TrimEnd());
-        dialog.Title = "Startup dependency check results";
+        dialog.Title = "AudioScript installation issue";
         _ = dialog.ShowDialog();
     }
 
@@ -407,7 +329,7 @@ public partial class App : System.Windows.Application
         }
 
         string joined = string.Join(", ", diarizationFailures.Select(item => item.DisplayName));
-        return $"Speaker diarization dependencies are unavailable ({joined}). Audio transcription remains available, but real speaker diarization will use fallback labels.";
+        return $"Speaker diarization runtime is unavailable ({joined}). Reinstall AudioScript from Microsoft Store to restore Detect Speaker.";
     }
 
     private static IAudioLoopbackCaptureService CreateLiveCaptureService(

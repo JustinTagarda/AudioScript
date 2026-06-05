@@ -37,6 +37,7 @@ public sealed class StartupAssetProvisioningCoordinator
             .GetManifestAssets()
             .Where(asset => asset.Required)
             .Where(asset => IsSupportedOnCurrentArchitecture(asset))
+            .Where(asset => !asset.IsPackagedRequired)
             .Where(asset => !_assetProvisioningService.IsInstalled(asset.Id))
             .ToArray();
     }
@@ -59,7 +60,7 @@ public sealed class StartupAssetProvisioningCoordinator
         IProgress<AssetProvisioningProgress>? progress,
         CancellationToken cancellationToken)
     {
-        IReadOnlyList<ProvisionedAssetDescriptor> requiredAssets = GetRequiredAssetsNeedingInstall();
+        IReadOnlyList<ProvisionedAssetDescriptor> requiredAssets = GetRequiredAssetsForStartupDisplay();
         DateTimeOffset startUtc = DateTimeOffset.UtcNow;
         _processLogService.Log(
             nameof(StartupAssetProvisioningCoordinator),
@@ -86,7 +87,20 @@ public sealed class StartupAssetProvisioningCoordinator
                         continue;
                     }
 
-                    await _assetProvisioningService.InstallAssetAsync(asset.Id, progress, cancellationToken);
+                    if (asset.IsPackagedRequired)
+                    {
+                        failedCount++;
+                        failures.Add(new StartupProvisioningAssetFailure(
+                            asset.Id,
+                            asset.DisplayName,
+                            "Required packaged asset is missing or corrupted.",
+                            "Reinstall AudioScript from Microsoft Store."));
+                        continue;
+                    }
+
+                    await _assetProvisioningService
+                        .InstallAssetAsync(asset.Id, progress, cancellationToken)
+                        .ConfigureAwait(false);
                     installedCount++;
 
                     AssetProvisioningStatus afterStatus = _assetProvisioningService.GetStatus(asset.Id);

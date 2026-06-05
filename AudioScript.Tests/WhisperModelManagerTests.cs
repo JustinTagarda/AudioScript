@@ -37,7 +37,7 @@ public sealed class WhisperModelManagerTests {
     }
 
     [Fact]
-    public void UninstallModel_RemovesInstalledModels() {
+    public void UninstallModel_RemovesInstalledOptionalModels() {
         string rootPath = CreateTempDirectory();
         string bundledPath = Path.Combine(rootPath, "bundled");
         string optionalPath = Path.Combine(rootPath, "optional");
@@ -48,23 +48,41 @@ public sealed class WhisperModelManagerTests {
 
             using var logs = new ProcessLogService(Path.Combine(rootPath, "logs"));
             var manager = new WhisperModelManager(logs, optionalPath, bundledPath);
-            string smallPath = manager.ResolveModelPath(TranscriptionModelCatalog.WhisperSmall);
             string mediumPath = manager.ResolveModelPath(TranscriptionModelCatalog.WhisperMedium);
-            File.WriteAllBytes(smallPath, [1]);
             File.WriteAllBytes(mediumPath, [1]);
 
             WhisperModelUninstallResult result = manager.UninstallModel(TranscriptionModelCatalog.WhisperMedium);
-            WhisperModelUninstallResult smallResult = manager.UninstallModel(TranscriptionModelCatalog.WhisperSmall);
 
             Assert.True(result.WasDeleted);
             Assert.Equal(1, result.DeletedBytes);
             Assert.Equal(TranscriptionModelCatalog.WhisperMedium, result.ModelId);
             Assert.Equal(mediumPath, result.ModelPath);
-            Assert.True(smallResult.WasDeleted);
-            Assert.False(File.Exists(smallPath));
             Assert.False(File.Exists(mediumPath));
         }
         finally {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public void UninstallModel_RejectsBundledWhisperSmall()
+    {
+        string rootPath = CreateTempDirectory();
+        string bundledPath = Path.Combine(rootPath, "bundled");
+        string optionalPath = Path.Combine(rootPath, "optional");
+
+        try
+        {
+            Directory.CreateDirectory(bundledPath);
+            Directory.CreateDirectory(optionalPath);
+
+            using var logs = new ProcessLogService(Path.Combine(rootPath, "logs"));
+            var manager = new WhisperModelManager(logs, optionalPath, bundledPath);
+
+            Assert.Throws<InvalidOperationException>(() => manager.UninstallModel(TranscriptionModelCatalog.WhisperSmall));
+        }
+        finally
+        {
             DeleteDirectory(rootPath);
         }
     }

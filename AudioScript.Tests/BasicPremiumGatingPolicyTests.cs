@@ -24,7 +24,6 @@ public sealed class BasicPremiumGatingPolicyTests
 
         Assert.False(viewModel.IsApplicationAccessTierVisible);
         Assert.False(viewModel.IsUpgradeButtonVisible);
-        Assert.False(viewModel.IsPremiumStatusBannerVisible);
         Assert.Equal(string.Empty, viewModel.ApplicationAccessTierText);
     }
 
@@ -44,6 +43,8 @@ public sealed class BasicPremiumGatingPolicyTests
         Assert.True(viewModel.HasUnlimitedLiveTranscription);
         Assert.Null(viewModel.LiveTranscriptionLimit);
         Assert.True(viewModel.CanUseSpeakerDiarization);
+        Assert.True(viewModel.HasUnlimitedSpeakerDiarization);
+        Assert.Null(viewModel.SpeakerDiarizationLimit);
         Assert.True(viewModel.CanInstallModel(TranscriptionModelCatalog.WhisperLargeV3Turbo));
     }
 
@@ -64,6 +65,9 @@ public sealed class BasicPremiumGatingPolicyTests
         Assert.True(viewModel.CanUseLiveTranscription);
         Assert.True(viewModel.HasUnlimitedLiveTranscription);
         Assert.Null(viewModel.LiveTranscriptionLimit);
+        Assert.True(viewModel.CanUseSpeakerDiarization);
+        Assert.True(viewModel.HasUnlimitedSpeakerDiarization);
+        Assert.Null(viewModel.SpeakerDiarizationLimit);
         Assert.Equal("Premium", viewModel.ApplicationAccessTierText);
     }
 
@@ -84,6 +88,9 @@ public sealed class BasicPremiumGatingPolicyTests
         Assert.True(viewModel.CanUseLiveTranscription);
         Assert.False(viewModel.HasUnlimitedLiveTranscription);
         Assert.Equal(AppFeatureAccess.BasicLiveTranscriptionLimit, viewModel.LiveTranscriptionLimit);
+        Assert.True(viewModel.CanUseSpeakerDiarization);
+        Assert.False(viewModel.HasUnlimitedSpeakerDiarization);
+        Assert.Equal(AppFeatureAccess.BasicSpeakerDiarizationLimit, viewModel.SpeakerDiarizationLimit);
         Assert.Equal("Basic", viewModel.ApplicationAccessTierText);
     }
 
@@ -114,10 +121,11 @@ public sealed class BasicPremiumGatingPolicyTests
         Assert.False(AppFeatureAccess.CanInstallModel(TranscriptionModelCatalog.WhisperLargeV3Turbo, hasPremium));
 
         Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.LiveTranscription, hasPremium));
-        Assert.False(AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, hasPremium));
+        Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.SpeakerDiarization, hasPremium));
         Assert.False(AppFeatureAccess.CanAccessFeature(AppFeature.PremiumModelInstall, hasPremium));
         Assert.False(AppFeatureAccess.HasUnlimitedLiveTranscription(hasPremium));
         Assert.Equal(AppFeatureAccess.BasicLiveTranscriptionLimit, AppFeatureAccess.GetLiveTranscriptionLimit(hasPremium));
+        Assert.Equal(AppFeatureAccess.BasicSpeakerDiarizationLimit, AppFeatureAccess.GetSpeakerDiarizationLimit(hasPremium));
     }
 
     [Fact]
@@ -140,6 +148,7 @@ public sealed class BasicPremiumGatingPolicyTests
         Assert.True(AppFeatureAccess.CanAccessFeature(AppFeature.PremiumModelInstall, hasPremium));
         Assert.True(AppFeatureAccess.HasUnlimitedLiveTranscription(hasPremium));
         Assert.Null(AppFeatureAccess.GetLiveTranscriptionLimit(hasPremium));
+        Assert.Null(AppFeatureAccess.GetSpeakerDiarizationLimit(hasPremium));
     }
 
     [Fact]

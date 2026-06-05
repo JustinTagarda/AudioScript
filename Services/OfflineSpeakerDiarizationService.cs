@@ -42,67 +42,43 @@ public sealed class OfflineSpeakerDiarizationService {
             totalAudio,
             () => latestDiarizationPercent,
             diarizationHeartbeatCts.Token);
+        progressReporter.Report(
+            TranscriptionProgressPhase.RunningSpeakerDiarization,
+            0,
+            TimeSpan.Zero,
+            totalAudio,
+            "Running speaker diarization.",
+            force: true);
         try {
-            progressReporter.Report(
-                TranscriptionProgressPhase.RunningSpeakerDiarization,
-                0,
-                TimeSpan.Zero,
-                totalAudio,
-                "Running speaker diarization.",
-                force: true);
+            speakerTurns = await _diarizationEngine.DiarizeAudioFileAsync(
+                audioFilePath,
+                cancellationToken,
+                new Progress<SpeakerDiarizationProgress>(diarizationProgress =>
+                {
+                    double percent = diarizationProgress.Percent;
+                    latestDiarizationPercent = percent;
+                    TimeSpan processedAudio = totalAudio > TimeSpan.Zero
+                        ? TimeSpan.FromTicks((long)(totalAudio.Ticks * (percent / 100d)))
+                        : TimeSpan.Zero;
+                    progressReporter.Report(
+                        TranscriptionProgressPhase.RunningSpeakerDiarization,
+                        percent,
+                        processedAudio,
+                        totalAudio,
+                        "Running speaker diarization.",
+                        force: percent >= 100);
+                }));
+        }
+        finally {
+            diarizationHeartbeatCts.Cancel();
             try {
-                speakerTurns = await _diarizationEngine.DiarizeAudioFileAsync(
-                    audioFilePath,
-                    cancellationToken,
-                    new Progress<SpeakerDiarizationProgress>(diarizationProgress =>
-                    {
-                        double percent = diarizationProgress.Percent;
-                        latestDiarizationPercent = percent;
-                        TimeSpan processedAudio = totalAudio > TimeSpan.Zero
-                            ? TimeSpan.FromTicks((long)(totalAudio.Ticks * (percent / 100d)))
-                            : TimeSpan.Zero;
-                        progressReporter.Report(
-                            TranscriptionProgressPhase.RunningSpeakerDiarization,
-                            percent,
-                            processedAudio,
-                            totalAudio,
-                            "Running speaker diarization.",
-                            force: percent >= 100);
-                    }));
+                await diarizationHeartbeatTask;
             }
-            finally {
-                diarizationHeartbeatCts.Cancel();
-                try {
-                    await diarizationHeartbeatTask;
-                }
-                catch (OperationCanceledException) {
-                }
+            catch (OperationCanceledException) {
             }
-
-            latestDiarizationPercent = 100;
-        }
-        catch (Exception ex) when (IsEmergencyFallbackException(ex)) {
-            _processLogService.LogException(
-                "SpeakerDiarization",
-                "Real offline diarization failed. Falling back to heuristic speaker labels.",
-                ex);
-            progressReporter.Report(
-                TranscriptionProgressPhase.MergingSpeakerLabels,
-                99,
-                totalAudio,
-                totalAudio,
-                "Applying heuristic speaker labels.",
-                force: true);
-            IReadOnlyList<SpeakerDiarizationSegment> fallbackSegments = BuildHeuristicSpeakerSegments(timedLines);
-            return new SpeakerDiarizationResult(
-                Text: BuildResultText(fallbackSegments),
-                Model: transcriptionResult.Model,
-                CreatedAt: transcriptionResult.CreatedAt,
-                Duration: transcriptionResult.Duration,
-                Segments: fallbackSegments,
-                UsedHeuristicFallback: true);
         }
 
+        latestDiarizationPercent = 100;
         progressReporter.Report(
             TranscriptionProgressPhase.MergingSpeakerLabels,
             99,
@@ -200,59 +176,6 @@ public sealed class OfflineSpeakerDiarizationService {
         return line.EndOffset is null || line.EndOffset <= line.StartOffset
             ? line.StartOffset
             : line.EndOffset.Value;
-    }
-
-    private static IReadOnlyList<SpeakerDiarizationSegment> BuildHeuristicSpeakerSegments(
-        IReadOnlyList<TranscriptionTimedLine> timedLines) {
-        var segments = new List<SpeakerDiarizationSegment>();
-        string currentSpeaker = "speaker_1";
-        TranscriptionTimedLine? previousLine = null;
-
-        foreach (TranscriptionTimedLine line in timedLines
-                     .Where(line => !string.IsNullOrWhiteSpace(line.Text))
-                     .OrderBy(line => line.StartOffset)) {
-            if (previousLine is not null && ShouldSwitchSpeaker(previousLine, line)) {
-                currentSpeaker = string.Equals(currentSpeaker, "speaker_1", StringComparison.OrdinalIgnoreCase)
-                    ? "speaker_2"
-                    : "speaker_1";
-            }
-
-            segments.Add(new SpeakerDiarizationSegment(
-                Speaker: currentSpeaker,
-                Text: line.Text.Trim(),
-                StartOffset: line.StartOffset,
-                EndOffset: line.EndOffset));
-            previousLine = line;
-        }
-
-        return segments;
-    }
-
-    private static bool ShouldSwitchSpeaker(TranscriptionTimedLine previousLine, TranscriptionTimedLine currentLine) {
-        TimeSpan previousEnd = previousLine.EndOffset is not null && previousLine.EndOffset > previousLine.StartOffset
-            ? previousLine.EndOffset.Value
-            : previousLine.StartOffset;
-        TimeSpan gap = currentLine.StartOffset - previousEnd;
-        if (gap >= StrongTurnGap) {
-            return true;
-        }
-
-        return gap >= SentenceTurnGap && EndsSentence(previousLine.Text);
-    }
-
-    private static bool EndsSentence(string? text) {
-        string trimmed = text?.Trim() ?? string.Empty;
-        return trimmed.EndsWith(".", StringComparison.Ordinal)
-            || trimmed.EndsWith("?", StringComparison.Ordinal)
-            || trimmed.EndsWith("!", StringComparison.Ordinal);
-    }
-
-    private static bool IsEmergencyFallbackException(Exception exception) {
-        return exception is FileNotFoundException
-            or DirectoryNotFoundException
-            or DllNotFoundException
-            or BadImageFormatException
-            or InvalidOperationException;
     }
 
     private static async Task ReportDiarizationHeartbeatAsync(

@@ -34,6 +34,42 @@ public sealed class MainWindowTests
     }
 
     [Fact]
+    public void FooterStatusRow_ListsUpgradeVersionAndUpdateInExpectedOrder()
+    {
+        string xamlPath = FindRepoFile("AppStatusDisplay.xaml");
+        string xaml = File.ReadAllText(xamlPath);
+
+        int upgradeIndex = xaml.IndexOf("Content=\"Upgrade\"", StringComparison.Ordinal);
+        int versionIndex = xaml.IndexOf("StorePackageVersionText", StringComparison.Ordinal);
+        int updateIndex = xaml.IndexOf("Content=\"Update\"", StringComparison.Ordinal);
+
+        Assert.True(upgradeIndex >= 0);
+        Assert.True(versionIndex >= 0);
+        Assert.True(updateIndex >= 0);
+        Assert.True(upgradeIndex < versionIndex);
+        Assert.True(versionIndex < updateIndex);
+        Assert.Contains("Padding=\"4,1,4,1\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("CornerRadius=\"4\"", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateProgressWindow_OpensModallyFromDeferredDispatcherCallback()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        int methodStart = code.IndexOf("private void SyncUpdateProgressWindow", StringComparison.Ordinal);
+        int methodEnd = code.IndexOf("private void ApplyFloatingSurfaceTheme", methodStart, StringComparison.Ordinal);
+        string methodBlock = methodEnd > methodStart
+            ? code[methodStart..methodEnd]
+            : code[methodStart..];
+
+        Assert.Contains("Dispatcher.BeginInvoke", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("ShowDialog()", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("IsDismissalAllowed", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TranscriptProcessingPanel_DoesNotShowMuteControl()
     {
         string xamlPath = FindRepoFile("MainWindow.xaml");

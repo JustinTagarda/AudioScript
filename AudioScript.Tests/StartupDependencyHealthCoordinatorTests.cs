@@ -18,7 +18,7 @@ public sealed class StartupDependencyHealthCoordinatorTests
             new DependencyHealthItem("torch", "torch", DependencyHealthCategory.PythonModule, DependencyHealthStatus.Completed, "Ready", string.Empty, [])
         ], []));
 
-        var coordinator = new StartupDependencyHealthCoordinator(assetCoordinator, assetService, python, logs);
+        var coordinator = new StartupDependencyHealthCoordinator(assetCoordinator, python, logs);
         StartupDependencyHealthResult result = await coordinator.RunAsync(progress: null, CancellationToken.None);
 
         Assert.True(result.Succeeded);
@@ -42,7 +42,7 @@ public sealed class StartupDependencyHealthCoordinatorTests
             new DependencyRepairAttempt("tier2", 1, false, 1, "failed")
         ]));
 
-        var coordinator = new StartupDependencyHealthCoordinator(assetCoordinator, assetService, python, logs);
+        var coordinator = new StartupDependencyHealthCoordinator(assetCoordinator, python, logs);
         StartupDependencyHealthResult result = await coordinator.RunAsync(progress: null, CancellationToken.None);
 
         Assert.False(result.Succeeded);

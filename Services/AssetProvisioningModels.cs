@@ -16,6 +16,12 @@ public enum ProvisioningInstallRoot
     Tools
 }
 
+public enum AssetDeliveryMode
+{
+    ProvisionedOptional,
+    PackagedRequired,
+}
+
 public enum AssetProvisioningState
 {
     Missing,
@@ -59,6 +65,12 @@ public sealed record ProvisionedAssetDescriptor
     [JsonPropertyName("developmentSourceRelativePath")]
     public string? DevelopmentSourceRelativePath { get; init; }
 
+    [JsonPropertyName("packagedSourceRelativePath")]
+    public string? PackagedSourceRelativePath { get; init; }
+
+    [JsonPropertyName("deliveryMode")]
+    public AssetDeliveryMode DeliveryMode { get; init; } = AssetDeliveryMode.ProvisionedOptional;
+
     [JsonPropertyName("installKind")]
     public ProvisioningInstallKind InstallKind { get; init; }
 
@@ -79,6 +91,9 @@ public sealed record ProvisionedAssetDescriptor
 
     [JsonPropertyName("required")]
     public bool Required { get; init; }
+
+    public bool IsPackagedRequired =>
+        DeliveryMode == AssetDeliveryMode.PackagedRequired;
 }
 
 public sealed record AssetProvisioningManifest
