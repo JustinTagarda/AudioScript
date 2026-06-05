@@ -1,5 +1,7 @@
 assets/whisper/models/*.bin filter=lfs diff=lfs merge=lfs -text
 assets/python/win-x64/Lib/site-packages/torch/lib/*.dll filter=lfs diff=lfs merge=lfs -text
 assets/python/win-x64/Lib/site-packages/ctranslate2/*.dll filter=lfs diff=lfs merge=lfs -text
+assets/prebuilt/models/*.bin filter=lfs diff=lfs merge=lfs -text
+assets/prebuilt/python/win-x64/Lib/site-packages/torch/lib/*.dll filter=lfs diff=lfs merge=lfs -text
 assets/prebuilt/models/ggml-small.bin filter=lfs diff=lfs merge=lfs -text
 assets/prebuilt/python/win-x64/Lib/site-packages/torch/lib/torch_cpu.dll filter=lfs diff=lfs merge=lfs -text
