@@ -92,6 +92,12 @@ public sealed record ProvisionedAssetDescriptor
     [JsonPropertyName("required")]
     public bool Required { get; init; }
 
+    [JsonPropertyName("releaseRequired")]
+    public bool ReleaseRequired { get; init; }
+
+    [JsonPropertyName("minimumDownloadSources")]
+    public int? MinimumDownloadSources { get; init; }
+
     public bool IsPackagedRequired =>
         DeliveryMode == AssetDeliveryMode.PackagedRequired;
 }

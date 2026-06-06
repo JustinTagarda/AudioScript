@@ -496,6 +496,91 @@ public sealed class AssetProvisioningServiceTests
     }
 
     [Fact]
+    public void Ctor_AllowsOptionalReleaseManagedAsset_WhenMinimumDownloadSourcesIsSatisfied()
+    {
+        string rootPath = CreateTempDirectory();
+
+        try
+        {
+            string manifestPath = WriteManifest(rootPath, new
+            {
+                schemaVersion = 1,
+                assets = new[]
+                {
+                    new
+                    {
+                        id = "pyannote-python-x64",
+                        displayName = "Pyannote Python runtime (x64)",
+                        version = "2.0.0.0",
+                        downloadUri = "https://github.com/JustinTagarda/AudioScript/releases/latest/download/AudioScript.PyannotePythonRuntime.win-x64.zip",
+                        downloadSources = new[]
+                        {
+                            "https://github.com/JustinTagarda/AudioScript/releases/latest/download/AudioScript.PyannotePythonRuntime.win-x64.zip"
+                        },
+                        installKind = "Directory",
+                        installRoot = "Python",
+                        installRelativePath = "win-x64",
+                        releaseRequired = true,
+                        minimumDownloadSources = 1,
+                        required = false
+                    }
+                }
+            });
+
+            using var logs = new ProcessLogService(Path.Combine(rootPath, "logs"));
+            AppDataPathProvider paths = new(localAppDataPath: Path.Combine(rootPath, "local"));
+
+            using var service = new AssetProvisioningService(logs, paths, manifestPath, repoRootPath: rootPath);
+            Assert.NotNull(service);
+        }
+        finally
+        {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public void Ctor_Throws_WhenOptionalReleaseManagedAssetHasTooFewSources()
+    {
+        string rootPath = CreateTempDirectory();
+
+        try
+        {
+            string manifestPath = WriteManifest(rootPath, new
+            {
+                schemaVersion = 1,
+                assets = new[]
+                {
+                    new
+                    {
+                        id = "pyannote-python-x64",
+                        displayName = "Pyannote Python runtime (x64)",
+                        version = "2.0.0.0",
+                        downloadUri = "https://github.com/JustinTagarda/AudioScript/releases/latest/download/AudioScript.PyannotePythonRuntime.win-x64.zip",
+                        downloadSources = Array.Empty<string>(),
+                        installKind = "Directory",
+                        installRoot = "Python",
+                        installRelativePath = "win-x64",
+                        releaseRequired = true,
+                        minimumDownloadSources = 1,
+                        required = false
+                    }
+                }
+            });
+
+            using var logs = new ProcessLogService(Path.Combine(rootPath, "logs"));
+            AppDataPathProvider paths = new(localAppDataPath: Path.Combine(rootPath, "local"));
+
+            Assert.Throws<InvalidOperationException>(() =>
+                new AssetProvisioningService(logs, paths, manifestPath, repoRootPath: rootPath));
+        }
+        finally
+        {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
     public void IsInstalled_AdoptsExistingAssetWithoutStateEntry()
     {
         string rootPath = CreateTempDirectory();

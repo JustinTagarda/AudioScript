@@ -63,7 +63,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
-    <Content Include="assets\prebuilt\**\*">
+    <Content Include="assets\prebuilt\models\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="assets\prebuilt\tools\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
@@ -78,8 +82,12 @@
       <_HeavyAssetFiles Include="$(_PublishAssetsRoot)\models\ggml-small.bin" Condition="'$(_PublishAssetsRoot)' != ''" />
       <_HeavyAssetDirectories Include="$(_ProvisionedAssetsRoot)\pyannote" />
       <_HeavyAssetDirectories Include="$(_ProvisionedAssetsRoot)\python" />
+      <_HeavyAssetDirectories Include="$(_ProvisionedAssetsRoot)\prebuilt\pyannote" />
+      <_HeavyAssetDirectories Include="$(_ProvisionedAssetsRoot)\prebuilt\python" />
       <_HeavyAssetDirectories Include="$(_PublishAssetsRoot)\pyannote" Condition="'$(_PublishAssetsRoot)' != ''" />
       <_HeavyAssetDirectories Include="$(_PublishAssetsRoot)\python" Condition="'$(_PublishAssetsRoot)' != ''" />
+      <_HeavyAssetDirectories Include="$(_PublishAssetsRoot)\prebuilt\pyannote" Condition="'$(_PublishAssetsRoot)' != ''" />
+      <_HeavyAssetDirectories Include="$(_PublishAssetsRoot)\prebuilt\python" Condition="'$(_PublishAssetsRoot)' != ''" />
     </ItemGroup>
     <Delete Files="@(_HeavyAssetFiles)" TreatErrorsAsWarnings="true" />
     <RemoveDir Directories="@(_HeavyAssetDirectories)" Condition="Exists('%(Identity)')" />

@@ -105,6 +105,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly ProcessLogService? _processLogService;
     private readonly WhisperModelManager? _whisperModelManager;
     private readonly PyannoteCommunityModelManager? _pyannoteCommunityModelManager;
+    private readonly SpeakerDiarizationDependencyCoordinator? _speakerDiarizationDependencyCoordinator;
     private bool _isTranscribeAudioBatchTranscribing;
     private bool _isRowFileTranscriptionRunning;
     private bool _isLiveTranscribing;
@@ -182,7 +183,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         WaveClipExtractor? rowWaveClipExtractor = null,
         ProcessLogService? processLogService = null,
         WhisperModelManager? whisperModelManager = null,
-        PyannoteCommunityModelManager? pyannoteCommunityModelManager = null)
+        PyannoteCommunityModelManager? pyannoteCommunityModelManager = null,
+        SpeakerDiarizationDependencyCoordinator? speakerDiarizationDependencyCoordinator = null)
     {
         _playbackTranscriptionSessionFactory = playbackTranscriptionSessionFactory;
         _liveRecordingCaptureSessionFactory = liveRecordingCaptureSessionFactory;
@@ -192,6 +194,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _processLogService = processLogService;
         _whisperModelManager = whisperModelManager;
         _pyannoteCommunityModelManager = pyannoteCommunityModelManager;
+        _speakerDiarizationDependencyCoordinator = speakerDiarizationDependencyCoordinator;
         _storePackageVersionText = ResolveStorePackageVersionText();
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
@@ -318,6 +321,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool IsDetectSpeakerPrimaryActionEnabled =>
         DataContext is MainViewModel vm
+        && vm.IsSpeakerDiarizationRuntimeAvailable
         && vm.CanRunDetectSpeakerPrimaryAction
         && !IsAnyTranscriptProcessingPanelVisible;
 
@@ -647,7 +651,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
-    private void DetectSpeakerPrimaryAction_Click(object sender, RoutedEventArgs e)
+    private async void DetectSpeakerPrimaryAction_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm || IsTranscribeAudioBatchTranscribing || IsTranscribeAudioBatchPendingStart)
         {
@@ -661,6 +665,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ShowBlockingMessage(
                 "Speaker detection unavailable",
                 vm.SpeakerDiarizationRuntimeStatusMessage);
+            return;
+        }
+
+        if (!vm.CanRunDetectSpeakerPrimaryAction)
+        {
+            OpenDetectSpeakersDialog(vm);
+            return;
+        }
+
+        if (!await EnsureSpeakerDetectionAssetsReadyAsync(CancellationToken.None))
+        {
             return;
         }
 
@@ -911,7 +926,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     ? "Speaker labels applied"
                     : "Speaker detection completed",
                 vm.LastSpeakerDetectionUsedHeuristicFallback
-                    ? "The bundled speaker detection runtime was unavailable. Reinstall AudioScript from Microsoft Store."
+                    ? "Speaker detection runtime was unavailable. Run Detect Speaker again to reinstall the components."
                     : "Speaker labels are ready.",
                 vm.LastSpeakerDetectionUsedHeuristicFallback
                     ? ToastNotificationType.Warning
@@ -3448,20 +3463,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (combinedMessages.Contains("torchcodec", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase))
         {
-            return "The bundled speaker detection runtime is incompatible or corrupted. Reinstall AudioScript from Microsoft Store.";
+            return "Speaker detection components are incompatible or corrupted. Run Detect Speaker again to reinstall them.";
         }
 
         if (combinedMessages.Contains("DiarizeOutput", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("itertracks", StringComparison.OrdinalIgnoreCase))
         {
-            return "The bundled speaker detection runtime is incompatible or corrupted. Reinstall AudioScript from Microsoft Store.";
+            return "Speaker detection components are incompatible or corrupted. Run Detect Speaker again to reinstall them.";
         }
 
         if (combinedMessages.Contains("pyannote", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("model", StringComparison.OrdinalIgnoreCase)
             || combinedMessages.Contains("asset", StringComparison.OrdinalIgnoreCase))
         {
-            return "The bundled speaker detection runtime is missing or corrupted. Reinstall AudioScript from Microsoft Store.";
+            return "Speaker detection components are missing or corrupted. Run Detect Speaker again to reinstall them.";
         }
 
         if (root is FileNotFoundException or IOException)
@@ -3505,6 +3520,51 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async Task<bool> EnsureSpeakerDetectionAssetsReadyAsync(CancellationToken cancellationToken)
     {
         await Task.Yield();
+
+        if (_speakerDiarizationDependencyCoordinator is not null)
+        {
+            SpeakerDiarizationDependencyStatus status = await _speakerDiarizationDependencyCoordinator
+                .CheckStatusAsync(cancellationToken)
+                .ConfigureAwait(true);
+            if (status.IsReady)
+            {
+                return true;
+            }
+
+            if (!status.CanInstall)
+            {
+                ShowTranscribeAudioErrorDialog(status.Message);
+                return false;
+            }
+
+            using var installCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var progressWindow = new SpeakerDiarizationInstallWindow
+            {
+                Owner = this,
+            };
+            progressWindow.CancelRequested += (_, _) => installCts.Cancel();
+            var progress = new Progress<SpeakerDiarizationDependencyProgress>(progressWindow.ApplyProgress);
+
+            Task<SpeakerDiarizationDependencyResult> installTask = _speakerDiarizationDependencyCoordinator
+                .InstallOrRepairAsync(status, progress, installCts.Token);
+            _ = installTask.ContinueWith(
+                _ => progressWindow.Dispatcher.BeginInvoke(new Action(progressWindow.CloseAfterOperation)),
+                TaskScheduler.Default);
+
+            progressWindow.ShowDialog();
+            SpeakerDiarizationDependencyResult result = await installTask.ConfigureAwait(true);
+            if (result.Succeeded)
+            {
+                return true;
+            }
+
+            if (!result.WasCanceled)
+            {
+                ShowTranscribeAudioErrorDialog(result.Message);
+            }
+
+            return false;
+        }
 
         if (_pyannoteCommunityModelManager is null)
         {

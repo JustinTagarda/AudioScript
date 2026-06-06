@@ -39,7 +39,7 @@ public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngi
         var stopwatch = Stopwatch.StartNew();
 
         Log($"Starting pyannote Community-1 diarization for '{fileName}'.");
-        _modelManager.EnsureInstalled();
+        _modelManager.EnsureExecutionReady();
         progress?.Report(new SpeakerDiarizationProgress(0, 1));
 
         string standardizedPath = _audioStandardizer.ConvertFileToEngineWav(fullPath);

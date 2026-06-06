@@ -56,6 +56,54 @@ public sealed class PyannoteCommunityModelManagerTests
     }
 
     [Fact]
+    public void EnsureInstalled_Throws_WhenModelPayloadIsIncomplete()
+    {
+        string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
+
+        try
+        {
+            CreatePyannoteAssets(paths, Architecture.X64);
+            File.Delete(Path.Combine(paths.PyannoteAssetsPath, "speaker-diarization-community-1", "config.yaml"));
+            var manager = new PyannoteCommunityModelManager(
+                new StubAssetProvisioningService(paths),
+                paths,
+                architectureResolver: () => Architecture.X64);
+
+            FileNotFoundException ex = Assert.Throws<FileNotFoundException>(manager.EnsureInstalled);
+            Assert.Contains("config.yaml", ex.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Fact]
+    public void EnsureInstalled_Throws_WhenPythonRuntimePayloadIsIncomplete()
+    {
+        string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
+
+        try
+        {
+            CreatePyannoteAssets(paths, Architecture.X64);
+            Directory.Delete(Path.Combine(paths.PythonRuntimesPath, "win-x64", "Lib", "site-packages", "torchaudio"), recursive: true);
+            var manager = new PyannoteCommunityModelManager(
+                new StubAssetProvisioningService(paths),
+                paths,
+                architectureResolver: () => Architecture.X64);
+
+            FileNotFoundException ex = Assert.Throws<FileNotFoundException>(manager.EnsureInstalled);
+            Assert.Contains("torchaudio", ex.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Fact]
     public void RuntimePaths_SelectX64Runtime()
     {
         string assetsPath = CreateTempDirectory();
@@ -193,8 +241,14 @@ public sealed class PyannoteCommunityModelManagerTests
     private static void CreateModelDirectory(AppDataPathProvider paths)
     {
         string modelPath = Path.Combine(paths.PyannoteAssetsPath, "speaker-diarization-community-1");
-        Directory.CreateDirectory(modelPath);
+        Directory.CreateDirectory(Path.Combine(modelPath, "segmentation"));
+        Directory.CreateDirectory(Path.Combine(modelPath, "embedding"));
+        Directory.CreateDirectory(Path.Combine(modelPath, "plda"));
         File.WriteAllText(Path.Combine(modelPath, "config.yaml"), "pipeline: community-1");
+        File.WriteAllText(Path.Combine(modelPath, "segmentation", "pytorch_model.bin"), string.Empty);
+        File.WriteAllText(Path.Combine(modelPath, "embedding", "pytorch_model.bin"), string.Empty);
+        File.WriteAllText(Path.Combine(modelPath, "plda", "plda.npz"), string.Empty);
+        File.WriteAllText(Path.Combine(modelPath, "plda", "xvec_transform.npz"), string.Empty);
     }
 
     private static void CreateRunnerScript(AppDataPathProvider paths)
@@ -207,7 +261,9 @@ public sealed class PyannoteCommunityModelManagerTests
     private static void CreatePythonRuntime(AppDataPathProvider paths, string runtimeDirectoryName)
     {
         string runtimePath = Path.Combine(paths.PythonRuntimesPath, runtimeDirectoryName);
-        Directory.CreateDirectory(runtimePath);
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "torch"));
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "torchaudio"));
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "pyannote", "audio"));
         File.WriteAllText(Path.Combine(runtimePath, "python.exe"), string.Empty);
     }
 

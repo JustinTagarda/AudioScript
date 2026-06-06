@@ -3,16 +3,13 @@ namespace AudioScript.Services;
 public sealed class StartupDependencyHealthCoordinator : IStartupDependencyHealthCoordinator
 {
     private readonly StartupAssetProvisioningCoordinator _assetCoordinator;
-    private readonly IPythonDependencyRepairService _pythonDependencyRepairService;
     private readonly ProcessLogService _processLogService;
 
     public StartupDependencyHealthCoordinator(
         StartupAssetProvisioningCoordinator assetCoordinator,
-        IPythonDependencyRepairService pythonDependencyRepairService,
         ProcessLogService processLogService)
     {
         _assetCoordinator = assetCoordinator;
-        _pythonDependencyRepairService = pythonDependencyRepairService;
         _processLogService = processLogService;
     }
 
@@ -70,26 +67,15 @@ public sealed class StartupDependencyHealthCoordinator : IStartupDependencyHealt
                 [])));
         }
 
-        try
-        {
-            PythonDependencyRepairResult pythonResult = await _pythonDependencyRepairService
-                .ValidateAndRepairAsync(progress, cancellationToken)
-                .ConfigureAwait(false);
-            allAttempts.AddRange(pythonResult.Attempts);
-            allFailed.AddRange(pythonResult.Items.Where(item => item.Status == DependencyHealthStatus.Failed));
-        }
-        catch (Exception ex)
-        {
-            _processLogService.LogException("StartupDependency", "python_dependency_check_failed", ex);
-            allFailed.Add(new DependencyHealthItem(
-                "pyannote-python-runtime",
-                "Pyannote Python runtime",
-                DependencyHealthCategory.PythonModule,
-                DependencyHealthStatus.Failed,
-                ex.Message,
-                "Speaker diarization will be unavailable.",
-                []));
-        }
+        progress?.Report(new StartupDependencyHealthProgress(
+            "speaker-diarization-runtime",
+            "Speaker diarization runtime",
+            DependencyHealthCategory.PythonModule,
+            DependencyHealthStatus.Skipped,
+            "Installed on demand when Detect Speaker is used.",
+            100,
+            0,
+            0));
 
         bool succeeded = allFailed.Count == 0;
         bool degraded = !succeeded;

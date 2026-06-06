@@ -368,6 +368,16 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
                 .Select(source => source.Trim())
                 .ToArray();
 
+            int minimumDownloadSources = asset.MinimumDownloadSources.GetValueOrDefault(
+                asset.Required && !asset.IsPackagedRequired
+                    ? MinimumRequiredSourceCount
+                    : 0);
+            if (minimumDownloadSources < 0)
+            {
+                throw new InvalidOperationException(
+                    $"Asset '{asset.Id}' must not define a negative minimumDownloadSources value.");
+            }
+
             if (asset.Required)
             {
                 if (asset.IsPackagedRequired)
@@ -386,12 +396,12 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
                     throw new InvalidOperationException(
                         $"Required asset '{asset.Id}' must define at least one download source.");
                 }
+            }
 
-                if (sources.Length < MinimumRequiredSourceCount)
-                {
-                    throw new InvalidOperationException(
-                        $"Required asset '{asset.Id}' must define at least {MinimumRequiredSourceCount} download sources.");
-                }
+            if (minimumDownloadSources > 0 && sources.Length < minimumDownloadSources)
+            {
+                throw new InvalidOperationException(
+                    $"Asset '{asset.Id}' must define at least {minimumDownloadSources} download source(s).");
             }
 
             if (sources.Length > 0)

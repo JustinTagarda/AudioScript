@@ -51,8 +51,12 @@
       <Link>Assets\SplashScreen.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\assets\prebuilt\**\*">
-      <Link>assets\prebuilt\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    <Content Include="..\assets\prebuilt\models\**\*">
+      <Link>assets\prebuilt\models\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\assets\prebuilt\tools\**\*">
+      <Link>assets\prebuilt\tools\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
@@ -67,6 +71,10 @@
     <ItemGroup>
       <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\AppPackages" />
       <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\AppPackages" />
+      <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\Assets\prebuilt\pyannote" />
+      <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\Assets\prebuilt\python" />
+      <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript\assets\prebuilt\pyannote" />
+      <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript\assets\prebuilt\python" />
     </ItemGroup>
     <RemoveDir Directories="@(_StorePackageCleanupDirs)" Condition="Exists('%(Identity)')" />
     <Delete Files="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*.msix;$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*.msixbundle;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msix;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msixbundle" TreatErrorsAsWarnings="true" />
@@ -84,8 +92,16 @@
     <Error Condition="'$(ManifestPublisherDisplayName)' != 'JustinTagarda'" Text="Store packaging blocked: Package.appxmanifest PublisherDisplayName must be exactly 'JustinTagarda'. Current value: '$(ManifestPublisherDisplayName)'" />
   </Target>
 
+  <Target Name="VerifyPrebuiltEnginePayload" AfterTargets="Build">
+    <Exec Command='powershell -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\Verify-PackagedEnginePayload.ps1&quot; -RepoRoot &quot;$(MSBuildProjectDirectory)\..&quot; -SkipPackageArtifactCheck' />
+  </Target>
+
   <Target Name="VerifyPackagedEnginePayload" AfterTargets="CreateAppxPackage">
     <Exec Command='powershell -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\Verify-PackagedEnginePayload.ps1&quot; -RepoRoot &quot;$(MSBuildProjectDirectory)\..&quot; -PackageArtifactRoot &quot;$(MSBuildProjectDirectory)\AppPackages&quot;' />
+  </Target>
+
+  <Target Name="BuildDiarizationRuntimeArchive" AfterTargets="Build">
+    <Exec Command='powershell -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\Build-DiarizationRuntimeArchive.ps1&quot; -RepoRoot &quot;$(MSBuildProjectDirectory)\..&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\AppPackages\AudioScript.PyannotePythonRuntime.win-x64.zip&quot;' />
   </Target>
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets" />
 </Project>

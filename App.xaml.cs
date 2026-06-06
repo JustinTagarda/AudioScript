@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -75,10 +74,15 @@ public partial class App : System.Windows.Application
         var pythonDependencyRepairService = new PythonDependencyRepairService(
             pyannoteCommunityModelManager,
             processLogService);
-        var startupDependencyHealthCoordinator = new StartupDependencyHealthCoordinator(
-            startupProvisioningCoordinator,
+        var speakerDiarizationDependencyCoordinator = new SpeakerDiarizationDependencyCoordinator(
+            assetProvisioningService,
+            pyannoteCommunityModelManager,
             pythonDependencyRepairService,
             processLogService);
+        var startupDependencyHealthCoordinator = new StartupDependencyHealthCoordinator(
+            startupProvisioningCoordinator,
+            processLogService);
+        bool isSpeakerDiarizationSupported = pyannoteCommunityModelManager.IsSupportedOnCurrentArchitecture;
 
         var appDataMigrationService = new AppDataMigrationService(appDataPathProvider, processLogService);
         var appVersionProvider = new AppVersionProvider();
@@ -196,11 +200,10 @@ public partial class App : System.Windows.Application
             appUpdateService: _appUpdateService,
             entitlementService: entitlementService,
             () => whisperModelManager.GetSelectableTranscriptionModels(),
-            isSpeakerDiarizationRuntimeAvailable: !startupDependencyHealthResult.FailedItems.Any(item =>
-                item.Category == DependencyHealthCategory.PythonModule
-                || string.Equals(item.Id, PyannoteCommunityModelManager.PyannoteModelAssetId, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(item.Id, PyannoteCommunityModelManager.PyannotePythonX64AssetId, StringComparison.OrdinalIgnoreCase)),
-            speakerDiarizationRuntimeStatusMessage: BuildSpeakerDiarizationDependencyMessage(startupDependencyHealthResult));
+            isSpeakerDiarizationRuntimeAvailable: isSpeakerDiarizationSupported,
+            speakerDiarizationRuntimeStatusMessage: isSpeakerDiarizationSupported
+                ? "Speaker diarization dependencies install when Detect Speaker is used."
+                : "Speaker diarization requires an x64 AudioScript build.");
 
         var mainWindow = new MainWindow(
             playbackTranscriptionSessionFactory: () => new PlaybackTranscriptionSession(
@@ -217,7 +220,8 @@ public partial class App : System.Windows.Application
             rowWaveClipExtractor: waveClipExtractor,
             processLogService: processLogService,
             whisperModelManager: whisperModelManager,
-            pyannoteCommunityModelManager: pyannoteCommunityModelManager)
+            pyannoteCommunityModelManager: pyannoteCommunityModelManager,
+            speakerDiarizationDependencyCoordinator: speakerDiarizationDependencyCoordinator)
         {
             DataContext = _mainViewModel,
         };
@@ -313,23 +317,6 @@ public partial class App : System.Windows.Application
         var dialog = new ErrorDialogWindow(builder.ToString().TrimEnd());
         dialog.Title = "AudioScript installation issue";
         _ = dialog.ShowDialog();
-    }
-
-    private static string BuildSpeakerDiarizationDependencyMessage(StartupDependencyHealthResult result)
-    {
-        DependencyHealthItem[] diarizationFailures = result.FailedItems
-            .Where(item => item.Category == DependencyHealthCategory.PythonModule
-                || string.Equals(item.Id, PyannoteCommunityModelManager.PyannoteModelAssetId, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(item.Id, PyannoteCommunityModelManager.PyannotePythonX64AssetId, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-
-        if (diarizationFailures.Length == 0)
-        {
-            return "Speaker diarization dependencies are available.";
-        }
-
-        string joined = string.Join(", ", diarizationFailures.Select(item => item.DisplayName));
-        return $"Speaker diarization runtime is unavailable ({joined}). Reinstall AudioScript from Microsoft Store to restore Detect Speaker.";
     }
 
     private static IAudioLoopbackCaptureService CreateLiveCaptureService(

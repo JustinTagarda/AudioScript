@@ -7,6 +7,21 @@ public sealed class PyannoteCommunityModelManager
 {
     public const string PyannoteModelAssetId = "pyannote-community-model";
     public const string PyannotePythonX64AssetId = "pyannote-python-x64";
+    private static readonly string[] RequiredModelRelativePaths =
+    [
+        "config.yaml",
+        "segmentation\\pytorch_model.bin",
+        "embedding\\pytorch_model.bin",
+        "plda\\plda.npz",
+        "plda\\xvec_transform.npz",
+    ];
+    private static readonly string[] RequiredRuntimeRelativePaths =
+    [
+        "python.exe",
+        "Lib\\site-packages\\torch",
+        "Lib\\site-packages\\torchaudio",
+        "Lib\\site-packages\\pyannote\\audio",
+    ];
 
     private readonly AppDataPathProvider _paths;
     private readonly IAssetProvisioningService _assetProvisioningService;
@@ -34,6 +49,11 @@ public sealed class PyannoteCommunityModelManager
 
     public void EnsureInstalled()
     {
+        ValidateInstalled();
+    }
+
+    public void ValidateInstalled()
+    {
         EnsureSupportedArchitecture();
 
         if (!Directory.Exists(ModelDirectoryPath))
@@ -42,7 +62,10 @@ public sealed class PyannoteCommunityModelManager
                 $"Pyannote Community-1 model is missing from the AudioScript installation. Reinstall AudioScript from Microsoft Store. Path: {ModelDirectoryPath}");
         }
 
-        EnsureRunnerScriptExists();
+        EnsureCriticalPathsExist(
+            rootPath: ModelDirectoryPath,
+            relativePaths: RequiredModelRelativePaths,
+            missingPrefix: "Pyannote Community-1 model payload is incomplete or corrupted.");
 
         if (!Directory.Exists(RuntimeDirectoryPath))
         {
@@ -50,12 +73,16 @@ public sealed class PyannoteCommunityModelManager
                 $"Pyannote Python runtime is missing from the AudioScript installation. Reinstall AudioScript from Microsoft Store. Path: {RuntimeDirectoryPath}");
         }
 
-        if (!File.Exists(PythonExecutablePath))
-        {
-            throw new FileNotFoundException(
-                "Pyannote Python executable is missing from the AudioScript installation. Reinstall AudioScript from Microsoft Store.",
-                PythonExecutablePath);
-        }
+        EnsureCriticalPathsExist(
+            rootPath: RuntimeDirectoryPath,
+            relativePaths: RequiredRuntimeRelativePaths,
+            missingPrefix: "Pyannote Python runtime payload is incomplete or corrupted.");
+    }
+
+    public void EnsureExecutionReady()
+    {
+        ValidateInstalled();
+        EnsureRunnerScriptExists();
     }
 
     public bool IsInstalled()
@@ -74,8 +101,7 @@ public sealed class PyannoteCommunityModelManager
         CancellationToken cancellationToken)
     {
         await Task.Yield();
-        EnsureSupportedArchitecture();
-        EnsureInstalled();
+        EnsureExecutionReady();
     }
 
     private void EnsureRunnerScriptExists()
@@ -87,6 +113,28 @@ public sealed class PyannoteCommunityModelManager
         if (!string.Equals(existing, RunnerScriptContent, StringComparison.Ordinal))
         {
             File.WriteAllText(RunnerScriptPath, RunnerScriptContent);
+        }
+    }
+
+    private static void EnsureCriticalPathsExist(
+        string rootPath,
+        IReadOnlyList<string> relativePaths,
+        string missingPrefix)
+    {
+        foreach (string relativePath in relativePaths)
+        {
+            string fullPath = Path.Combine(rootPath, relativePath);
+            bool exists = Path.HasExtension(relativePath)
+                ? File.Exists(fullPath)
+                : Directory.Exists(fullPath);
+            if (exists)
+            {
+                continue;
+            }
+
+            throw new FileNotFoundException(
+                $"{missingPrefix} Missing '{relativePath}'. Reinstall or rerun Detect Speaker to restore the runtime.",
+                fullPath);
         }
     }
 

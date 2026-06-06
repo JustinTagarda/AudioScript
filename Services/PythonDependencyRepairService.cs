@@ -39,7 +39,7 @@ public sealed class PythonDependencyRepairService : IPythonDependencyRepairServi
                 attempts);
         }
 
-        _modelManager.EnsureInstalled();
+        _modelManager.ValidateInstalled();
         ProbeResult probe = await ProbeMissingModulesAsync(cancellationToken).ConfigureAwait(false);
         attempts.Add(new DependencyRepairAttempt(
             "python:probe",

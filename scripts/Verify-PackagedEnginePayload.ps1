@@ -1,33 +1,11 @@
 param(
     [string]$RepoRoot = (Join-Path $PSScriptRoot ".."),
-    [string]$PackageArtifactRoot = ""
+    [string]$PackageArtifactRoot = "",
+    [switch]$SkipPackageArtifactCheck
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-
-function Test-PythonImports {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$PythonPath
-    )
-
-    $probeScript = @"
-import importlib
-for module_name in ("torch", "torchaudio", "pyannote.audio"):
-    importlib.import_module(module_name)
-print("ok")
-"@
-
-    $output = $probeScript | & $PythonPath -
-    if ($LASTEXITCODE -ne 0) {
-        throw "Bundled Python import probe failed using '$PythonPath'."
-    }
-
-    if (($output | Out-String).Trim() -ne "ok") {
-        throw "Bundled Python import probe returned unexpected output."
-    }
-}
 
 function Resolve-LatestPackageArtifact {
     param(
@@ -50,6 +28,21 @@ function Resolve-LatestPackageArtifact {
     return $artifact.FullName
 }
 
+function Test-ArchiveEntryPattern {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.IO.Compression.ZipArchive]$Archive,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern
+    )
+
+    $normalizedPattern = $Pattern.Replace('\', '/')
+    return [bool]($Archive.Entries | Where-Object {
+        $_.FullName.Replace('\', '/') -like "*$normalizedPattern*"
+    })
+}
+
 function Test-PackageArtifact {
     param(
         [Parameter(Mandatory = $true)]
@@ -65,6 +58,8 @@ function Test-PackageArtifact {
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("AudioScript-package-verify-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $tempRoot | Out-Null
     $outerArchive = [System.IO.Compression.ZipFile]::OpenRead($ArtifactPath)
     try {
         $bundleEntry = $outerArchive.Entries | Where-Object { $_.FullName -like "*.msixbundle" } | Select-Object -First 1
@@ -73,111 +68,94 @@ function Test-PackageArtifact {
             return
         }
 
-        $bundleStream = $bundleEntry.Open()
+        $bundlePath = Join-Path $tempRoot $bundleEntry.Name
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($bundleEntry, $bundlePath, $true)
+        $bundleArchive = [System.IO.Compression.ZipFile]::OpenRead($bundlePath)
         try {
-            $bundleBytes = New-Object System.IO.MemoryStream
+            $bundleManifestEntry = $bundleArchive.Entries | Where-Object { $_.FullName -eq "AppxMetadata/AppxBundleManifest.xml" } | Select-Object -First 1
+            if (-not $bundleManifestEntry) {
+                $Failures.Add("Package artifact '$ArtifactPath' is missing AppxMetadata/AppxBundleManifest.xml.")
+                return
+            }
+
+            $bundleReader = New-Object System.IO.StreamReader($bundleManifestEntry.Open())
             try {
-                $bundleStream.CopyTo($bundleBytes)
-                $bundleBytes.Position = 0
-                $bundleArchive = New-Object System.IO.Compression.ZipArchive($bundleBytes, [System.IO.Compression.ZipArchiveMode]::Read, $false)
-                try {
-                    $bundleManifestEntry = $bundleArchive.Entries | Where-Object { $_.FullName -eq "AppxMetadata/AppxBundleManifest.xml" } | Select-Object -First 1
-                    if (-not $bundleManifestEntry) {
-                        $Failures.Add("Package artifact '$ArtifactPath' is missing AppxMetadata/AppxBundleManifest.xml.")
-                        return
-                    }
+                [xml]$bundleManifest = $bundleReader.ReadToEnd()
+            }
+            finally {
+                $bundleReader.Dispose()
+            }
 
-                    $bundleReader = New-Object System.IO.StreamReader($bundleManifestEntry.Open())
-                    try {
-                        [xml]$bundleManifest = $bundleReader.ReadToEnd()
-                    }
-                    finally {
-                        $bundleReader.Dispose()
-                    }
+            $packages = @($bundleManifest.Bundle.Packages.Package)
+            if ($packages.Count -ne 1) {
+                $Failures.Add("Package artifact '$ArtifactPath' must contain exactly one package in the bundle. Found $($packages.Count).")
+            }
+            elseif ($packages[0].Architecture -ne "x64") {
+                $Failures.Add("Package artifact '$ArtifactPath' must contain only an x64 package. Found '$($packages[0].Architecture)'.")
+            }
 
-                    $packages = @($bundleManifest.Bundle.Packages.Package)
-                    if ($packages.Count -ne 1) {
-                        $Failures.Add("Package artifact '$ArtifactPath' must contain exactly one package in the bundle. Found $($packages.Count).")
-                    }
-                    elseif ($packages[0].Architecture -ne "x64") {
-                        $Failures.Add("Package artifact '$ArtifactPath' must contain only an x64 package. Found '$($packages[0].Architecture)'.")
-                    }
+            $msixEntry = $bundleArchive.Entries | Where-Object { $_.FullName -like "*.msix" } | Select-Object -First 1
+            if (-not $msixEntry) {
+                $Failures.Add("Package artifact '$ArtifactPath' does not contain an inner .msix payload.")
+                return
+            }
 
-                    $msixEntry = $bundleArchive.Entries | Where-Object { $_.FullName -like "*.msix" } | Select-Object -First 1
-                    if (-not $msixEntry) {
-                        $Failures.Add("Package artifact '$ArtifactPath' does not contain an inner .msix payload.")
-                        return
-                    }
+            $msixPath = Join-Path $tempRoot $msixEntry.Name
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($msixEntry, $msixPath, $true)
+            $msixArchive = [System.IO.Compression.ZipFile]::OpenRead($msixPath)
+            try {
+                $forbiddenPaths = @(
+                    "assets/prebuilt/pyannote",
+                    "Assets/prebuilt/pyannote",
+                    "assets/prebuilt/python",
+                    "Assets/prebuilt/python",
+                    "speaker-diarization-community-1/speaker-diarization-community-1",
+                    "tools/whisper.cpp/win-x64/win-x64"
+                )
 
-                    $msixStream = $msixEntry.Open()
-                    try {
-                        $msixBytes = New-Object System.IO.MemoryStream
-                        try {
-                            $msixStream.CopyTo($msixBytes)
-                            $msixBytes.Position = 0
-                            $msixArchive = New-Object System.IO.Compression.ZipArchive($msixBytes, [System.IO.Compression.ZipArchiveMode]::Read, $false)
-                            try {
-                                $forbiddenPaths = @(
-                                    "speaker-diarization-community-1/speaker-diarization-community-1",
-                                    "tools/whisper.cpp/win-x64/win-x64"
-                                )
-
-                                foreach ($forbiddenPath in $forbiddenPaths) {
-                                    if ($msixArchive.Entries | Where-Object { $_.FullName -like "*$forbiddenPath*" }) {
-                                        $Failures.Add("Package artifact '$ArtifactPath' contains redundant nested payload path '$forbiddenPath'.")
-                                    }
-                                }
-
-                                $safeCleanupPatterns = @(
-                                    "Lib/site-packages/__pycache__/*",
-                                    "Lib/site-packages/*/__pycache__/*",
-                                    "Lib/site-packages/*/tests/*",
-                                    "Lib/site-packages/*/test/*",
-                                    "Lib/site-packages/*/docs/*",
-                                    "Lib/site-packages/*/doc/*",
-                                    "Lib/site-packages/*/examples/*",
-                                    "Lib/site-packages/*/sample/*",
-                                    "Lib/site-packages/*/samples/*",
-                                    "Lib/site-packages/pip/*",
-                                    "Lib/site-packages/pip-*.dist-info/*",
-                                    "Scripts/pip*.exe",
-                                    "get-pip.py",
-                                    "*.pyc",
-                                    "*.pyo"
-                                )
-
-                                foreach ($pattern in $safeCleanupPatterns) {
-                                    if ($msixArchive.Entries | Where-Object { $_.FullName -like "*$pattern*" }) {
-                                        $Failures.Add("Package artifact '$ArtifactPath' still contains removable Python payload matching '$pattern'.")
-                                    }
-                                }
-                            }
-                            finally {
-                                $msixArchive.Dispose()
-                            }
-                        }
-                        finally {
-                            $msixBytes.Dispose()
-                        }
-                    }
-                    finally {
-                        $msixStream.Dispose()
+                foreach ($forbiddenPath in $forbiddenPaths) {
+                    if (Test-ArchiveEntryPattern -Archive $msixArchive -Pattern $forbiddenPath) {
+                        $Failures.Add("Package artifact '$ArtifactPath' contains redundant or excluded payload path '$forbiddenPath'.")
                     }
                 }
-                finally {
-                    $bundleArchive.Dispose()
+
+                $safeCleanupPatterns = @(
+                    "Lib/site-packages/__pycache__/*",
+                    "Lib/site-packages/*/__pycache__/*",
+                    "Lib/site-packages/*/tests/*",
+                    "Lib/site-packages/*/test/*",
+                    "Lib/site-packages/*/docs/*",
+                    "Lib/site-packages/*/doc/*",
+                    "Lib/site-packages/*/examples/*",
+                    "Lib/site-packages/*/sample/*",
+                    "Lib/site-packages/*/samples/*",
+                    "Lib/site-packages/pip/*",
+                    "Lib/site-packages/pip-*.dist-info/*",
+                    "Scripts/pip*.exe",
+                    "get-pip.py",
+                    "*.pyc",
+                    "*.pyo"
+                )
+
+                foreach ($pattern in $safeCleanupPatterns) {
+                    if (Test-ArchiveEntryPattern -Archive $msixArchive -Pattern $pattern) {
+                        $Failures.Add("Package artifact '$ArtifactPath' still contains removable Python payload matching '$pattern'.")
+                    }
                 }
             }
             finally {
-                $bundleBytes.Dispose()
+                $msixArchive.Dispose()
             }
         }
         finally {
-            $bundleStream.Dispose()
+            $bundleArchive.Dispose()
         }
     }
     finally {
         $outerArchive.Dispose()
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
     }
 }
 
@@ -220,9 +198,7 @@ foreach ($asset in $packagedAssets) {
 
 $criticalPaths = @(
     (Join-Path $prebuiltRoot "models\\ggml-small.bin"),
-    (Join-Path $prebuiltRoot "tools\\whisper.cpp\\win-x64\\Release\\whisper-cli.exe"),
-    (Join-Path $prebuiltRoot "pyannote\\speaker-diarization-community-1\\run_community_diarization.py"),
-    (Join-Path $prebuiltRoot "python\\win-x64\\python.exe")
+    (Join-Path $prebuiltRoot "tools\\whisper.cpp\\win-x64\\Release\\whisper-cli.exe")
 )
 
 $forbiddenPaths = @(
@@ -247,20 +223,20 @@ if ($failures.Count -gt 0) {
     throw "Packaged engine payload verification failed:$([Environment]::NewLine)$message"
 }
 
-$packageArtifactRoot = if ([string]::IsNullOrWhiteSpace($PackageArtifactRoot)) {
-    Join-Path $repoRoot "AudioScript.Package\\AppPackages"
-}
-else {
-    [System.IO.Path]::GetFullPath($PackageArtifactRoot)
-}
+if (-not $SkipPackageArtifactCheck) {
+    $packageArtifactRoot = if ([string]::IsNullOrWhiteSpace($PackageArtifactRoot)) {
+        Join-Path $repoRoot "AudioScript.Package\\AppPackages"
+    }
+    else {
+        [System.IO.Path]::GetFullPath($PackageArtifactRoot)
+    }
 
-Test-PackageArtifact -ArtifactPath (Resolve-LatestPackageArtifact -RootPath $packageArtifactRoot) -Failures (,$failures)
+    Test-PackageArtifact -ArtifactPath (Resolve-LatestPackageArtifact -RootPath $packageArtifactRoot) -Failures (,$failures)
 
-if ($failures.Count -gt 0) {
-    $message = ($failures | ForEach-Object { "- $_" }) -join [Environment]::NewLine
-    throw "Packaged engine payload verification failed:$([Environment]::NewLine)$message"
+    if ($failures.Count -gt 0) {
+        $message = ($failures | ForEach-Object { "- $_" }) -join [Environment]::NewLine
+        throw "Packaged engine payload verification failed:$([Environment]::NewLine)$message"
+    }
 }
-
-Test-PythonImports -PythonPath (Join-Path $prebuiltRoot "python\\win-x64\\python.exe")
 
 Write-Host "Packaged engine payload verification succeeded."
