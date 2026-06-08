@@ -55,11 +55,20 @@ public sealed record PythonDependencyRepairResult(
     IReadOnlyList<DependencyHealthItem> Items,
     IReadOnlyList<DependencyRepairAttempt> Attempts);
 
+public sealed record PyannoteExecutionProbeResult(
+    bool Succeeded,
+    string Message);
+
 public interface IPythonDependencyRepairService
 {
     Task<PythonDependencyRepairResult> ValidateAndRepairAsync(
         IProgress<StartupDependencyHealthProgress>? progress,
         CancellationToken cancellationToken);
+}
+
+public interface IPyannoteExecutionProbe
+{
+    Task<PyannoteExecutionProbeResult> ProbeExecutionAsync(CancellationToken cancellationToken);
 }
 
 public interface IStartupDependencyHealthCoordinator

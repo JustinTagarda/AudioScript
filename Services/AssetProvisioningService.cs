@@ -620,6 +620,12 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
             return false;
         }
 
+        string cachedSourcePath = ResolveCachedSourcePath(descriptor);
+        if (File.Exists(cachedSourcePath))
+        {
+            candidates.Add(cachedSourcePath);
+        }
+
         if (ShouldUseDevelopmentSources() && !string.IsNullOrWhiteSpace(descriptor.DevelopmentSourceRelativePath))
         {
             string developmentPath = Path.GetFullPath(Path.Combine(_repoRootPath, descriptor.DevelopmentSourceRelativePath));
@@ -641,6 +647,14 @@ public sealed class AssetProvisioningService : IAssetProvisioningService, IDispo
 
         sourceCandidates = candidates;
         return candidates.Count > 0;
+    }
+
+    private string ResolveCachedSourcePath(ProvisionedAssetDescriptor descriptor)
+    {
+        string fileName = descriptor.InstallKind == ProvisioningInstallKind.Directory
+            ? $"{descriptor.Id}.zip"
+            : Path.GetFileName(descriptor.InstallRelativePath);
+        return Path.Combine(_paths.ProvisioningPath, "source-cache", fileName);
     }
 
     private string ResolvePackagedPath(ProvisionedAssetDescriptor descriptor)

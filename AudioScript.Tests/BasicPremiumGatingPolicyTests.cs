@@ -24,6 +24,7 @@ public sealed class BasicPremiumGatingPolicyTests
 
         Assert.False(viewModel.IsApplicationAccessTierVisible);
         Assert.False(viewModel.IsUpgradeButtonVisible);
+        Assert.False(viewModel.IsRestorePremiumPurchasesVisible);
         Assert.Equal(string.Empty, viewModel.ApplicationAccessTierText);
     }
 
@@ -62,6 +63,7 @@ public sealed class BasicPremiumGatingPolicyTests
 
         Assert.True(viewModel.IsApplicationAccessTierVisible);
         Assert.False(viewModel.IsUpgradeButtonVisible);
+        Assert.True(viewModel.IsRestorePremiumPurchasesVisible);
         Assert.True(viewModel.CanUseLiveTranscription);
         Assert.True(viewModel.HasUnlimitedLiveTranscription);
         Assert.Null(viewModel.LiveTranscriptionLimit);
@@ -85,6 +87,7 @@ public sealed class BasicPremiumGatingPolicyTests
 
         Assert.True(viewModel.IsApplicationAccessTierVisible);
         Assert.True(viewModel.IsUpgradeButtonVisible);
+        Assert.True(viewModel.IsRestorePremiumPurchasesVisible);
         Assert.True(viewModel.CanUseLiveTranscription);
         Assert.False(viewModel.HasUnlimitedLiveTranscription);
         Assert.Equal(AppFeatureAccess.BasicLiveTranscriptionLimit, viewModel.LiveTranscriptionLimit);

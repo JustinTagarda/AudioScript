@@ -21,14 +21,19 @@ Instruction source: `D:\Projects\desktop-startup-asset-installation-policy.md`
 - `SAIP-08` Failure summary modal:
   - Acceptance: after all attempts complete, if failures exist, a single informational modal lists each failed asset and reason/limitation.
 - `SAIP-09` Recovery guidance:
-  - Acceptance: packaged production failure messaging instructs the user to reinstall AudioScript from Microsoft Store.
+  - Acceptance: packaged production startup validation failures for bundled required assets instruct the user to reinstall AudioScript from Microsoft Store.
+- `SAIP-10` Whisper runtime packaging:
+  - Acceptance: packaged production includes `whisper-cli.exe` and its required native runtime DLL dependencies in the bundled whisper tool directory so file transcription can start without loader failures.
+- `SAIP-11` Speaker diarization on-demand provisioning:
+  - Acceptance: packaged production excludes the Pyannote Community-1 model and Python x64 runtime from the MSIX. Detect Speaker downloads, installs, repairs, and fully validates both assets on demand before opening its panel.
+  - Acceptance: packaged production speaker-diarization failures route users to run Detect Speaker again to repair the installed runtime, not to reinstall the whole app unless startup validation of bundled assets has already failed.
 
 ## PR Traceability Requirement
 
 Any PR touching startup bundled-runtime validation behavior must include:
 
 - A `Policy Lock` section in the PR body.
-- Explicit references to each satisfied checklist item (`SAIP-xx`).
+- Explicit references to each satisfied checklist item (`SAIP-xx`), including `SAIP-10` for whisper runtime packaging changes and `SAIP-11` for speaker diarization packaging changes.
 - Test evidence for each referenced checklist item.
 
 ## No Drift Rule

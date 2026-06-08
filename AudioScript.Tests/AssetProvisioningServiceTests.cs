@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Net;
 using System.Net.Http;
+using System.IO.Compression;
 using AudioScript.Services;
 using Xunit;
 
@@ -107,6 +108,123 @@ public sealed class AssetProvisioningServiceTests
 
             Assert.True(File.Exists(Path.Combine(paths.PythonRuntimesPath, "win-x64", "python.exe")));
             Assert.True(service.IsInstalled("pyannote-python-x64"));
+        }
+        finally
+        {
+            DeleteDirectory(rootPath);
+        }
+    }
+
+    [Fact]
+    public void GetStatus_ReturnsReadyForPackagedDirectoryAssetInPackagedContext()
+    {
+        string rootPath = CreateTempDirectory();
+        string packagedRelativePath = Path.Combine("assets", "prebuilt", "python", $"unit-test-packaged-runtime-{Guid.NewGuid():N}");
+        string packagedSourcePath = Path.Combine(AppContext.BaseDirectory, packagedRelativePath);
+        try
+        {
+            string localAppData = Path.Combine(rootPath, "local");
+            AppDataPathProvider paths = new(localAppDataPath: localAppData, packageFamilyName: "AudioScript.Test.Package");
+            Directory.CreateDirectory(Path.Combine(packagedSourcePath, "Lib", "site-packages", "torch"));
+            Directory.CreateDirectory(Path.Combine(packagedSourcePath, "Lib", "site-packages", "torchaudio"));
+            Directory.CreateDirectory(Path.Combine(packagedSourcePath, "Lib", "site-packages", "pyannote", "audio"));
+            File.WriteAllText(Path.Combine(packagedSourcePath, "python.exe"), "stub");
+
+            string manifestPath = WriteManifest(rootPath, new
+            {
+                schemaVersion = 1,
+                assets = new[]
+                {
+                    new
+                    {
+                        id = "pyannote-python-x64",
+                        displayName = "Pyannote Python runtime (x64)",
+                        version = "2.0.0.0",
+                        packagedSourceRelativePath = packagedRelativePath,
+                        deliveryMode = "PackagedRequired",
+                        installKind = "Directory",
+                        installRoot = "Python",
+                        installRelativePath = "win-x64",
+                        required = false,
+                        supportedArchitectures = new[] { "x64" }
+                    }
+                }
+            });
+
+            using var logs = new ProcessLogService(Path.Combine(rootPath, "logs"));
+            using var service = new AssetProvisioningService(logs, paths, manifestPath, repoRootPath: rootPath);
+
+            AssetProvisioningStatus status = service.GetStatus("pyannote-python-x64");
+            Assert.Equal(AssetProvisioningState.Ready, status.State);
+            Assert.True(service.IsInstalled("pyannote-python-x64"));
+        }
+        finally
+        {
+            DeleteDirectory(rootPath);
+            DeleteDirectory(packagedSourcePath);
+        }
+    }
+
+    [Fact]
+    public async Task PackagedContext_ProvisionedOptionalDirectoryAsset_InstallsAndRepairsUnderLocalState()
+    {
+        string rootPath = CreateTempDirectory();
+
+        try
+        {
+            string localAppData = Path.Combine(rootPath, "local");
+            AppDataPathProvider paths = new(
+                localAppDataPath: localAppData,
+                packageFamilyName: "AudioScript.Test.Package");
+            byte[] runtimeArchive = CreateDirectoryArchive(("python.exe", "stub runtime"));
+            string sourceCachePath = Path.Combine(paths.ProvisioningPath, "source-cache");
+            Directory.CreateDirectory(sourceCachePath);
+            File.WriteAllBytes(Path.Combine(sourceCachePath, "pyannote-python-x64.zip"), runtimeArchive);
+            string manifestPath = WriteManifest(rootPath, new
+            {
+                schemaVersion = 1,
+                assets = new[]
+                {
+                    new
+                    {
+                        id = "pyannote-python-x64",
+                        displayName = "Pyannote Python runtime (x64)",
+                        version = "2.0.0.0",
+                        downloadUri = "https://github.com/JustinTagarda/AudioScript/releases/latest/download/AudioScript.PyannotePythonRuntime.win-x64.zip",
+                        downloadSources = new[]
+                        {
+                            "https://github.com/JustinTagarda/AudioScript/releases/latest/download/AudioScript.PyannotePythonRuntime.win-x64.zip"
+                        },
+                        deliveryMode = "ProvisionedOptional",
+                        installKind = "Directory",
+                        installRoot = "Python",
+                        installRelativePath = "win-x64",
+                        required = false,
+                        releaseRequired = true,
+                        minimumDownloadSources = 1,
+                        supportedArchitectures = new[] { "x64" }
+                    }
+                }
+            });
+
+            using var logs = new ProcessLogService(Path.Combine(rootPath, "logs"));
+            using var httpClient = CreateHttpClient((_, _) => throw new InvalidOperationException("Remote source should not be used when the source cache is available."));
+            using var service = new AssetProvisioningService(logs, paths, manifestPath, httpClient, repoRootPath: rootPath);
+
+            string installPath = service.ResolveInstallPath("pyannote-python-x64");
+            Assert.StartsWith(paths.RootPath, installPath, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(AppContext.BaseDirectory, installPath, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(AssetProvisioningState.Missing, service.GetStatus("pyannote-python-x64").State);
+
+            await service.InstallAssetAsync("pyannote-python-x64", progress: null, CancellationToken.None);
+            Assert.True(File.Exists(Path.Combine(installPath, "python.exe")));
+
+            await service.RemoveAssetAsync("pyannote-python-x64", CancellationToken.None);
+            Assert.False(Directory.Exists(installPath));
+
+            await service.InstallAssetAsync("pyannote-python-x64", progress: null, CancellationToken.None);
+            Assert.True(File.Exists(Path.Combine(installPath, "python.exe")));
+            Assert.Equal(AssetProvisioningState.Ready, service.GetStatus("pyannote-python-x64").State);
         }
         finally
         {
@@ -665,6 +783,22 @@ public sealed class AssetProvisioningServiceTests
         {
             Content = new ByteArrayContent(payload)
         };
+    }
+
+    private static byte[] CreateDirectoryArchive(params (string RelativePath, string Content)[] files)
+    {
+        using var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach ((string relativePath, string content) in files)
+            {
+                ZipArchiveEntry entry = archive.CreateEntry(relativePath);
+                using StreamWriter writer = new(entry.Open());
+                writer.Write(content);
+            }
+        }
+
+        return stream.ToArray();
     }
 
     private sealed class StubHttpMessageHandler : HttpMessageHandler

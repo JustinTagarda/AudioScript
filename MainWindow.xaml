@@ -299,6 +299,7 @@
                                 <TextBlock x:Name="IconText"
                                            Style="{StaticResource ToolbarButtonIconTextStyle}"
                                            Text="{TemplateBinding Tag}"
+                                           Foreground="{TemplateBinding Foreground}"
                                            FontSize="16"
                                            Margin="0,0,6,0"/>
                                 <ContentPresenter HorizontalAlignment="Center"
@@ -353,6 +354,19 @@
                                 <Setter TargetName="Chrome"
                                         Property="BorderBrush"
                                         Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+                            </Trigger>
+                            <Trigger Property="Tag"
+                                     Value="&#xE711;">
+                                <Setter TargetName="Chrome"
+                                        Property="Background"
+                                        Value="#FFFF0000"/>
+                                <Setter TargetName="Chrome"
+                                        Property="BorderBrush"
+                                        Value="#FFFF0000"/>
+                                <Setter Property="Foreground"
+                                        Value="#FFFFFFFF"/>
+                                <Setter Property="FontWeight"
+                                        Value="Bold"/>
                             </Trigger>
                             <Trigger Property="IsEnabled"
                                      Value="False">

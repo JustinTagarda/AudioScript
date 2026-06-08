@@ -75,20 +75,30 @@
       <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\Assets\prebuilt\python" />
       <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript\assets\prebuilt\pyannote" />
       <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript\assets\prebuilt\python" />
+      <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*" />
+      <_StorePackageCleanupDirs Include="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*" />
     </ItemGroup>
     <RemoveDir Directories="@(_StorePackageCleanupDirs)" Condition="Exists('%(Identity)')" />
-    <Delete Files="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*.msix;$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*.msixbundle;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msix;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msixbundle" TreatErrorsAsWarnings="true" />
+    <Delete Files="$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*.msix;$(MSBuildProjectDirectory)\bin\x64\Release\AudioScript.Package_*.msixbundle;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msix;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msixbundle;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.msixupload;$(MSBuildProjectDirectory)\bin\x64\Release\Upload\AudioScript.Package_*.appxupload" TreatErrorsAsWarnings="true" />
   </Target>
 
   <Target Name="ValidateStorePublisherDisplayName" BeforeTargets="GenerateAppxPackageOnBuild;_GenerateAppxPackageRecipeFile;CreateAppxPackage">
     <XmlPeek XmlInputPath="Package.appxmanifest" Query="/*[local-name()='Package']/*[local-name()='Identity']/@Version">
       <Output TaskParameter="Result" PropertyName="ManifestIdentityVersion" />
     </XmlPeek>
+    <XmlPeek XmlInputPath="Package.appxmanifest" Query="/*[local-name()='Package']/*[local-name()='Identity']/@Name">
+      <Output TaskParameter="Result" PropertyName="ManifestIdentityName" />
+    </XmlPeek>
+    <XmlPeek XmlInputPath="Package.appxmanifest" Query="/*[local-name()='Package']/*[local-name()='Properties']/*[local-name()='DisplayName']/text()">
+      <Output TaskParameter="Result" PropertyName="ManifestDisplayName" />
+    </XmlPeek>
     <XmlPeek XmlInputPath="Package.appxmanifest" Query="/*[local-name()='Package']/*[local-name()='Properties']/*[local-name()='PublisherDisplayName']/text()">
       <Output TaskParameter="Result" PropertyName="ManifestPublisherDisplayName" />
     </XmlPeek>
     <Error Condition="'$(ManifestIdentityVersion)' == ''" Text="Store packaging blocked: Package.appxmanifest Identity Version is missing." />
     <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ManifestIdentityVersion)', '^\d+\.\d+\.\d+\.0$'))" Text="Store packaging blocked: Package.appxmanifest Identity Version must use Major.Minor.Build.0 format. Current value: '$(ManifestIdentityVersion)'." />
+    <Error Condition="'$(ManifestIdentityName)' != 'JustinTagardaSoftware.AudioScript'" Text="Store packaging blocked: Package.appxmanifest Identity Name must be exactly 'JustinTagardaSoftware.AudioScript'. Current value: '$(ManifestIdentityName)'." />
+    <Error Condition="'$(ManifestDisplayName)' != 'AudioScript'" Text="Store packaging blocked: Package.appxmanifest Properties/DisplayName must be exactly 'AudioScript'. Current value: '$(ManifestDisplayName)'." />
     <Error Condition="'$(ManifestPublisherDisplayName)' != 'JustinTagarda'" Text="Store packaging blocked: Package.appxmanifest PublisherDisplayName must be exactly 'JustinTagarda'. Current value: '$(ManifestPublisherDisplayName)'" />
   </Target>
 
@@ -102,6 +112,9 @@
 
   <Target Name="BuildDiarizationRuntimeArchive" AfterTargets="Build">
     <Exec Command='powershell -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\Build-DiarizationRuntimeArchive.ps1&quot; -RepoRoot &quot;$(MSBuildProjectDirectory)\..&quot; -OutputPath &quot;$(MSBuildProjectDirectory)\AppPackages\AudioScript.PyannotePythonRuntime.win-x64.zip&quot;' />
+  </Target>
+  <Target Name="PrepareVmTestPackageArtifacts" AfterTargets="_AddWindowsInstallScriptToTestLayout" DependsOnTargets="BuildDiarizationRuntimeArchive">
+    <Exec Command='powershell -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\Prepare-VmTestPackageArtifacts.ps1&quot; -RepoRoot &quot;$(MSBuildProjectDirectory)\..&quot;' />
   </Target>
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets" />
 </Project>

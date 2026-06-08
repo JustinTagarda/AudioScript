@@ -46,15 +46,14 @@ function Test-ArchiveEntryPattern {
 function Test-PackageArtifact {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ArtifactPath,
-
-        [Parameter(Mandatory = $true)]
-        [System.Collections.Generic.List[string]]$Failures
+        [string]$ArtifactPath
     )
 
+    $failures = New-Object System.Collections.Generic.List[string]
+
     if (-not (Test-Path -LiteralPath $ArtifactPath)) {
-        $Failures.Add("Package artifact was not found: '$ArtifactPath'.")
-        return
+        $failures.Add("Package artifact was not found: '$ArtifactPath'.")
+        return $failures
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -64,8 +63,8 @@ function Test-PackageArtifact {
     try {
         $bundleEntry = $outerArchive.Entries | Where-Object { $_.FullName -like "*.msixbundle" } | Select-Object -First 1
         if (-not $bundleEntry) {
-            $Failures.Add("Package artifact '$ArtifactPath' does not contain an .msixbundle payload.")
-            return
+            $failures.Add("Package artifact '$ArtifactPath' does not contain an .msixbundle payload.")
+            return $failures
         }
 
         $bundlePath = Join-Path $tempRoot $bundleEntry.Name
@@ -74,8 +73,8 @@ function Test-PackageArtifact {
         try {
             $bundleManifestEntry = $bundleArchive.Entries | Where-Object { $_.FullName -eq "AppxMetadata/AppxBundleManifest.xml" } | Select-Object -First 1
             if (-not $bundleManifestEntry) {
-                $Failures.Add("Package artifact '$ArtifactPath' is missing AppxMetadata/AppxBundleManifest.xml.")
-                return
+                $failures.Add("Package artifact '$ArtifactPath' is missing AppxMetadata/AppxBundleManifest.xml.")
+                return $failures
             }
 
             $bundleReader = New-Object System.IO.StreamReader($bundleManifestEntry.Open())
@@ -104,6 +103,40 @@ function Test-PackageArtifact {
             [System.IO.Compression.ZipFileExtensions]::ExtractToFile($msixEntry, $msixPath, $true)
             $msixArchive = [System.IO.Compression.ZipFile]::OpenRead($msixPath)
             try {
+                $innerManifestEntry = $msixArchive.Entries | Where-Object { $_.FullName -eq "AppxManifest.xml" } | Select-Object -First 1
+                if (-not $innerManifestEntry) {
+                    $failures.Add("Package artifact '$ArtifactPath' is missing AppxManifest.xml inside the bundled MSIX payload.")
+                }
+                else {
+                    $innerReader = New-Object System.IO.StreamReader($innerManifestEntry.Open())
+                    try {
+                        [xml]$innerManifest = $innerReader.ReadToEnd()
+                    }
+                    finally {
+                        $innerReader.Dispose()
+                    }
+
+                    $innerIdentity = $innerManifest.Package.Identity
+                    $innerDisplayName = $innerManifest.Package.Properties.DisplayName
+                    $innerPublisherDisplayName = $innerManifest.Package.Properties.PublisherDisplayName
+
+                    if ($innerIdentity.Version -ne $expectedManifestVersion) {
+                        $failures.Add("Package artifact '$ArtifactPath' contains MSIX identity version '$($innerIdentity.Version)' but the release version must be '$expectedManifestVersion'.")
+                    }
+
+                    if ($innerIdentity.Name -ne "JustinTagardaSoftware.AudioScript") {
+                        $failures.Add("Package artifact '$ArtifactPath' contains MSIX identity name '$($innerIdentity.Name)' but expected 'JustinTagardaSoftware.AudioScript'.")
+                    }
+
+                    if ($innerDisplayName -ne "AudioScript") {
+                        $failures.Add("Package artifact '$ArtifactPath' contains MSIX display name '$innerDisplayName' but expected 'AudioScript'.")
+                    }
+
+                    if ($innerPublisherDisplayName -ne "JustinTagarda") {
+                        $failures.Add("Package artifact '$ArtifactPath' contains MSIX publisher display name '$innerPublisherDisplayName' but expected 'JustinTagarda'.")
+                    }
+                }
+
                 $forbiddenPaths = @(
                     "assets/prebuilt/pyannote",
                     "Assets/prebuilt/pyannote",
@@ -115,7 +148,7 @@ function Test-PackageArtifact {
 
                 foreach ($forbiddenPath in $forbiddenPaths) {
                     if (Test-ArchiveEntryPattern -Archive $msixArchive -Pattern $forbiddenPath) {
-                        $Failures.Add("Package artifact '$ArtifactPath' contains redundant or excluded payload path '$forbiddenPath'.")
+                        $failures.Add("Package artifact '$ArtifactPath' contains redundant or excluded payload path '$forbiddenPath'.")
                     }
                 }
 
@@ -139,7 +172,7 @@ function Test-PackageArtifact {
 
                 foreach ($pattern in $safeCleanupPatterns) {
                     if (Test-ArchiveEntryPattern -Archive $msixArchive -Pattern $pattern) {
-                        $Failures.Add("Package artifact '$ArtifactPath' still contains removable Python payload matching '$pattern'.")
+                        $failures.Add("Package artifact '$ArtifactPath' still contains removable Python payload matching '$pattern'.")
                     }
                 }
             }
@@ -157,11 +190,14 @@ function Test-PackageArtifact {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
+
+    return $failures
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $RepoRoot).Path)
 $manifestPath = Join-Path $repoRoot "assets\\bootstrap\\asset-manifest.json"
 $prebuiltRoot = Join-Path $repoRoot "assets\\prebuilt"
+$packageManifestPath = Join-Path $repoRoot "AudioScript.Package\\Package.appxmanifest"
 
 if (-not (Test-Path -LiteralPath $manifestPath)) {
     throw "Asset manifest not found at '$manifestPath'."
@@ -170,6 +206,13 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
 if (-not (Test-Path -LiteralPath $prebuiltRoot)) {
     throw "Prebuilt asset root not found at '$prebuiltRoot'."
 }
+
+if (-not (Test-Path -LiteralPath $packageManifestPath)) {
+    throw "Package manifest not found at '$packageManifestPath'."
+}
+
+[xml]$packageManifestXml = Get-Content -LiteralPath $packageManifestPath
+$expectedManifestVersion = $packageManifestXml.Package.Identity.Version
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $packagedAssets = @(
@@ -231,7 +274,10 @@ if (-not $SkipPackageArtifactCheck) {
         [System.IO.Path]::GetFullPath($PackageArtifactRoot)
     }
 
-    Test-PackageArtifact -ArtifactPath (Resolve-LatestPackageArtifact -RootPath $packageArtifactRoot) -Failures (,$failures)
+    $artifactFailures = @(Test-PackageArtifact -ArtifactPath (Resolve-LatestPackageArtifact -RootPath $packageArtifactRoot))
+    if ($artifactFailures.Count -gt 0) {
+        $failures.AddRange($artifactFailures)
+    }
 
     if ($failures.Count -gt 0) {
         $message = ($failures | ForEach-Object { "- $_" }) -join [Environment]::NewLine

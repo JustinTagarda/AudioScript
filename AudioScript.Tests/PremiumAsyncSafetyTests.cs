@@ -43,6 +43,36 @@ public sealed class PremiumAsyncSafetyTests
         Assert.Contains("StoreWindowAccessibilityRecovery.RecoverAfterStoreFlow", code, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PremiumPurchaseFlow_DoesNotBlockAdministratorElevation()
+    {
+        string repoRoot = ResolveRepoRoot();
+        string code = File.ReadAllText(Path.Combine(repoRoot, "Services", "AppEntitlementModels.cs"));
+
+        Assert.DoesNotContain("IsProcessElevated", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("running as administrator", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PremiumFooter_IncludesRestorePurchasesCommand()
+    {
+        string repoRoot = ResolveRepoRoot();
+        string xaml = File.ReadAllText(Path.Combine(repoRoot, "AppStatusDisplay.xaml"));
+
+        Assert.Contains("RestorePremiumPurchasesCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"Restore\"", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PremiumLifecycle_AppActivationRefreshesEntitlementAsync()
+    {
+        string repoRoot = ResolveRepoRoot();
+        string code = File.ReadAllText(Path.Combine(repoRoot, "App.xaml.cs"));
+
+        Assert.Contains("mainWindow.Activated += OnMainWindowActivatedRefreshPremium", code, StringComparison.Ordinal);
+        Assert.Contains("await _mainViewModel.RefreshPremiumEntitlementAsync()", code, StringComparison.Ordinal);
+    }
+
     private static string ResolveRepoRoot()
     {
         string current = AppContext.BaseDirectory;

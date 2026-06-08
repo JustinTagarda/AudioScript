@@ -180,6 +180,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         PlayAudioCommand = new AsyncRelayCommand(PlayAudioAsync, CanPlayAudio);
         PauseAudioCommand = new AsyncRelayCommand(PauseAudioAsync, CanPauseAudio);
         UpgradeToPremiumCommand = new AsyncRelayCommand(RequestUpgradeToPremiumAsync, CanRequestUpgradeToPremium);
+        RestorePremiumPurchasesCommand = new AsyncRelayCommand(RestorePremiumPurchasesAsync, CanRestorePremiumPurchases);
         CheckForAppUpdateCommand = new AsyncRelayCommand(CheckForAppUpdateAsync, CanCheckForAppUpdate);
 
         _processLogService.LogEmitted += OnProcessLogEmitted;
@@ -281,6 +282,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public AsyncRelayCommand PlayAudioCommand { get; }
     public AsyncRelayCommand PauseAudioCommand { get; }
     public AsyncRelayCommand UpgradeToPremiumCommand { get; }
+    public AsyncRelayCommand RestorePremiumPurchasesCommand { get; }
     public AsyncRelayCommand CheckForAppUpdateCommand { get; }
 
     public IAppUpdateService? AppUpdateService => _appUpdateService;
@@ -840,6 +842,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         !IsDevelopmentUnpackagedMode
         && _entitlementSnapshot.State != PremiumEntitlementState.Checking
         && !_entitlementSnapshot.HasPremium;
+
+    public bool IsRestorePremiumPurchasesVisible =>
+        !IsDevelopmentUnpackagedMode
+        && _entitlementSnapshot.State != PremiumEntitlementState.Checking;
 
     public string ApplicationUpdateStageText => _appUpdateSnapshot.StageText;
 
@@ -3174,6 +3180,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                     transcriptFingerprint,
                     chunkedAudio.Chunks.Count);
 
+            AppendLog(
+                $"Detect Speaker context. audioPath='{audioFilePath}', transcriptLines={transcriptionResult.TimedLines?.Count ?? 0}, " +
+                $"transcriptDuration={(transcriptionResult.Duration?.TotalSeconds ?? 0):F2}s, audioFingerprint='{audioFingerprint}', " +
+                $"transcriptFingerprint='{transcriptFingerprint}', resume={resume}, pendingResume={_pendingSpeakerDiarizationResume}, " +
+                $"jobStatus='{job.Status}', lastCompletedChunkIndex={job.LastCompletedChunkIndex}, totalChunks={chunkedAudio.Chunks.Count}, " +
+                $"speakerLimit='{speakerDiarizationLimit?.ToString() ?? "none"}'.");
+
             if (resume
                 && speakerDiarizationLimit is TimeSpan resumeLimit
                 && GetSpeakerDiarizationCoveredDuration(job, chunkedAudio.SourceInfo.Duration) >= resumeLimit)
@@ -3303,7 +3316,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             {
                 AppendLog("Speaker diarization failure state could not be saved.");
             }
-            AppendLog($"Detect Speaker failed. audioPath='{audioFilePath}', error='{ex.Message}'.");
+            AppendLog(
+                $"Detect Speaker failed. audioPath='{audioFilePath}', exceptionType='{ex.GetType().Name}', " +
+                $"error='{ex.Message}'.");
             throw;
         }
         finally
@@ -5000,6 +5015,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             && CanPromptPremiumPurchase;
     }
 
+    private bool CanRestorePremiumPurchases()
+    {
+        return !IsDevelopmentUnpackagedMode
+            && !IsPremiumEntitlementChecking;
+    }
+
     private Task RequestUpgradeToPremiumAsync()
     {
         if (IsDevelopmentUnpackagedMode)
@@ -5013,6 +5034,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 "Premium",
                 $"{PremiumProductDisplayName} unlocks all premium features. Upgrade in Microsoft Store to continue."));
         return Task.CompletedTask;
+    }
+
+    private async Task RestorePremiumPurchasesAsync()
+    {
+        if (_entitlementService is null || IsDevelopmentUnpackagedMode)
+        {
+            return;
+        }
+
+        AppendLog("Restore Purchases requested. Refreshing Microsoft Store entitlement.");
+        await _entitlementService.RefreshAsync().ConfigureAwait(false);
     }
 
     private bool CanCheckForAppUpdate()
@@ -5040,6 +5072,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         PlayAudioCommand.RaiseCanExecuteChanged();
         PauseAudioCommand.RaiseCanExecuteChanged();
         UpgradeToPremiumCommand.RaiseCanExecuteChanged();
+        RestorePremiumPurchasesCommand.RaiseCanExecuteChanged();
         CheckForAppUpdateCommand.RaiseCanExecuteChanged();
     }
 
@@ -5091,6 +5124,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         NotifyPropertyChanged(nameof(CanRunDetectSpeakersPrimaryAction));
         NotifyPropertyChanged(nameof(IsApplicationAccessTierVisible));
         NotifyPropertyChanged(nameof(IsUpgradeButtonVisible));
+        NotifyPropertyChanged(nameof(IsRestorePremiumPurchasesVisible));
         NotifyPropertyChanged(nameof(IsUpdateButtonVisible));
         NotifyPropertyChanged(nameof(IsUpdateButtonEnabled));
         NotifyPropertyChanged(nameof(AppVersionText));

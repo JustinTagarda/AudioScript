@@ -31,7 +31,6 @@
         "https://huggingface.co/api/models/DroolingPanda/speaker-diarization-community-1"
       ],
       "developmentSourceRelativePath": "assets/pyannote/speaker-diarization-community-1",
-      "packagedSourceRelativePath": "assets/prebuilt/pyannote/speaker-diarization-community-1",
       "deliveryMode": "ProvisionedOptional",
       "installKind": "Directory",
       "installRoot": "Pyannote",
@@ -47,19 +46,12 @@
       "id": "pyannote-python-x64",
       "displayName": "Pyannote Python runtime (x64)",
       "version": "2.0.0.0",
-      "downloadUri": "https://github.com/JustinTagarda/AudioScript/releases/latest/download/AudioScript.PyannotePythonRuntime.win-x64.zip",
-      "downloadSources": [
-        "https://github.com/JustinTagarda/AudioScript/releases/latest/download/AudioScript.PyannotePythonRuntime.win-x64.zip"
-      ],
-      "developmentSourceRelativePath": "assets/python/win-x64",
-      "packagedSourceRelativePath": "assets/prebuilt/python/win-x64",
       "deliveryMode": "ProvisionedOptional",
       "installKind": "Directory",
       "installRoot": "Python",
       "installRelativePath": "win-x64",
       "required": false,
       "releaseRequired": true,
-      "minimumDownloadSources": 1,
       "supportedArchitectures": [
         "x64"
       ]
@@ -133,5 +125,177 @@
       "expectedBytes": 1620000000,
       "required": false
     }
-  ]
+  ],
+  "bootstrap": {
+    "runtimeVersion": "3.12.10",
+    "sources": [
+      {
+        "id": "python-embeddable-x64",
+        "displayName": "Python embeddable runtime (x64)",
+        "kind": "PythonEmbeddableZip",
+        "installKind": "File",
+        "sourceUrl": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+        "destinationRelativePath": "Provisioning/cache/python-3.12.10-embed-amd64.zip",
+        "required": true
+      },
+      {
+        "id": "vc-redist-x64",
+        "displayName": "Microsoft Visual C++ Redistributable (x64)",
+        "kind": "MicrosoftVcRedist",
+        "installKind": "Command",
+        "sourceUrl": "https://aka.ms/vc14/vc_redist.x64.exe",
+        "destinationRelativePath": "Provisioning/cache/vc_redist.x64.exe",
+        "required": true
+      },
+      {
+        "id": "pip",
+        "displayName": "pip wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/5d/95/6b5cb3461ea5673ba0995989746db58eb18b91b54dbf331e72f569540946/pip-26.1.2-py3-none-any.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/pip-26.1.2-py3-none-any.whl",
+        "expectedSha256": "382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab",
+        "required": true
+      },
+      {
+        "id": "setuptools",
+        "displayName": "setuptools wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/e1/e3/c164c88b2e5ce7b24d667b9bd83589cf4f3520d97cad01534cd3c4f55fdb/setuptools-81.0.0-py3-none-any.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/setuptools-81.0.0-py3-none-any.whl",
+        "expectedSha256": "fdd925d5c5d9f62e4b74b30d6dd7828ce236fd6ed998a08d81de62ce5a6310d6",
+        "required": true
+      },
+      {
+        "id": "pyannote-audio",
+        "displayName": "pyannote.audio wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/61/af/702d6cba8d040c6c83e8ffdc01a42903add3024c0c31f7531a1bf8819a3f/pyannote_audio-4.0.4-py3-none-any.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/pyannote_audio-4.0.4-py3-none-any.whl",
+        "expectedSha256": "f9f8f597a938789684dd3efa22b427ebb1755d172dab2049ff322bfae9cd528a",
+        "required": true
+      },
+      {
+        "id": "torch",
+        "displayName": "torch wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/b9/c2/64b06cbb7830fb3cd9be13e1158b31a3f36b68e6a209105ee3c9d9480be0/torch-2.12.0-cp312-cp312-win_amd64.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/torch-2.12.0-cp312-cp312-win_amd64.whl",
+        "expectedSha256": "8b958caff4a14d3a3b0b2dfc6a378f64dda9728a9dad28c08a0db9ce4dafb549",
+        "required": true
+      },
+      {
+        "id": "torchaudio",
+        "displayName": "torchaudio wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/23/a8/941277ecc39f7a0a169d554302a1f1afd87c1d94a8aec828891916cea59a/torchaudio-2.11.0-cp312-cp312-win_amd64.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/torchaudio-2.11.0-cp312-cp312-win_amd64.whl",
+        "expectedSha256": "478110f981e5d40a8d82221732c57a56c85a1d5895fb8fe646e86ee15eded3bd",
+        "required": true
+      },
+      {
+        "id": "numpy",
+        "displayName": "numpy wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/ab/ca/feab00bd44aa5fe1ad2c18f08b4d3bb92e26484b0b1d1443897809ed528c/numpy-2.4.6-cp312-cp312-win_amd64.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/numpy-2.4.6-cp312-cp312-win_amd64.whl",
+        "expectedSha256": "d8e8286dd7cea7895157318d1b91cdacac64c479f3cbc8dce548331728484751",
+        "required": true
+      },
+      {
+        "id": "scipy",
+        "displayName": "scipy wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/a2/84/dc08d77fbf3d87d3ee27f6a0c6dcce1de5829a64f2eae85a0ecc1f0daa73/scipy-1.17.1-cp312-cp312-win_amd64.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/scipy-1.17.1-cp312-cp312-win_amd64.whl",
+        "expectedSha256": "41b71f4a3a4cab9d366cd9065b288efc4d4f3c0b37a91a8e0947fb5bd7f31d87",
+        "required": true
+      },
+      {
+        "id": "scikit-learn",
+        "displayName": "scikit-learn wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/9f/c4/0ab22726a04ede56f689476b760f98f8f46607caecff993017ac1b64aa5d/scikit_learn-1.8.0-cp312-cp312-win_amd64.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/scikit_learn-1.8.0-cp312-cp312-win_amd64.whl",
+        "expectedSha256": "35c007dedb2ffe38fe3ee7d201ebac4a2deccd2408e8621d53067733e3c74809",
+        "required": true
+      },
+      {
+        "id": "pandas",
+        "displayName": "pandas wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/b9/c5/fc1b368f303087d20e8c9bf3d6ceb186263cfac0ade735cd938538bea839/pandas-3.0.3-cp312-cp312-win_amd64.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/pandas-3.0.3-cp312-cp312-win_amd64.whl",
+        "expectedSha256": "c7be265b62cef88e253a941e4698604973736dcfe242fdb5198f0f7bc473cdcc",
+        "required": true
+      },
+      {
+        "id": "pyannote-core",
+        "displayName": "pyannote.core wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/ea/57/ecf62344b9b81debd0ca95ed987135e93d1b039507f8174f52d1d19d8c6b/pyannote_core-6.0.1-py3-none-any.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/pyannote_core-6.0.1-py3-none-any.whl",
+        "expectedSha256": "924550d6ecf6b05ad13bf3f66f59c29fc740cf1c62a6fca860ac2e66908203e5",
+        "required": true
+      },
+      {
+        "id": "pyannote-database",
+        "displayName": "pyannote.database wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/04/bf/6a6f5abaa4d9f803f34c9883ef5e316624eac6be0eaa87720216be9bba12/pyannote_database-6.1.1-py3-none-any.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/pyannote_database-6.1.1-py3-none-any.whl",
+        "expectedSha256": "36460c70ce9f50ff25c9ea365bc83ad625bb6b2494deccf6bd3fc750686ae684",
+        "required": true
+      },
+      {
+        "id": "pyannote-metrics",
+        "displayName": "pyannote.metrics wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/ca/d3/9cd1df66aa9be47a36df46f007e198bbdec3ddebc1bd8833c7a9e8a554a9/pyannote_metrics-4.1-py3-none-any.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/pyannote_metrics-4.1-py3-none-any.whl",
+        "expectedSha256": "34a54b7671f61709c1865d0484843e5b46ea3c4e4e5260ab065e5b3156c733d3",
+        "required": true
+      },
+      {
+        "id": "pyannote-pipeline",
+        "displayName": "pyannote.pipeline wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/d8/83/51290b8a17a3007bc4e4a5ea897f0765f30a6598d58670ba12d35ac0cc36/pyannote_pipeline-4.0.0-py3-none-any.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/pyannote_pipeline-4.0.0-py3-none-any.whl",
+        "expectedSha256": "6b0bfc19e684d89cc1608bb39448e15ff1231d4a87e99fc7e812e7891b8cd555",
+        "required": true
+      },
+      {
+        "id": "pyannoteai-sdk",
+        "displayName": "pyannoteAI SDK wheel",
+        "kind": "PythonWheel",
+        "installKind": "File",
+        "sourceUrl": "https://files.pythonhosted.org/packages/f9/8d/16e62133ff748931e923c2d29a150a710c85283f533a4148adc42addb6a8/pyannoteai_sdk-0.4.0-py3-none-any.whl",
+        "destinationRelativePath": "Provisioning/cache/wheels/pyannoteai_sdk-0.4.0-py3-none-any.whl",
+        "expectedSha256": "36a0175978e0427f27843d690eb4d1e8ec839009ea540516d6dfcdce749cd883",
+        "required": true
+      },
+      {
+        "id": "pyannote-community-model",
+        "displayName": "pyannote-community/speaker-diarization-community-1 model",
+        "kind": "HuggingFaceModelRepository",
+        "installKind": "Directory",
+        "sourceUrl": "https://huggingface.co/api/models/pyannote-community/speaker-diarization-community-1",
+        "destinationRelativePath": "Provisioning/cache/models/pyannote-community/speaker-diarization-community-1",
+        "required": true
+      }
+    ]
+  }
 }

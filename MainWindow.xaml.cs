@@ -900,11 +900,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _processLogService?.UpdateCrashContext(
                 "detect_speaker.route.run_started",
                 $"source='{vm.LoadedAudioFilePath}', transcriptRows={vm.FinalizedTranscriptLines.Count:N0}");
-            LogDetectSpeakerRoute("Detect Speaker requested.");
-            if (!await EnsureSpeakerDetectionAssetsReadyAsync(cancellationToken))
-            {
-                return;
-            }
+            LogDetectSpeakerRoute(
+                $"Detect Speaker requested. audioPath='{vm.LoadedAudioFilePath}', " +
+                $"transcriptRows={vm.FinalizedTranscriptLines.Count:N0}, runtimeContext='{_pyannoteCommunityModelManager?.DescribeExecutionContext() ?? "unavailable"}'.");
 
             var progress = new Progress<TranscriptionProgressSnapshot>(ApplyTranscriptionProgress);
 
@@ -940,7 +938,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         catch (Exception ex)
         {
             vm.LogHandledException("Detect Speaker", ex);
-            LogDetectSpeakerRoute($"Detect Speaker failed: {ex.Message}");
+            LogDetectSpeakerRoute(
+                $"Detect Speaker failed. exceptionType='{ex.GetType().Name}', error='{ex.Message}', " +
+                $"runtimeContext='{_pyannoteCommunityModelManager?.DescribeExecutionContext() ?? "unavailable"}'.");
             ShowErrorDialog(BuildDetectSpeakerFailureMessage(vm, ex), title: "Detect Speaker failed");
         }
         finally
@@ -2707,7 +2707,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (vm.IsPremiumEntitlementVerificationFailed)
         {
             ShowErrorDialog(
-                "AudioScript could not verify your Microsoft Store entitlement right now. Please ensure Microsoft Store is signed in and try Re-check Premium.",
+                "AudioScript could not verify your Microsoft Store entitlement right now. Please ensure Microsoft Store is signed in and try Restore Purchases.",
                 title: $"{featureName} unavailable");
             return false;
         }
@@ -3454,10 +3454,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 .Select(candidate => candidate.Message)
                 .Where(message => !string.IsNullOrWhiteSpace(message)));
 
-        if (combinedMessages.Contains("x64", StringComparison.OrdinalIgnoreCase)
-            || ex is PlatformNotSupportedException)
+        if (IsPyannoteNativeLoaderFailure(combinedMessages))
         {
-            return "Speaker diarization requires an x64 AudioScript build.";
+            return "Speaker detection could not load its installed Python runtime libraries. Run Detect Speaker again to repair the speaker detection components, then try again.";
+        }
+
+        if (root is UnauthorizedAccessException
+            && (combinedMessages.Contains("run_community_diarization.py", StringComparison.OrdinalIgnoreCase)
+                || combinedMessages.Contains("WindowsApps", StringComparison.OrdinalIgnoreCase)
+                || combinedMessages.Contains("Access to the path", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Speaker detection could not prepare its installed runtime files. Close AudioScript, reopen it, then run Detect Speaker again to repair the speaker detection components.";
+        }
+
+        if (root is PlatformNotSupportedException platformNotSupportedException)
+        {
+            return platformNotSupportedException.Message.Contains("x64", StringComparison.OrdinalIgnoreCase)
+                ? "Speaker diarization requires an x64 AudioScript build."
+                : platformNotSupportedException.Message;
         }
 
         if (combinedMessages.Contains("torchcodec", StringComparison.OrdinalIgnoreCase)
@@ -3487,6 +3501,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return $"The app could not finish detecting speakers for {fileName}. Check the session audio and try again.";
     }
 
+    private static bool IsPyannoteNativeLoaderFailure(string combinedMessages)
+    {
+        return combinedMessages.Contains("WinError 126", StringComparison.OrdinalIgnoreCase)
+            || (combinedMessages.Contains("c10.dll", StringComparison.OrdinalIgnoreCase)
+                && combinedMessages.Contains("dependencies", StringComparison.OrdinalIgnoreCase))
+            || (combinedMessages.Contains("torch", StringComparison.OrdinalIgnoreCase)
+                && combinedMessages.Contains("load", StringComparison.OrdinalIgnoreCase)
+                && combinedMessages.Contains("dll", StringComparison.OrdinalIgnoreCase));
+    }
+
     private void ShowTranscribeAudioErrorDialog(string message)
     {
         var dialog = new TranscribeAudioErrorDialogWindow(message)
@@ -3494,6 +3518,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Owner = this,
         };
         dialog.ShowDialog();
+    }
+
+    private void ShowDetectSpeakerErrorDialog(string message)
+    {
+        ShowErrorDialog(message, title: "Detect Speaker failed");
     }
 
     private void ShowErrorDialog(string message, string title)
@@ -3523,20 +3552,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (_speakerDiarizationDependencyCoordinator is not null)
         {
-            SpeakerDiarizationDependencyStatus status = await _speakerDiarizationDependencyCoordinator
-                .CheckStatusAsync(cancellationToken)
-                .ConfigureAwait(true);
-            if (status.IsReady)
-            {
-                return true;
-            }
-
-            if (!status.CanInstall)
-            {
-                ShowTranscribeAudioErrorDialog(status.Message);
-                return false;
-            }
-
             using var installCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var progressWindow = new SpeakerDiarizationInstallWindow
             {
@@ -3546,7 +3561,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var progress = new Progress<SpeakerDiarizationDependencyProgress>(progressWindow.ApplyProgress);
 
             Task<SpeakerDiarizationDependencyResult> installTask = _speakerDiarizationDependencyCoordinator
-                .InstallOrRepairAsync(status, progress, installCts.Token);
+                .EnsureExecutionReadyAsync(progress, installCts.Token);
             _ = installTask.ContinueWith(
                 _ => progressWindow.Dispatcher.BeginInvoke(new Action(progressWindow.CloseAfterOperation)),
                 TaskScheduler.Default);
@@ -3560,7 +3575,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             if (!result.WasCanceled)
             {
-                ShowTranscribeAudioErrorDialog(result.Message);
+                ShowDetectSpeakerErrorDialog(result.Message);
             }
 
             return false;
@@ -3568,13 +3583,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (_pyannoteCommunityModelManager is null)
         {
-            ShowTranscribeAudioErrorDialog("Speaker detection is not configured in this build.");
+            ShowDetectSpeakerErrorDialog("Speaker detection is not configured in this build.");
             return false;
         }
 
         if (!_pyannoteCommunityModelManager.IsSupportedOnCurrentArchitecture)
         {
-            ShowTranscribeAudioErrorDialog("Speaker diarization requires an x64 AudioScript build.");
+            ShowDetectSpeakerErrorDialog("Speaker diarization requires an x64 AudioScript build.");
             return false;
         }
 
@@ -3594,7 +3609,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             string message = DataContext is MainViewModel vm
                 ? BuildDetectSpeakerFailureMessage(vm, ex)
                 : ex.Message;
-            ShowTranscribeAudioErrorDialog(message);
+            ShowDetectSpeakerErrorDialog(message);
             return false;
         }
     }

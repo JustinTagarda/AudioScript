@@ -261,7 +261,7 @@ public partial class SettingsWindow : Window
 
             if (_viewModel.IsPremiumEntitlementVerificationFailed)
             {
-                ShowError("AudioScript could not verify Microsoft Store entitlement right now. Please ensure Microsoft Store is signed in, then click Re-check Premium.");
+                ShowError("AudioScript could not verify Microsoft Store entitlement right now. Please ensure Microsoft Store is signed in, then click Restore.");
                 return;
             }
 

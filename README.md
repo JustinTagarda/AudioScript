@@ -1,6 +1,6 @@
 # AudioScript
 
-AudioScript is a Windows desktop WPF app for local/offline audio transcription, speaker diarization, transcript editing, and session management.
+AudioScript is a single-instance Windows desktop WPF app for local/offline audio transcription, speaker diarization, transcript editing, and session management.
 
 ## Overview
 
@@ -17,6 +17,7 @@ AudioScript is a Windows desktop WPF app for local/offline audio transcription, 
 
 - UI: WPF
 - Runtime: `net10.0-windows10.0.17763.0`
+- Architecture: x64 only
 - Audio: NAudio
 - SVG: SharpVectors.Wpf
 - Export: Open XML SDK
@@ -24,12 +25,12 @@ AudioScript is a Windows desktop WPF app for local/offline audio transcription, 
 
 ## Repository Layout
 
-- `App.xaml.cs`: startup and dependency composition
+- `App.xaml.cs`: startup, dependency composition, and single-instance activation
 - `MainWindow.xaml` and `MainWindow.xaml.cs`: shell UI and orchestration
 - `ViewModels/MainViewModel.cs`: state, commands, transcription, diarization, preferences
 - `Services/`: persistence, app data, export, provisioning, model management
-- `Audio/`: audio capture/playback/chunking utilities
-- `Abstractions/`: shared contracts/models
+- `Audio/`: audio capture, playback, and chunking utilities
+- `Abstractions/`: shared contracts and models
 - `AudioScript.Tests/`: unit tests
 
 ## Live Transcription Pipeline
@@ -92,6 +93,7 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 - Footer version display: derived from the Store package version and normalized to `Major.Minor.Build.0`
 - Store package target architecture: `x64` only
 - Upload mode: `StoreUpload`
+- Store packaging also produces a separate VM-test sideload folder beside the submission artifact. The test folder is generated from the same versioned build and is expected to contain the installable bundle plus the local install script and certificate used for VM validation.
 
 ### Generate Store Upload Artifact
 
@@ -102,7 +104,13 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 ### Expected Output Location
 
 - `AudioScript.Package\AppPackages\*.msixupload`
-- Current Store package version: `2.0.20.0`
+- Current Store package version: `2.0.27.0`
+
+### VM-Test Output
+
+- `AudioScript.Package\AppPackages\AudioScript.Package_<version>_Test`
+- Expected contents: the x64 package bundle, `Install.ps1`, `Add-AppDevPackage.ps1`, and the validation certificate used for local VM installation
+- Use the VM-test folder for clean-machine install checks; do not treat it as the Store submission artifact
 
 ## Premium Entitlement Model
 
@@ -111,26 +119,36 @@ dotnet test .\AudioScript.Tests\AudioScript.Tests.csproj
 - Basic can use Speaker Diarization / Detect Speaker for up to 5 minutes of diarized audio per run.
 - Basic cannot install or use premium models: `whisper-medium`, `whisper-large-v3`, `whisper-large-v3-turbo`.
 - Premium is unlocked only by Microsoft Store durable add-on ownership.
+- Promo codes must target the published Premium durable add-on, not the free parent app.
+- Purchase and promo-code redemption resolve through the same Store-verified entitlement service.
 - Premium removes the 10-minute Live Transcription cap and unlocks the premium-only features above.
 - Add-on catalog source of truth: `Services/Store/StorePremiumAddonCatalog.cs`
 - Entitlement verification and fallback cache: `Services/AppEntitlementModels.cs`
 - Premium CTA convergence uses the shared in-app purchase flow (`StoreContext.RequestPurchaseAsync(addOnStoreId)`), including the footer `AppStatusDisplay` Upgrade button and the Settings window premium upsell path.
+- Footer `Restore` performs a fresh Store entitlement query for promo-code redemption, account-sync, and license refresh scenarios.
+- Packaged runs re-check Premium on startup after first render, on foreground activation, and when `StoreContext.OfflineLicensesChanged` fires.
+- When Premium is not detected after promo-code redemption, the expected user path is: confirm the promo code targets the Premium add-on, confirm redemption completed successfully, confirm Microsoft Store is signed into the same account, then run `Restore`.
 
 ## Bundled Engine Runtime
 
 - Production packages are expected to include the required/basic engine runtime:
   - `whisper-small`
   - `whisper.cpp` CLI runtime
+  - native Windows runtime DLLs required by `whisper-cli.exe` on production:
+    - `msvcp140.dll`
+    - `vcruntime140.dll`
+    - `vcruntime140_1.dll`
+    - `vcomp140.dll`
   - `pyannote-community-1` model
-  - bundled Python x64 runtime and required diarization modules
+  - on-demand Python x64 runtime and required diarization modules
 - Premium Whisper models remain optional installs and are not bundled by default.
 - Packaged production builds do not repair or re-download required bundled engines at runtime.
-- If the bundled runtime is missing or corrupted in production, reinstall AudioScript from Microsoft Store.
+- If the installed speaker-detection runtime is missing or corrupted, run Detect Speaker again to repair it.
 
 ## Microsoft Store App Update Flow
 
 - Store update logic runs only when package identity is present and Store APIs are available.
-- On startup (after first render), the app performs a non-blocking Store update check via `StoreContext.GetAppAndOptionalStorePackageUpdatesAsync()`.
+- On startup after first render, the app performs a non-blocking Store update check via `StoreContext.GetAppAndOptionalStorePackageUpdatesAsync()`.
 - Startup checks are throttled to at least 30 minutes apart and capped to ten checks in a rolling 24-hour window.
 - When no update is found at startup, the app schedules a one-hour in-session retry.
 - The footer shows a compact `Update` button only when updates are positively confirmed.

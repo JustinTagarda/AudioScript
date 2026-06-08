@@ -29,6 +29,7 @@ public partial class App : System.Windows.Application
     private WindowPlacementService? _windowPlacementService;
     private AppPreferencesStore? _appPreferencesStore;
     private AppThemeService? _appThemeService;
+    private DateTimeOffset _lastPremiumActivationRefreshUtc = DateTimeOffset.MinValue;
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
@@ -68,9 +69,17 @@ public partial class App : System.Windows.Application
         var startupProvisioningCoordinator = new StartupAssetProvisioningCoordinator(
             assetProvisioningService,
             processLogService);
+        var audioStandardizer = new AudioStandardizer();
         var pyannoteCommunityModelManager = new PyannoteCommunityModelManager(
             assetProvisioningService,
             appDataPathProvider);
+        var pyannoteCommunityDiarizationEngine = new PyannoteCommunityDiarizationEngine(
+            audioStandardizer,
+            pyannoteCommunityModelManager,
+            processLogService);
+        var officialSourceBootstrapService = new OfficialSourceBootstrapService(
+            appDataPathProvider,
+            processLogService);
         var pythonDependencyRepairService = new PythonDependencyRepairService(
             pyannoteCommunityModelManager,
             processLogService);
@@ -78,7 +87,9 @@ public partial class App : System.Windows.Application
             assetProvisioningService,
             pyannoteCommunityModelManager,
             pythonDependencyRepairService,
-            processLogService);
+            pyannoteCommunityDiarizationEngine,
+            processLogService,
+            officialSourceBootstrapService);
         var startupDependencyHealthCoordinator = new StartupDependencyHealthCoordinator(
             startupProvisioningCoordinator,
             processLogService);
@@ -142,7 +153,6 @@ public partial class App : System.Windows.Application
         }
 
         var transcriptionOptions = new TranscriptionOptions();
-        var audioStandardizer = new AudioStandardizer();
         var silenceIntervalDetector = new SilenceIntervalDetector();
         var audioChunkingOptions = AudioChunkingOptions.Default;
         var chunkPlanner = new SilenceAwareChunkPlanner(
@@ -166,10 +176,6 @@ public partial class App : System.Windows.Application
         var chunkedAudioTranscriptionService = new ChunkedAudioTranscriptionService(
             audioChunkingService,
             whisperTranscriptionService,
-            processLogService);
-        var pyannoteCommunityDiarizationEngine = new PyannoteCommunityDiarizationEngine(
-            audioStandardizer,
-            pyannoteCommunityModelManager,
             processLogService);
         var offlineSpeakerDiarizationService = new OfflineSpeakerDiarizationService(
             pyannoteCommunityDiarizationEngine,
@@ -229,6 +235,7 @@ public partial class App : System.Windows.Application
         _windowPlacementService.Attach(mainWindow);
         MainWindow = mainWindow;
         mainWindow.Show();
+        mainWindow.Activated += OnMainWindowActivatedRefreshPremium;
         mainWindow.ContentRendered += async (_, _) =>
         {
             try
@@ -347,6 +354,10 @@ public partial class App : System.Windows.Application
     {
         _processLogService?.Log("App", "Application exit initiated.");
         _processLogService?.UpdateCrashContext("app.shutdown.started");
+        if (MainWindow is not null)
+        {
+            MainWindow.Activated -= OnMainWindowActivatedRefreshPremium;
+        }
         try
         {
             _mainViewModel?.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -510,6 +521,33 @@ public partial class App : System.Windows.Application
         MainWindow.Topmost = true;
         MainWindow.Topmost = false;
         MainWindow.Focus();
+    }
+
+    private async void OnMainWindowActivatedRefreshPremium(object? sender, EventArgs e)
+    {
+        if (_mainViewModel is null)
+        {
+            return;
+        }
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (now - _lastPremiumActivationRefreshUtc < TimeSpan.FromSeconds(2))
+        {
+            return;
+        }
+
+        _lastPremiumActivationRefreshUtc = now;
+        try
+        {
+            await _mainViewModel.RefreshPremiumEntitlementAsync();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _processLogService?.LogException("Premium", "premium_activation_refresh_failed", ex);
+        }
     }
 
     private static void NotifyRunningInstance()

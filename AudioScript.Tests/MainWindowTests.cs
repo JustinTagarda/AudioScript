@@ -220,6 +220,57 @@ public sealed class MainWindowTests
     }
 
     [Fact]
+    public void DetectSpeakerDependencyFailures_UseDetectSpeakerErrorDialog()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        int methodStart = code.IndexOf("private async Task<bool> EnsureSpeakerDetectionAssetsReadyAsync", StringComparison.Ordinal);
+        int methodEnd = code.IndexOf("private static IEnumerable<Exception> EnumerateExceptionChain", methodStart, StringComparison.Ordinal);
+        string methodBlock = methodEnd > methodStart
+            ? code[methodStart..methodEnd]
+            : code[methodStart..];
+
+        Assert.Contains("EnsureExecutionReadyAsync(progress, installCts.Token)", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("ShowDetectSpeakerErrorDialog(result.Message);", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("ShowDetectSpeakerErrorDialog(\"Speaker detection is not configured in this build.\");", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("ShowDetectSpeakerErrorDialog(message);", methodBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("ShowTranscribeAudioErrorDialog(", methodBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("combinedMessages.Contains(\"x64\"", methodBlock, StringComparison.Ordinal);
+
+        int failureStart = code.IndexOf("private static string BuildDetectSpeakerFailureMessage", StringComparison.Ordinal);
+        int failureEnd = code.IndexOf("private void ShowTranscribeAudioErrorDialog", failureStart, StringComparison.Ordinal);
+        string failureBlock = failureEnd > failureStart
+            ? code[failureStart..failureEnd]
+            : code[failureStart..];
+
+        Assert.Contains("Speaker detection could not load its installed Python runtime libraries.", failureBlock, StringComparison.Ordinal);
+        Assert.Contains("root is UnauthorizedAccessException", failureBlock, StringComparison.Ordinal);
+        Assert.Contains("run_community_diarization.py", failureBlock, StringComparison.Ordinal);
+        Assert.Contains("Speaker detection could not prepare its installed runtime files.", failureBlock, StringComparison.Ordinal);
+        Assert.Contains("IsPyannoteNativeLoaderFailure(combinedMessages)", failureBlock, StringComparison.Ordinal);
+        Assert.Contains("platformNotSupportedException.Message.Contains(\"x64\"", failureBlock, StringComparison.Ordinal);
+        Assert.Contains("private void ShowDetectSpeakerErrorDialog(string message)", code, StringComparison.Ordinal);
+        Assert.Contains("ShowErrorDialog(message, title: \"Detect Speaker failed\")", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetectSpeakerRunPath_DoesNotRepeatAssetReadinessCheck()
+    {
+        string codePath = FindRepoFile("MainWindow.xaml.cs");
+        string code = File.ReadAllText(codePath);
+
+        int methodStart = code.IndexOf("private async Task RunDetectSpeakersAsync", StringComparison.Ordinal);
+        int methodEnd = code.IndexOf("private void ShowDetectSpeakerErrorDialog", methodStart, StringComparison.Ordinal);
+        string methodBlock = methodEnd > methodStart
+            ? code[methodStart..methodEnd]
+            : code[methodStart..];
+
+        Assert.DoesNotContain("EnsureSpeakerDetectionAssetsReadyAsync(cancellationToken)", methodBlock, StringComparison.Ordinal);
+        Assert.Contains("vm.RunSpeakerDetectionAsync(cancellationToken, progress)", methodBlock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DetectSpeakerRoute_UsesDedicatedDetectSpeakerPanel()
     {
         string xamlPath = FindRepoFile("MainWindow.xaml");

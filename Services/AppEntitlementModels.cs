@@ -1,5 +1,6 @@
 using Windows.Services.Store;
 using AudioScript.Services.Store;
+using Windows.Foundation;
 
 namespace AudioScript.Services;
 
@@ -153,6 +154,8 @@ public sealed class StoreEntitlementService : IEntitlementService
     private readonly object _sync = new();
     private AppEntitlementSnapshot _currentSnapshot;
     private DateTimeOffset? _lastVerifiedPremiumUtc;
+    private StoreContext? _licenseEventContext;
+    private TypedEventHandler<StoreContext, object>? _offlineLicensesChangedHandler;
 
     public StoreEntitlementService(
         IAppVersionProvider appVersionProvider,
@@ -194,6 +197,8 @@ public sealed class StoreEntitlementService : IEntitlementService
                 StatusMessage: "Checking Microsoft Store entitlement...",
                 State: PremiumEntitlementState.Checking)
             : AppEntitlementSnapshot.Development(_options.PremiumProductDisplayName);
+
+        TrySubscribeOfflineLicensesChanged();
     }
 
     public event EventHandler<AppEntitlementSnapshot>? SnapshotChanged;
@@ -244,13 +249,6 @@ public sealed class StoreEntitlementService : IEntitlementService
                 "Premium purchase is available only in the Microsoft Store version.");
         }
 
-        if (IsProcessElevated())
-        {
-            return new PremiumPurchaseResult(
-                PremiumPurchaseStatus.Blocked,
-                "Close the app and reopen it normally. Microsoft Store purchase is unavailable while running as administrator.");
-        }
-
         StoreContext context = CreateStoreContext();
         PremiumProductResolution resolution = await ResolvePremiumProductAsync(context, cancellationToken).ConfigureAwait(true);
         StoreProduct? premiumProduct = resolution.Product;
@@ -295,6 +293,7 @@ public sealed class StoreEntitlementService : IEntitlementService
 
     public ValueTask DisposeAsync()
     {
+        TryUnsubscribeOfflineLicensesChanged();
         return ValueTask.CompletedTask;
     }
 
@@ -333,20 +332,14 @@ public sealed class StoreEntitlementService : IEntitlementService
                 string productName = string.IsNullOrWhiteSpace(premiumProduct?.Title)
                     ? _options.PremiumProductDisplayName
                     : premiumProduct!.Title;
-                bool hasConfiguredIds = _options.PremiumStoreIds.Any(id => !string.IsNullOrWhiteSpace(id));
-                bool isInconclusive = hasConfiguredIds && premiumProduct is null;
                 PremiumEntitlementState state = hasPremium
                     ? PremiumEntitlementState.VerifiedPremium
-                    : isInconclusive
-                        ? PremiumEntitlementState.VerificationInconclusive
-                        : PremiumEntitlementState.VerifiedBasic;
+                    : PremiumEntitlementState.VerifiedBasic;
                 string statusMessage = hasPremium
                     ? $"{productName} is unlocked."
-                    : state == PremiumEntitlementState.VerificationInconclusive
-                        ? $"Unable to confidently map {_options.PremiumProductDisplayName} SKU in Microsoft Store right now."
-                        : premiumProduct is null
-                            ? $"{_options.PremiumProductDisplayName} is not currently available in Microsoft Store."
-                            : $"{productName} is available for purchase in Microsoft Store.";
+                    : premiumProduct is null
+                        ? $"{_options.PremiumProductDisplayName} entitlement was not found. If you redeemed a promo code, confirm it targets the Premium add-on, that redemption completed successfully, that Microsoft Store is signed into the same account, then run Restore Purchases."
+                        : $"{productName} is available for purchase in Microsoft Store.";
 
                 Publish(new AppEntitlementSnapshot(
                     IsPackaged: true,
@@ -361,6 +354,7 @@ public sealed class StoreEntitlementService : IEntitlementService
                     "premium_entitlement_refreshed",
                     $"attempt={attempt}; state={state}; hasPremium={hasPremium}; productAvailable={premiumProduct is not null}; " +
                     $"productName='{productName}'; matchReason='{resolution.MatchReason}'; licenseMatchReason='{licenseResolution.MatchReason}'; " +
+                    $"packageFamily='{TryGetPackageFamilyName()}'; " +
                     $"configuredStoreIds='{string.Join(",", _options.PremiumStoreIds)}'; configuredProductIds='{string.Join(",", _options.PremiumProductIds)}'; " +
                     $"storeProducts='{string.Join(",", resolution.CandidateStoreIds)}'; userCollection='{string.Join(",", resolution.UserCollectionStoreIds)}'; " +
                     $"licenseKeys='{string.Join(",", license.AddOnLicenses.Keys)}'; licenseDetails='{FormatLicenseDetails(license)}'.");
@@ -652,20 +646,6 @@ public sealed class StoreEntitlementService : IEntitlementService
         return context;
     }
 
-    private static bool IsProcessElevated()
-    {
-        try
-        {
-            using System.Security.Principal.WindowsIdentity identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-            var principal = new System.Security.Principal.WindowsPrincipal(identity);
-            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     private void Publish(AppEntitlementSnapshot snapshot)
     {
         EventHandler<AppEntitlementSnapshot>? handler;
@@ -728,6 +708,85 @@ public sealed class StoreEntitlementService : IEntitlementService
 
         int index = Math.Min(attemptIndex, _options.RefreshRetryDelays.Length - 1);
         return _options.RefreshRetryDelays[index];
+    }
+
+    private void TrySubscribeOfflineLicensesChanged()
+    {
+        if (!_appVersionProvider.IsPackaged)
+        {
+            return;
+        }
+
+        if (_licenseEventContext is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            StoreContext context = _storeContextProvider?.GetContext() ?? StoreContext.GetDefault();
+            _offlineLicensesChangedHandler = (_, _) =>
+            {
+                _ = RefreshFromStoreTriggerAsync("offline_licenses_changed");
+            };
+            context.OfflineLicensesChanged += _offlineLicensesChangedHandler;
+            _licenseEventContext = context;
+            Log("premium_license_event_subscribed", "source=OfflineLicensesChanged");
+        }
+        catch (Exception ex)
+        {
+            LogException("premium_license_event_subscribe_failed", ex);
+        }
+    }
+
+    private void TryUnsubscribeOfflineLicensesChanged()
+    {
+        if (_licenseEventContext is null || _offlineLicensesChangedHandler is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _licenseEventContext.OfflineLicensesChanged -= _offlineLicensesChangedHandler;
+        }
+        catch (Exception ex)
+        {
+            LogException("premium_license_event_unsubscribe_failed", ex);
+        }
+        finally
+        {
+            _offlineLicensesChangedHandler = null;
+            _licenseEventContext = null;
+        }
+    }
+
+    private async Task RefreshFromStoreTriggerAsync(string trigger)
+    {
+        try
+        {
+            Log("premium_entitlement_refresh_triggered", $"trigger={trigger}");
+            await RefreshAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            LogException($"premium_entitlement_refresh_trigger_{trigger}_failed", ex);
+        }
+    }
+
+    private string TryGetPackageFamilyName()
+    {
+        try
+        {
+            return Windows.ApplicationModel.Package.Current.Id.FamilyName ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private sealed record PremiumProductResolution(

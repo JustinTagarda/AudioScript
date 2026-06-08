@@ -37,9 +37,38 @@ if (Test-Path -LiteralPath $resolvedOutputPath) {
     Remove-Item -LiteralPath $resolvedOutputPath -Force
 }
 
+$stagingPath = Join-Path ([System.IO.Path]::GetTempPath()) ("AudioScript-diarization-runtime-" + [Guid]::NewGuid().ToString("N"))
 $compressionLevel = [System.IO.Compression.CompressionLevel]::Optimal
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($sourcePath, $resolvedOutputPath, $compressionLevel, $false)
+try {
+    Copy-Item -LiteralPath $sourcePath -Destination $stagingPath -Recurse
+
+    $nativeCompatibilityFiles = @(
+        @{
+            Source = (Join-Path $stagingPath "Lib\site-packages\sklearn\.libs\msvcp140.dll")
+            Destination = (Join-Path $stagingPath "msvcp140.dll")
+        },
+        @{
+            Source = (Join-Path $stagingPath "Lib\site-packages\sklearn\.libs\vcomp140.dll")
+            Destination = (Join-Path $stagingPath "vcomp140.dll")
+        }
+    )
+
+    foreach ($file in $nativeCompatibilityFiles) {
+        if (-not (Test-Path -LiteralPath $file.Source)) {
+            throw "Pyannote Python runtime source is missing native compatibility file '$($file.Source)'."
+        }
+
+        Copy-Item -LiteralPath $file.Source -Destination $file.Destination -Force
+    }
+
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($stagingPath, $resolvedOutputPath, $compressionLevel, $false)
+}
+finally {
+    if (Test-Path -LiteralPath $stagingPath) {
+        Remove-Item -LiteralPath $stagingPath -Recurse -Force
+    }
+}
 
 Write-Host "Diarization runtime archive created."
 Write-Host "Source: $sourcePath"

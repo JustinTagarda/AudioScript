@@ -19,6 +19,7 @@ This policy applies to:
 - Basic: user does not have Premium entitlement.
 - Premium: user has Premium entitlement.
 - Packaged production build: Microsoft Store installed app/package context.
+- Premium durable add-on: the Microsoft Store add-on that grants lifetime Premium entitlement.
 
 ## Source of Truth
 
@@ -63,6 +64,9 @@ Required behavior in packaged builds:
 - `MainViewModel` receives non-null `IEntitlementService`.
 - Premium status is derived from Store entitlement verification, not development fallback.
 - Purchase and restore/re-check flows are functional.
+- Promo-code redemption must target the Premium durable add-on and resolve through the same Store-verified entitlement path as direct purchase.
+- Footer `Restore` performs a fresh Store entitlement query after the initial entitlement check completes.
+- App activation and Store license-change notifications refresh entitlement.
 
 ## Development Mode Exception
 
@@ -71,6 +75,7 @@ For unpackaged/local development runs (including direct Debug executable launch,
 - Do not surface Basic/Premium gating UX.
 - Keep `Basic/Premium` status text hidden.
 - Keep `Upgrade` button hidden.
+- Keep `Restore` button hidden.
 - Suppress Basic/Premium upsell prompts in this development-mode path.
 - Do not enforce Basic/Premium feature and session-limit gating in this path.
 - Allow local development access to premium-gated feature paths and premium model install/use flows without Store purchase prompts.
@@ -87,13 +92,16 @@ Packaged production behavior must remain Store-verified (Basic by default, Premi
 When restoring or validating gating:
 
 1. Confirm packaged startup wires a non-null `IEntitlementService` into `MainViewModel` and refreshes entitlement after initial render.
-2. Confirm Basic can start Live Transcription and is auto-stopped at 10 minutes with Premium upsell messaging.
-3. Confirm Basic can start Speaker Diarization, is auto-stopped at 5 minutes of diarized audio, and cannot resume once the 5-minute Basic cap has already been reached.
-4. Confirm Basic cannot install/use premium models.
-5. Confirm Basic session creation blocks at 10 and raises Premium upsell.
-6. Confirm Premium has no Live Transcription time limit and can access all other gated features.
-7. Confirm downgrade flow reverts premium-only selected model to `whisper-small`.
-8. Confirm tests covering this policy pass in CI.
+2. Confirm footer `Restore` performs a fresh Store entitlement query.
+3. Confirm app activation and Store license-change notifications refresh entitlement.
+4. Confirm promo-code redemption for the Premium durable add-on unlocks through the same Store-verified path as direct purchase.
+5. Confirm Basic can start Live Transcription and is auto-stopped at 10 minutes with Premium upsell messaging.
+6. Confirm Basic can start Speaker Diarization, is auto-stopped at 5 minutes of diarized audio, and cannot resume once the 5-minute Basic cap has already been reached.
+7. Confirm Basic cannot install/use premium models.
+8. Confirm Basic session creation blocks at 10 and raises Premium upsell.
+9. Confirm Premium has no Live Transcription time limit and can access all other gated features.
+10. Confirm downgrade flow reverts premium-only selected model to `whisper-small`.
+11. Confirm tests covering this policy pass in CI.
 
 ## Change Control
 

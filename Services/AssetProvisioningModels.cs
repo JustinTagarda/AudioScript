@@ -109,6 +109,63 @@ public sealed record AssetProvisioningManifest
 
     [JsonPropertyName("assets")]
     public ProvisionedAssetDescriptor[] Assets { get; init; } = Array.Empty<ProvisionedAssetDescriptor>();
+
+    [JsonPropertyName("bootstrap")]
+    public OfficialSourceBootstrapManifest? Bootstrap { get; init; }
+}
+
+public enum OfficialSourceBootstrapPayloadKind
+{
+    PythonEmbeddableZip,
+    MicrosoftVcRedist,
+    PythonWheel,
+    HuggingFaceModelRepository,
+}
+
+public enum OfficialSourceBootstrapInstallKind
+{
+    File,
+    Directory,
+    Command,
+}
+
+public sealed record OfficialSourceBootstrapManifest
+{
+    [JsonPropertyName("runtimeVersion")]
+    public string RuntimeVersion { get; init; } = string.Empty;
+
+    [JsonPropertyName("sources")]
+    public OfficialSourceBootstrapDescriptor[] Sources { get; init; } = Array.Empty<OfficialSourceBootstrapDescriptor>();
+}
+
+public sealed record OfficialSourceBootstrapDescriptor
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
+
+    [JsonPropertyName("displayName")]
+    public string DisplayName { get; init; } = string.Empty;
+
+    [JsonPropertyName("kind")]
+    public OfficialSourceBootstrapPayloadKind Kind { get; init; }
+
+    [JsonPropertyName("installKind")]
+    public OfficialSourceBootstrapInstallKind InstallKind { get; init; }
+
+    [JsonPropertyName("sourceUrl")]
+    public string SourceUrl { get; init; } = string.Empty;
+
+    [JsonPropertyName("destinationRelativePath")]
+    public string DestinationRelativePath { get; init; } = string.Empty;
+
+    [JsonPropertyName("expectedSha256")]
+    public string? ExpectedSha256 { get; init; }
+
+    [JsonPropertyName("required")]
+    public bool Required { get; init; } = true;
+
+    [JsonPropertyName("architecture")]
+    public string? Architecture { get; init; }
 }
 
 internal sealed class ProvisionedAssetStateDocument

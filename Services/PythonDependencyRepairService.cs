@@ -39,7 +39,7 @@ public sealed class PythonDependencyRepairService : IPythonDependencyRepairServi
                 attempts);
         }
 
-        _modelManager.ValidateInstalled();
+        _modelManager.PrepareInstalledRuntime();
         ProbeResult probe = await ProbeMissingModulesAsync(cancellationToken).ConfigureAwait(false);
         attempts.Add(new DependencyRepairAttempt(
             "python:probe",
@@ -56,8 +56,8 @@ public sealed class PythonDependencyRepairService : IPythonDependencyRepairServi
                     BuildFailureItem(
                         "pyannote-python-runtime",
                         "Pyannote Python runtime",
-                        "Bundled Python dependency probe failed.",
-                        "Reinstall AudioScript from Microsoft Store.",
+                        "Installed Python dependency probe failed.",
+                        "Run Detect Speaker again to repair the speaker detection runtime.",
                         attempts)
                 ],
                 attempts);
@@ -72,7 +72,7 @@ public sealed class PythonDependencyRepairService : IPythonDependencyRepairServi
                 module,
                 DependencyHealthCategory.PythonModule,
                 missing ? DependencyHealthStatus.Failed : DependencyHealthStatus.Completed,
-                missing ? "Bundled module is unavailable." : "Ready",
+                missing ? "Installed module is unavailable." : "Ready",
                 missing ? 0 : 100,
                 1,
                 1));
@@ -81,8 +81,8 @@ public sealed class PythonDependencyRepairService : IPythonDependencyRepairServi
                 ? BuildFailureItem(
                     module,
                     module,
-                    "Bundled Python module is unavailable.",
-                    "Reinstall AudioScript from Microsoft Store.",
+                    "Installed Python module is unavailable.",
+                    "Run Detect Speaker again to repair the speaker detection runtime.",
                     attempts)
                 : new DependencyHealthItem(
                     module,

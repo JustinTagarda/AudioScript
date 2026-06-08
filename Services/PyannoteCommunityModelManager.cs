@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace AudioScript.Services;
@@ -7,7 +8,14 @@ public sealed class PyannoteCommunityModelManager
 {
     public const string PyannoteModelAssetId = "pyannote-community-model";
     public const string PyannotePythonX64AssetId = "pyannote-python-x64";
-    private static readonly string[] RequiredModelRelativePaths =
+    private static readonly string[] RequiredModelDirectoryRelativePaths =
+    [
+        "segmentation",
+        "embedding",
+        "plda",
+    ];
+
+    private static readonly string[] RequiredModelFileRelativePaths =
     [
         "config.yaml",
         "segmentation\\pytorch_model.bin",
@@ -15,12 +23,46 @@ public sealed class PyannoteCommunityModelManager
         "plda\\plda.npz",
         "plda\\xvec_transform.npz",
     ];
-    private static readonly string[] RequiredRuntimeRelativePaths =
+
+    private static readonly string[] RequiredRuntimeDirectoryRelativePaths =
+    [
+        "Lib\\site-packages\\torch",
+        "Lib\\site-packages\\torch\\lib",
+        "Lib\\site-packages\\torch\\bin",
+        "Lib\\site-packages\\torchaudio",
+        "Lib\\site-packages\\torchaudio\\lib",
+        "Lib\\site-packages\\pyannote\\audio",
+        "Lib\\site-packages\\numpy.libs",
+        "Lib\\site-packages\\scipy.libs",
+        "Lib\\site-packages\\sklearn\\.libs",
+        "Lib\\site-packages\\pandas.libs",
+    ];
+
+    private static readonly string[] RequiredRuntimeFileRelativePaths =
     [
         "python.exe",
-        "Lib\\site-packages\\torch",
-        "Lib\\site-packages\\torchaudio",
-        "Lib\\site-packages\\pyannote\\audio",
+        "python3.dll",
+        "python312.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "libcrypto-3.dll",
+        "libssl-3.dll",
+        "Lib\\site-packages\\torch\\lib\\c10.dll",
+        "Lib\\site-packages\\torch\\lib\\libiomp5md.dll",
+        "Lib\\site-packages\\torch\\lib\\shm.dll",
+        "Lib\\site-packages\\torch\\lib\\torch.dll",
+        "Lib\\site-packages\\torch\\lib\\torch_cpu.dll",
+        "Lib\\site-packages\\torch\\lib\\torch_global_deps.dll",
+        "Lib\\site-packages\\torch\\lib\\torch_python.dll",
+        "Lib\\site-packages\\torch\\lib\\uv.dll",
+        "Lib\\site-packages\\numpy.libs\\libscipy_openblas64_-63c857e738469261263c764a36be9436.dll",
+        "Lib\\site-packages\\numpy.libs\\msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll",
+        "Lib\\site-packages\\scipy.libs\\libscipy_openblas-64eda39e79589aedb16f58e5547eb599.dll",
+        "Lib\\site-packages\\sklearn\\.libs\\msvcp140.dll",
+        "Lib\\site-packages\\sklearn\\.libs\\vcomp140.dll",
+        "Lib\\site-packages\\pandas.libs\\msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll",
+        "Lib\\site-packages\\torchaudio\\lib\\libtorchaudio.pyd",
+        "Lib\\site-packages\\torchaudio\\lib\\_torchaudio.pyd",
     ];
 
     private readonly AppDataPathProvider _paths;
@@ -39,13 +81,46 @@ public sealed class PyannoteCommunityModelManager
 
     public string ModelDirectoryPath => _assetProvisioningService.ResolveInstallPath(PyannoteModelAssetId);
 
-    public string RunnerScriptPath => Path.Combine(ModelDirectoryPath, "run_community_diarization.py");
+    public string RunnerScriptPath => _paths.IsPackaged
+        ? Path.Combine(_paths.TempPath, "pyannote-community-runner", "run_community_diarization.py")
+        : Path.Combine(ModelDirectoryPath, "run_community_diarization.py");
 
     public string RuntimeDirectoryPath => _assetProvisioningService.ResolveInstallPath(PyannotePythonX64AssetId);
 
     public string PythonExecutablePath => Path.Combine(RuntimeDirectoryPath, "python.exe");
 
     public bool IsSupportedOnCurrentArchitecture => _architectureResolver() == Architecture.X64;
+
+    public IReadOnlyList<string> GetRuntimeNativeSearchDirectories()
+    {
+        string runtimeRoot = RuntimeDirectoryPath;
+        var directories = new List<string>
+        {
+            runtimeRoot,
+            Path.Combine(runtimeRoot, "Lib", "site-packages", "torch", "lib"),
+            Path.Combine(runtimeRoot, "Lib", "site-packages", "torch", "bin"),
+            Path.Combine(runtimeRoot, "Lib", "site-packages", "torchaudio", "lib"),
+            Path.Combine(runtimeRoot, "Lib", "site-packages", "numpy.libs"),
+            Path.Combine(runtimeRoot, "Lib", "site-packages", "scipy.libs"),
+            Path.Combine(runtimeRoot, "Lib", "site-packages", "sklearn", ".libs"),
+            Path.Combine(runtimeRoot, "Lib", "site-packages", "pandas.libs"),
+            Path.Combine(runtimeRoot, "Library", "bin"),
+        };
+
+        return directories
+            .Where(Directory.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public string DescribeExecutionContext()
+    {
+        IReadOnlyList<string> nativeSearchDirectories = GetRuntimeNativeSearchDirectories();
+        return
+            $"architecture={_architectureResolver()}, supported={IsSupportedOnCurrentArchitecture}, " +
+            $"runtimeDir='{RuntimeDirectoryPath}', pythonExe='{PythonExecutablePath}', runnerScript='{RunnerScriptPath}', " +
+            $"modelDir='{ModelDirectoryPath}', nativeSearchDirs='{string.Join(" | ", nativeSearchDirectories)}'";
+    }
 
     public void EnsureInstalled()
     {
@@ -59,30 +134,46 @@ public sealed class PyannoteCommunityModelManager
         if (!Directory.Exists(ModelDirectoryPath))
         {
             throw new DirectoryNotFoundException(
-                $"Pyannote Community-1 model is missing from the AudioScript installation. Reinstall AudioScript from Microsoft Store. Path: {ModelDirectoryPath}");
+                $"Pyannote Community-1 model is not installed. Run Detect Speaker to download it. Path: {ModelDirectoryPath}");
         }
 
-        EnsureCriticalPathsExist(
+        EnsureCriticalDirectoriesExist(
             rootPath: ModelDirectoryPath,
-            relativePaths: RequiredModelRelativePaths,
+            relativePaths: RequiredModelDirectoryRelativePaths,
+            missingPrefix: "Pyannote Community-1 model payload is incomplete or corrupted.");
+
+        EnsureCriticalFilesExist(
+            rootPath: ModelDirectoryPath,
+            relativePaths: RequiredModelFileRelativePaths,
             missingPrefix: "Pyannote Community-1 model payload is incomplete or corrupted.");
 
         if (!Directory.Exists(RuntimeDirectoryPath))
         {
             throw new DirectoryNotFoundException(
-                $"Pyannote Python runtime is missing from the AudioScript installation. Reinstall AudioScript from Microsoft Store. Path: {RuntimeDirectoryPath}");
+                $"Pyannote Python runtime is not installed. Run Detect Speaker to download it. Path: {RuntimeDirectoryPath}");
         }
 
-        EnsureCriticalPathsExist(
+        EnsureCriticalDirectoriesExist(
             rootPath: RuntimeDirectoryPath,
-            relativePaths: RequiredRuntimeRelativePaths,
+            relativePaths: RequiredRuntimeDirectoryRelativePaths,
+            missingPrefix: "Pyannote Python runtime payload is incomplete or corrupted.");
+
+        EnsureCriticalFilesExist(
+            rootPath: RuntimeDirectoryPath,
+            relativePaths: RequiredRuntimeFileRelativePaths,
             missingPrefix: "Pyannote Python runtime payload is incomplete or corrupted.");
     }
 
     public void EnsureExecutionReady()
     {
-        ValidateInstalled();
+        PrepareInstalledRuntime();
         EnsureRunnerScriptExists();
+    }
+
+    public void PrepareInstalledRuntime()
+    {
+        ValidateInstalled();
+        EnsureNativeRuntimeCompatibilityFiles();
     }
 
     public bool IsInstalled()
@@ -116,7 +207,30 @@ public sealed class PyannoteCommunityModelManager
         }
     }
 
-    private static void EnsureCriticalPathsExist(
+    private void EnsureNativeRuntimeCompatibilityFiles()
+    {
+        CopyRuntimeFileIfNeeded(
+            "Lib\\site-packages\\sklearn\\.libs\\msvcp140.dll",
+            "msvcp140.dll");
+        CopyRuntimeFileIfNeeded(
+            "Lib\\site-packages\\sklearn\\.libs\\vcomp140.dll",
+            "vcomp140.dll");
+    }
+
+    private void CopyRuntimeFileIfNeeded(string sourceRelativePath, string destinationRelativePath)
+    {
+        string sourcePath = Path.Combine(RuntimeDirectoryPath, sourceRelativePath);
+        string destinationPath = Path.Combine(RuntimeDirectoryPath, destinationRelativePath);
+        if (File.Exists(destinationPath))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+        File.Copy(sourcePath, destinationPath, overwrite: false);
+    }
+
+    private static void EnsureCriticalDirectoriesExist(
         string rootPath,
         IReadOnlyList<string> relativePaths,
         string missingPrefix)
@@ -124,28 +238,42 @@ public sealed class PyannoteCommunityModelManager
         foreach (string relativePath in relativePaths)
         {
             string fullPath = Path.Combine(rootPath, relativePath);
-            bool exists = Path.HasExtension(relativePath)
-                ? File.Exists(fullPath)
-                : Directory.Exists(fullPath);
-            if (exists)
+            if (Directory.Exists(fullPath))
+            {
+                continue;
+            }
+
+            throw new DirectoryNotFoundException(
+                $"{missingPrefix} Missing directory '{relativePath}'. Run Detect Speaker again to restore the runtime. Path: {fullPath}");
+        }
+    }
+
+    private static void EnsureCriticalFilesExist(
+        string rootPath,
+        IReadOnlyList<string> relativePaths,
+        string missingPrefix)
+    {
+        foreach (string relativePath in relativePaths)
+        {
+            string fullPath = Path.Combine(rootPath, relativePath);
+            if (File.Exists(fullPath))
             {
                 continue;
             }
 
             throw new FileNotFoundException(
-                $"{missingPrefix} Missing '{relativePath}'. Reinstall or rerun Detect Speaker to restore the runtime.",
+                $"{missingPrefix} Missing file '{relativePath}'. Run Detect Speaker again to restore the runtime.",
                 fullPath);
         }
     }
 
     private const string RunnerScriptContent = """
 import json
+import os
 import sys
 import wave
 
 import numpy as np
-import torch
-from pyannote.audio import Pipeline
 
 print("runner_started", file=sys.stderr, flush=True)
 
@@ -155,6 +283,40 @@ if len(sys.argv) != 3:
 
 model_dir = sys.argv[1]
 audio_path = sys.argv[2]
+
+def _configure_native_dll_search_paths():
+    runtime_root = os.path.dirname(sys.executable)
+    directories = [
+        runtime_root,
+        os.path.join(runtime_root, "Lib", "site-packages", "torch", "lib"),
+        os.path.join(runtime_root, "Lib", "site-packages", "torch", "bin"),
+        os.path.join(runtime_root, "Lib", "site-packages", "torchaudio", "lib"),
+        os.path.join(runtime_root, "Lib", "site-packages", "numpy.libs"),
+        os.path.join(runtime_root, "Lib", "site-packages", "scipy.libs"),
+        os.path.join(runtime_root, "Lib", "site-packages", "sklearn", ".libs"),
+        os.path.join(runtime_root, "Lib", "site-packages", "pandas.libs"),
+        os.path.join(runtime_root, "Library", "bin"),
+    ]
+    configured = []
+    handles = []
+    seen = set()
+    for directory in directories:
+        normalized = os.path.normpath(directory)
+        if not os.path.isdir(normalized) or normalized in seen:
+            continue
+        seen.add(normalized)
+        configured.append(normalized)
+        os.environ["PATH"] = normalized + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory"):
+            handles.append(os.add_dll_directory(normalized))
+    return configured, handles
+
+configured_dll_dirs, dll_directory_handles = _configure_native_dll_search_paths()
+print("runtime_bootstrap", file=sys.stderr, flush=True)
+print("dll_search_paths=" + "|".join(configured_dll_dirs), file=sys.stderr, flush=True)
+
+from pyannote.audio import Pipeline
+import torch
 
 print("model_loading", file=sys.stderr, flush=True)
 pipeline = Pipeline.from_pretrained(model_dir)

@@ -1,5 +1,5 @@
 param(
-    [string]$PackageVersion = "2.0.20.0",
+    [string]$PackageVersion = "",
     [string]$PackageTestRoot = "",
     [string]$CertificatePath = "",
     [switch]$KeepSandboxOpen,
@@ -31,6 +31,16 @@ function Escape-Xml {
 $sandboxExe = "C:\Windows\System32\WindowsSandbox.exe"
 if (-not (Test-Path -LiteralPath $sandboxExe)) {
     throw "Windows Sandbox is not available on this machine."
+}
+
+$manifestPath = Join-Path $PSScriptRoot "..\AudioScript.Package\Package.appxmanifest"
+if ([string]::IsNullOrWhiteSpace($PackageVersion)) {
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        throw "Package manifest not found at '$manifestPath'."
+    }
+
+    [xml]$manifestXml = Get-Content -LiteralPath $manifestPath
+    $PackageVersion = $manifestXml.Package.Identity.Version
 }
 
 $packageTestRoot = $PackageTestRoot
@@ -90,7 +100,7 @@ function Write-Result([hashtable]`$payload) {
 
 function Write-Status([string]`$message) {
     `$timestamp = (Get-Date).ToString('o')
-    Add-Content -LiteralPath 'C:\ValidationHost\sandbox-status.log' -Value "[$timestamp] `$message"
+    Add-Content -LiteralPath 'C:\ValidationHost\sandbox-status.log' -Value "[`$timestamp] `$message"
 }
 
 `$result = [ordered]@{

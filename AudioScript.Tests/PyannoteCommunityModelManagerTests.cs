@@ -10,7 +10,7 @@ namespace AudioScript.Tests;
 public sealed class PyannoteCommunityModelManagerTests
 {
     [Fact]
-    public void EnsureInstalled_Succeeds_WhenBundledAssetsExist()
+    public void EnsureInstalled_Succeeds_WhenProvisionedAssetsExist()
     {
         string assetsPath = CreateTempDirectory();
         AppDataPathProvider paths = new(localAppDataPath: assetsPath);
@@ -94,7 +94,7 @@ public sealed class PyannoteCommunityModelManagerTests
                 paths,
                 architectureResolver: () => Architecture.X64);
 
-            FileNotFoundException ex = Assert.Throws<FileNotFoundException>(manager.EnsureInstalled);
+            DirectoryNotFoundException ex = Assert.Throws<DirectoryNotFoundException>(manager.EnsureInstalled);
             Assert.Contains("torchaudio", ex.Message, StringComparison.Ordinal);
         }
         finally
@@ -129,6 +129,98 @@ public sealed class PyannoteCommunityModelManagerTests
     }
 
     [Fact]
+    public void RuntimeDiagnostics_IncludeInstalledNativeSearchDirectories()
+    {
+        string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
+
+        try
+        {
+            CreatePyannoteAssets(paths, Architecture.X64);
+
+            var manager = new PyannoteCommunityModelManager(
+                new StubAssetProvisioningService(paths),
+                paths,
+                architectureResolver: () => Architecture.X64);
+
+            IReadOnlyList<string> nativeSearchDirectories = manager.GetRuntimeNativeSearchDirectories();
+
+            Assert.Contains(Path.Combine(paths.PythonRuntimesPath, "win-x64", "Lib", "site-packages", "torch", "lib"), nativeSearchDirectories);
+            Assert.Contains(Path.Combine(paths.PythonRuntimesPath, "win-x64", "Lib", "site-packages", "torch", "bin"), nativeSearchDirectories);
+            Assert.Contains(Path.Combine(paths.PythonRuntimesPath, "win-x64", "Lib", "site-packages", "torchaudio", "lib"), nativeSearchDirectories);
+            string diagnostics = manager.DescribeExecutionContext();
+            Assert.Contains($"runtimeDir='{Path.Combine(paths.PythonRuntimesPath, "win-x64")}'", diagnostics, StringComparison.Ordinal);
+            Assert.Contains("nativeSearchDirs=", diagnostics, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Fact]
+    public void PrepareInstalledRuntime_CopiesNativeCompatibilityDllsToRuntimeRoot()
+    {
+        string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(localAppDataPath: assetsPath);
+
+        try
+        {
+            CreatePyannoteAssets(paths, Architecture.X64);
+            var manager = new PyannoteCommunityModelManager(
+                new StubAssetProvisioningService(paths),
+                paths,
+                architectureResolver: () => Architecture.X64);
+
+            manager.PrepareInstalledRuntime();
+
+            Assert.True(File.Exists(Path.Combine(manager.RuntimeDirectoryPath, "msvcp140.dll")));
+            Assert.True(File.Exists(Path.Combine(manager.RuntimeDirectoryPath, "vcomp140.dll")));
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Fact]
+    public void EnsureExecutionReady_WhenPackaged_WritesRunnerScriptToLocalStateTemp()
+    {
+        string assetsPath = CreateTempDirectory();
+        AppDataPathProvider paths = new(
+            localAppDataPath: assetsPath,
+            packageFamilyName: "JustinTagardaSoftware.AudioScript_test");
+
+        try
+        {
+            CreatePyannoteAssets(paths, Architecture.X64);
+
+            var manager = new PyannoteCommunityModelManager(
+                new StubAssetProvisioningService(paths),
+                paths,
+                architectureResolver: () => Architecture.X64);
+
+            manager.EnsureExecutionReady();
+
+            string expectedPath = Path.Combine(
+                paths.TempPath,
+                "pyannote-community-runner",
+                "run_community_diarization.py");
+
+            Assert.Equal(expectedPath, manager.RunnerScriptPath);
+            Assert.True(File.Exists(expectedPath));
+            Assert.DoesNotContain(
+                Path.Combine("Program Files", "WindowsApps"),
+                manager.RunnerScriptPath,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteDirectory(assetsPath);
+        }
+    }
+
+    [Fact]
     public void EnsureInstalled_ThrowsPlatformNotSupported_OnNonX64()
     {
         string assetsPath = CreateTempDirectory();
@@ -150,7 +242,7 @@ public sealed class PyannoteCommunityModelManagerTests
     }
 
     [Fact]
-    public async Task DiarizeAudioFileAsync_UsesBundledPythonAndMapsSpeakers()
+    public async Task DiarizeAudioFileAsync_UsesInstalledPythonAndMapsSpeakers()
     {
         string assetsPath = CreateTempDirectory();
         string audioPath = CreateSilentWaveFile(TimeSpan.FromSeconds(2));
@@ -262,9 +354,47 @@ public sealed class PyannoteCommunityModelManagerTests
     {
         string runtimePath = Path.Combine(paths.PythonRuntimesPath, runtimeDirectoryName);
         Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "torch"));
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "torch", "lib"));
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "torch", "bin"));
         Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "torchaudio"));
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "torchaudio", "lib"));
         Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "pyannote", "audio"));
-        File.WriteAllText(Path.Combine(runtimePath, "python.exe"), string.Empty);
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "numpy.libs"));
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "scipy.libs"));
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "sklearn", ".libs"));
+        Directory.CreateDirectory(Path.Combine(runtimePath, "Lib", "site-packages", "pandas.libs"));
+        string[] requiredFiles =
+        [
+            "python.exe",
+            "python3.dll",
+            "python312.dll",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "libcrypto-3.dll",
+            "libssl-3.dll",
+            "Lib\\site-packages\\torch\\lib\\c10.dll",
+            "Lib\\site-packages\\torch\\lib\\libiomp5md.dll",
+            "Lib\\site-packages\\torch\\lib\\shm.dll",
+            "Lib\\site-packages\\torch\\lib\\torch.dll",
+            "Lib\\site-packages\\torch\\lib\\torch_cpu.dll",
+            "Lib\\site-packages\\torch\\lib\\torch_global_deps.dll",
+            "Lib\\site-packages\\torch\\lib\\torch_python.dll",
+            "Lib\\site-packages\\torch\\lib\\uv.dll",
+            "Lib\\site-packages\\numpy.libs\\libscipy_openblas64_-63c857e738469261263c764a36be9436.dll",
+            "Lib\\site-packages\\numpy.libs\\msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll",
+            "Lib\\site-packages\\scipy.libs\\libscipy_openblas-64eda39e79589aedb16f58e5547eb599.dll",
+            "Lib\\site-packages\\sklearn\\.libs\\msvcp140.dll",
+            "Lib\\site-packages\\sklearn\\.libs\\vcomp140.dll",
+            "Lib\\site-packages\\pandas.libs\\msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll",
+            "Lib\\site-packages\\torchaudio\\lib\\libtorchaudio.pyd",
+            "Lib\\site-packages\\torchaudio\\lib\\_torchaudio.pyd",
+        ];
+        foreach (string relativePath in requiredFiles)
+        {
+            string filePath = Path.Combine(runtimePath, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+            File.WriteAllText(filePath, string.Empty);
+        }
     }
 
     private static string CreateTempDirectory()

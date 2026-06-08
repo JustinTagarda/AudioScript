@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AudioScript.Abstractions;
@@ -7,7 +8,7 @@ using AudioScript.Audio;
 
 namespace AudioScript.Services;
 
-public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngine
+public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngine, IPyannoteExecutionProbe
 {
     private readonly AudioStandardizer _audioStandardizer;
     private readonly PyannoteCommunityModelManager _modelManager;
@@ -38,26 +39,33 @@ public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngi
         string fileName = Path.GetFileName(fullPath);
         var stopwatch = Stopwatch.StartNew();
 
-        Log($"Starting pyannote Community-1 diarization for '{fileName}'.");
+        Log(
+            $"Starting pyannote Community-1 diarization for '{fileName}'. " +
+            $"audioPath='{fullPath}', runtimeContext={_modelManager.DescribeExecutionContext()}");
         _modelManager.EnsureExecutionReady();
         progress?.Report(new SpeakerDiarizationProgress(0, 1));
 
         string standardizedPath = _audioStandardizer.ConvertFileToEngineWav(fullPath);
+        Log(
+            $"Prepared pyannote input WAV for '{fileName}'. " +
+            $"standardizedPath='{standardizedPath}', standardizedExists={File.Exists(standardizedPath)}, " +
+            $"standardizedBytes={(File.Exists(standardizedPath) ? new FileInfo(standardizedPath).Length : 0):N0}.");
         try
         {
             await _semaphore.WaitAsync(cancellationToken);
             try
             {
-                PyannoteCommunityProcessResult result = await _processRunner.RunAsync(
-                    _modelManager.PythonExecutablePath,
-                    _modelManager.RunnerScriptPath,
-                    _modelManager.ModelDirectoryPath,
+                PyannoteCommunityProcessResult result = await RunPyannoteProcessAsync(
                     standardizedPath,
+                    fileName,
                     HandleStandardErrorLine,
                     cancellationToken);
 
                 if (result.ExitCode != 0)
                 {
+                    Log(
+                        $"Pyannote Community-1 process exited with code {result.ExitCode} for '{fileName}'. " +
+                        $"stdoutBytes={result.StandardOutput.Length:N0}, stderrBytes={result.StandardError.Length:N0}.");
                     throw new InvalidOperationException(
                         $"Pyannote Community-1 exited with code {result.ExitCode}. {FormatProcessError(result.StandardError)}");
                 }
@@ -68,7 +76,7 @@ public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngi
                 stopwatch.Stop();
                 Log(
                     $"Pyannote Community-1 diarization for '{fileName}' completed in {stopwatch.Elapsed.TotalSeconds:F2}s " +
-                    $"with {turns.Length:N0} speaker turn(s).");
+                    $"with {turns.Length:N0} speaker turn(s). stdoutBytes={result.StandardOutput.Length:N0}, stderrBytes={result.StandardError.Length:N0}.");
                 return turns;
             }
             finally
@@ -84,6 +92,62 @@ public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngi
         finally
         {
             DeleteTemporaryFile(standardizedPath);
+        }
+    }
+
+    public async Task<PyannoteExecutionProbeResult> ProbeExecutionAsync(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        string probeDirectory = Path.GetDirectoryName(_modelManager.RunnerScriptPath) ?? Path.GetTempPath();
+        Directory.CreateDirectory(probeDirectory);
+        string probeWavePath = Path.Combine(
+            probeDirectory,
+            $"pyannote-execution-probe-{Guid.NewGuid():N}.wav");
+
+        try
+        {
+            _modelManager.EnsureExecutionReady();
+            CreateProbeWaveFile(probeWavePath);
+            Log(
+                $"Starting pyannote execution probe. audioPath='{probeWavePath}', " +
+                $"runtimeContext={_modelManager.DescribeExecutionContext()}");
+
+            await _semaphore.WaitAsync(cancellationToken);
+            try
+            {
+                PyannoteCommunityProcessResult result = await RunPyannoteProcessAsync(
+                    probeWavePath,
+                    Path.GetFileName(probeWavePath),
+                    HandleStandardErrorLine,
+                    cancellationToken);
+                if (result.ExitCode != 0)
+                {
+                    string failureMessage = $"Pyannote Community-1 exited with code {result.ExitCode}. {FormatProcessError(result.StandardError)}";
+                    Log($"Pyannote execution probe failed. {failureMessage}");
+                    return new PyannoteExecutionProbeResult(false, failureMessage);
+                }
+
+                _ = ParseTurns(result.StandardOutput);
+                Log("Pyannote execution probe completed successfully.");
+                return new PyannoteExecutionProbeResult(true, "Speaker detection runtime is ready.");
+            }
+            finally
+            {
+                _semaphore.Release();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _processLogService.LogException("PyannoteDiarization", "Pyannote execution probe failed.", ex);
+            return new PyannoteExecutionProbeResult(false, ex.Message);
+        }
+        finally
+        {
+            DeleteTemporaryFile(probeWavePath);
         }
     }
 
@@ -183,6 +247,25 @@ public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngi
         }
     }
 
+    private async Task<PyannoteCommunityProcessResult> RunPyannoteProcessAsync(
+        string audioFilePath,
+        string fileName,
+        Action<string>? onStandardErrorLine,
+        CancellationToken cancellationToken)
+    {
+        Log(
+            $"Launching pyannote Community-1 process for '{fileName}'. " +
+            $"pythonExe='{_modelManager.PythonExecutablePath}', runnerScript='{_modelManager.RunnerScriptPath}', " +
+            $"modelDir='{_modelManager.ModelDirectoryPath}', audioPath='{audioFilePath}'.");
+        return await _processRunner.RunAsync(
+            _modelManager.PythonExecutablePath,
+            _modelManager.RunnerScriptPath,
+            _modelManager.ModelDirectoryPath,
+            audioFilePath,
+            onStandardErrorLine,
+            cancellationToken);
+    }
+
     private void Log(string message)
     {
         _processLogService.Log("PyannoteDiarization", message);
@@ -211,6 +294,39 @@ public sealed class PyannoteCommunityDiarizationEngine : ISpeakerDiarizationEngi
         };
 
         Log(mappedMessage ?? $"Pyannote stderr: {trimmed}");
+    }
+
+    private static void CreateProbeWaveFile(string filePath)
+    {
+        const short channels = 1;
+        const int sampleRate = 16000;
+        const short bitsPerSample = 16;
+        const short bytesPerSample = bitsPerSample / 8;
+        const int durationMilliseconds = 1000;
+        int sampleCount = sampleRate * durationMilliseconds / 1000;
+        short blockAlign = (short)(channels * bytesPerSample);
+        int byteRate = sampleRate * blockAlign;
+        int dataSize = sampleCount * blockAlign;
+
+        using var stream = File.Create(filePath);
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: false);
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + dataSize);
+        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+        writer.Write(Encoding.ASCII.GetBytes("fmt "));
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(sampleRate);
+        writer.Write(byteRate);
+        writer.Write(blockAlign);
+        writer.Write(bitsPerSample);
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write(dataSize);
+        for (int i = 0; i < sampleCount; i++)
+        {
+            writer.Write((short)0);
+        }
     }
 
     private sealed record PyannoteTurnDto(

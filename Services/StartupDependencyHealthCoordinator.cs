@@ -72,7 +72,7 @@ public sealed class StartupDependencyHealthCoordinator : IStartupDependencyHealt
             "Speaker diarization runtime",
             DependencyHealthCategory.PythonModule,
             DependencyHealthStatus.Skipped,
-            "Installed on demand when Detect Speaker is used.",
+            "Installed and fully validated on demand when Detect Speaker is used.",
             100,
             0,
             0));

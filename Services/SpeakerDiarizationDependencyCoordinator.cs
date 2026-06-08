@@ -27,6 +27,7 @@ public enum SpeakerDiarizationDependencyProgressPhase
     Downloading,
     Installing,
     Verifying,
+    ValidatingExecution,
 }
 
 public sealed record SpeakerDiarizationDependencyProgress(
@@ -56,17 +57,23 @@ public sealed class SpeakerDiarizationDependencyCoordinator
     private readonly IAssetProvisioningService _assetProvisioningService;
     private readonly PyannoteCommunityModelManager _modelManager;
     private readonly IPythonDependencyRepairService _pythonDependencyRepairService;
+    private readonly IPyannoteExecutionProbe _pyannoteExecutionProbe;
+    private readonly IOfficialSourceBootstrapService _officialSourceBootstrapService;
     private readonly ProcessLogService _processLogService;
 
     public SpeakerDiarizationDependencyCoordinator(
         IAssetProvisioningService assetProvisioningService,
         PyannoteCommunityModelManager modelManager,
         IPythonDependencyRepairService pythonDependencyRepairService,
-        ProcessLogService processLogService)
+        IPyannoteExecutionProbe pyannoteExecutionProbe,
+        ProcessLogService processLogService,
+        IOfficialSourceBootstrapService? officialSourceBootstrapService = null)
     {
         _assetProvisioningService = assetProvisioningService;
         _modelManager = modelManager;
         _pythonDependencyRepairService = pythonDependencyRepairService;
+        _pyannoteExecutionProbe = pyannoteExecutionProbe;
+        _officialSourceBootstrapService = officialSourceBootstrapService ?? new LegacyOfficialSourceBootstrapService(assetProvisioningService);
         _processLogService = processLogService;
     }
 
@@ -102,7 +109,7 @@ public sealed class SpeakerDiarizationDependencyCoordinator
 
         try
         {
-            _modelManager.ValidateInstalled();
+            _modelManager.PrepareInstalledRuntime();
             PythonDependencyRepairResult pythonResult = await _pythonDependencyRepairService
                 .ValidateAndRepairAsync(progress: null, cancellationToken)
                 .ConfigureAwait(false);
@@ -137,7 +144,7 @@ public sealed class SpeakerDiarizationDependencyCoordinator
                 ex);
             return new SpeakerDiarizationDependencyStatus(
                 SpeakerDiarizationDependencyState.Corrupted,
-                "Speaker detection components are missing or corrupted.");
+                BuildDependencyHealthFailureMessage(ex));
         }
     }
 
@@ -174,23 +181,27 @@ public sealed class SpeakerDiarizationDependencyCoordinator
                 await RemoveExistingAssetsAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            for (int i = 0; i < AssetIds.Length; i++)
-            {
-                string assetId = AssetIds[i];
-                int assetIndex = i + 1;
-                AssetProvisioningStatus status = _assetProvisioningService.GetStatus(assetId);
-                progress?.Report(new SpeakerDiarizationDependencyProgress(
-                    SpeakerDiarizationDependencyProgressPhase.Downloading,
-                    $"Installing {status.DisplayName}.",
-                    $"Component {assetIndex} of {AssetIds.Length}",
-                    0,
-                    i * 100d / AssetIds.Length));
+            OfficialSourceBootstrapResult bootstrapResult = await _officialSourceBootstrapService
+                .BootstrapAsync(
+                    new Progress<AssetProvisioningProgress>(asset =>
+                    {
+                        progress?.Report(new SpeakerDiarizationDependencyProgress(
+                            asset.Status.Contains("download", StringComparison.OrdinalIgnoreCase)
+                                ? SpeakerDiarizationDependencyProgressPhase.Downloading
+                                : SpeakerDiarizationDependencyProgressPhase.Installing,
+                            $"Provisioning {asset.DisplayName}.",
+                            asset.Status,
+                            asset.Status.Contains("download", StringComparison.OrdinalIgnoreCase) ? asset.Percent : 100,
+                            asset.Status.Contains("download", StringComparison.OrdinalIgnoreCase) ? 0 : asset.Percent));
+                    }),
+                    cancellationToken)
+                .ConfigureAwait(false);
 
-                var assetProgress = new Progress<AssetProvisioningProgress>(asset =>
-                    progress?.Report(MapAssetProgress(asset, assetIndex, AssetIds.Length)));
-                await _assetProvisioningService
-                    .InstallAssetAsync(assetId, assetProgress, cancellationToken)
-                    .ConfigureAwait(false);
+            if (!bootstrapResult.Succeeded)
+            {
+                return new SpeakerDiarizationDependencyResult(
+                    bootstrapResult.WasCanceled ? SpeakerDiarizationDependencyState.Canceled : SpeakerDiarizationDependencyState.Failed,
+                    bootstrapResult.Message);
             }
 
             progress?.Report(new SpeakerDiarizationDependencyProgress(
@@ -230,8 +241,101 @@ public sealed class SpeakerDiarizationDependencyCoordinator
                 ex);
             return new SpeakerDiarizationDependencyResult(
                 SpeakerDiarizationDependencyState.Failed,
-                "Speaker detection components could not be installed.");
+                BuildInstallFailureMessage(ex));
         }
+    }
+
+    public async Task<SpeakerDiarizationDependencyResult> EnsureExecutionReadyAsync(
+        IProgress<SpeakerDiarizationDependencyProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        SpeakerDiarizationDependencyStatus status = await CheckStatusAsync(cancellationToken).ConfigureAwait(false);
+        if (!status.IsReady)
+        {
+            SpeakerDiarizationDependencyResult installResult = await InstallOrRepairAsync(
+                status,
+                progress,
+                cancellationToken).ConfigureAwait(false);
+            if (!installResult.Succeeded)
+            {
+                return installResult;
+            }
+        }
+
+        try
+        {
+            PyannoteExecutionProbeResult probeResult = await ProbeExecutionAsync(progress, cancellationToken).ConfigureAwait(false);
+            if (probeResult.Succeeded)
+            {
+                return new SpeakerDiarizationDependencyResult(
+                    SpeakerDiarizationDependencyState.Ready,
+                    "Speaker detection components are ready.");
+            }
+
+            _processLogService.Log(
+                "SpeakerDiarizationDependencies",
+                $"Speaker diarization execution probe failed; attempting one full repair. detail='{probeResult.Message}'",
+                ProcessLogLevel.Warning);
+
+            SpeakerDiarizationDependencyResult repairResult = await InstallOrRepairAsync(
+                new SpeakerDiarizationDependencyStatus(
+                    SpeakerDiarizationDependencyState.Corrupted,
+                    BuildExecutionProbeFailureMessage(probeResult.Message)),
+                progress,
+                cancellationToken).ConfigureAwait(false);
+            if (!repairResult.Succeeded)
+            {
+                return repairResult;
+            }
+
+            PyannoteExecutionProbeResult repairedProbeResult = await ProbeExecutionAsync(progress, cancellationToken).ConfigureAwait(false);
+            if (repairedProbeResult.Succeeded)
+            {
+                return new SpeakerDiarizationDependencyResult(
+                    SpeakerDiarizationDependencyState.Ready,
+                    "Speaker detection components are ready.");
+            }
+
+            return new SpeakerDiarizationDependencyResult(
+                SpeakerDiarizationDependencyState.Failed,
+                BuildExecutionProbeFailureMessage(repairedProbeResult.Message));
+        }
+        catch (OperationCanceledException)
+        {
+            _processLogService.Log(
+                "SpeakerDiarizationDependencies",
+                "Speaker diarization runtime validation was canceled.",
+                ProcessLogLevel.Warning);
+            return new SpeakerDiarizationDependencyResult(
+                SpeakerDiarizationDependencyState.Canceled,
+                "Speaker detection setup was canceled.");
+        }
+        catch (Exception ex)
+        {
+            _processLogService.LogException(
+                "SpeakerDiarizationDependencies",
+                "Speaker diarization runtime validation failed.",
+                ex);
+            return new SpeakerDiarizationDependencyResult(
+                SpeakerDiarizationDependencyState.Failed,
+                BuildExecutionProbeFailureMessage(ex.Message));
+        }
+    }
+
+    private async Task<PyannoteExecutionProbeResult> ProbeExecutionAsync(
+        IProgress<SpeakerDiarizationDependencyProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        progress?.Report(new SpeakerDiarizationDependencyProgress(
+            SpeakerDiarizationDependencyProgressPhase.ValidatingExecution,
+            "Validating speaker detection runtime.",
+            "Launching the installed pyannote runtime.",
+            100,
+            100));
+
+        return await _pyannoteExecutionProbe
+            .ProbeExecutionAsync(cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async Task RemoveExistingAssetsAsync(CancellationToken cancellationToken)
@@ -242,27 +346,112 @@ public sealed class SpeakerDiarizationDependencyCoordinator
         }
     }
 
-    private static SpeakerDiarizationDependencyProgress MapAssetProgress(
-        AssetProvisioningProgress progress,
-        int assetIndex,
-        int totalAssets)
+    private static string BuildInstallFailureMessage(Exception ex)
     {
-        bool downloading = progress.Status.Contains("download", StringComparison.OrdinalIgnoreCase)
-            || progress.Status.Contains("prepar", StringComparison.OrdinalIgnoreCase);
-        double completedAssetPercent = (assetIndex - 1) * 100d / totalAssets;
-        double currentAssetWeightedPercent = Math.Clamp(progress.Percent, 0, 100) / totalAssets;
-        double installPercent = Math.Clamp(completedAssetPercent + currentAssetWeightedPercent, 0, 100);
-        double downloadPercent = downloading ? installPercent : 100;
+        string detail = GetInnermostExceptionMessage(ex);
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return "Speaker detection components could not be installed.";
+        }
 
-        return new SpeakerDiarizationDependencyProgress(
-            downloading
-                ? SpeakerDiarizationDependencyProgressPhase.Downloading
-                : SpeakerDiarizationDependencyProgressPhase.Installing,
-            downloading
-                ? "Downloading speaker detection components."
-                : "Installing speaker detection components.",
-            $"{progress.DisplayName}: {progress.Status}",
-            downloadPercent,
-            installPercent);
+        return $"Speaker detection components could not be installed. {detail}";
+    }
+
+    private static string BuildExecutionProbeFailureMessage(string detail)
+    {
+        string trimmed = detail?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return "Speaker detection runtime validation failed. Close AudioScript and run Detect Speaker again. If the problem persists, reinstall AudioScript.";
+        }
+
+        if (trimmed.Contains("WinError 126", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("torch_python.dll", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("native DLL", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Speaker detection runtime validation failed because a native DLL could not be loaded. {trimmed}";
+        }
+
+        if (trimmed.Contains("import torch", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("torch", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Speaker detection runtime validation failed while loading torch. {trimmed}";
+        }
+
+        if (trimmed.Contains("pyannote.audio", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Speaker detection runtime validation failed while loading pyannote.audio. {trimmed}";
+        }
+
+        return $"Speaker detection runtime validation failed. {trimmed}";
+    }
+
+    private static string BuildDependencyHealthFailureMessage(Exception ex)
+    {
+        string detail = GetInnermostExceptionMessage(ex);
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return "Speaker detection components are missing or corrupted.";
+        }
+
+        return $"Speaker detection components are missing or corrupted. {detail}";
+    }
+
+    private static string GetInnermostExceptionMessage(Exception ex)
+    {
+        Exception current = ex;
+        while (current.InnerException is not null)
+        {
+            current = current.InnerException;
+        }
+
+        return current.Message.Trim();
+    }
+
+    private sealed class LegacyOfficialSourceBootstrapService : IOfficialSourceBootstrapService
+    {
+        private readonly IAssetProvisioningService _assetProvisioningService;
+
+        public LegacyOfficialSourceBootstrapService(IAssetProvisioningService assetProvisioningService)
+        {
+            _assetProvisioningService = assetProvisioningService;
+        }
+
+        public async Task<OfficialSourceBootstrapResult> BootstrapAsync(
+            IProgress<AssetProvisioningProgress>? progress,
+            CancellationToken cancellationToken)
+        {
+            var steps = new List<OfficialSourceBootstrapStepResult>();
+            foreach (string assetId in AssetIds)
+            {
+                AssetProvisioningStatus status = _assetProvisioningService.GetStatus(assetId);
+                if (status.State == AssetProvisioningState.Ready)
+                {
+                    steps.Add(new OfficialSourceBootstrapStepResult(assetId, true, $"{status.DisplayName} already installed."));
+                    continue;
+                }
+
+                var assetProgress = new Progress<AssetProvisioningProgress>(asset =>
+                {
+                    progress?.Report(asset);
+                });
+
+                try
+                {
+                    await _assetProvisioningService.InstallAssetAsync(assetId, assetProgress, cancellationToken).ConfigureAwait(false);
+                    steps.Add(new OfficialSourceBootstrapStepResult(assetId, true, $"{status.DisplayName} installed."));
+                }
+                catch (OperationCanceledException)
+                {
+                    return new OfficialSourceBootstrapResult(false, true, steps, "Bootstrap canceled.");
+                }
+                catch (Exception ex)
+                {
+                    return new OfficialSourceBootstrapResult(false, false, steps, ex.Message);
+                }
+            }
+
+            return new OfficialSourceBootstrapResult(true, false, steps, "Legacy bootstrap completed.");
+        }
     }
 }
